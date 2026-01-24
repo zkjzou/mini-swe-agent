@@ -119,6 +119,18 @@ def remove_from_preds_file(output_path: Path, instance_id: str):
             output_path.write_text(json.dumps(output_data, indent=2))
 
 
+def is_error_trajectory(traj_path: Path) -> bool:
+    """Return True if trajectory is missing/invalid or indicates an error exit status."""
+    if not traj_path.exists():
+        return True
+    try:
+        traj_data = json.loads(traj_path.read_text())
+    except json.JSONDecodeError:
+        return True
+    exit_status = traj_data.get("info", {}).get("exit_status")
+    return exit_status not in {"Submitted", "LimitsExceeded"}
+
+
 def process_instance(
     instance: dict,
     output_dir: Path,
@@ -204,6 +216,7 @@ def main(
     model: str | None = typer.Option(None, "-m", "--model", help="Model to use", rich_help_panel="Basic"),
     model_class: str | None = typer.Option(None, "-c", "--model-class", help="Model class to use (e.g., 'anthropic' or 'minisweagent.models.anthropic.AnthropicModel')", rich_help_panel="Advanced"),
     redo_existing: bool = typer.Option(False, "--redo-existing", help="Redo existing instances", rich_help_panel="Data selection"),
+    redo_errors: bool = typer.Option(False, "--redo-errors", help="Redo existing instances with error trajectories", rich_help_panel="Data selection"),
     config_spec: Path = typer.Option( builtin_config_dir / "extra" / "swebench.yaml", "-c", "--config", help="Path to a config file", rich_help_panel="Basic"),
     environment_class: str | None = typer.Option( None, "--environment-class", help="Environment type to use. Recommended are docker or singularity", rich_help_panel="Advanced"),
 ) -> None:
@@ -218,10 +231,27 @@ def main(
     instances = list(load_dataset(dataset_path, split=split))
 
     instances = filter_instances(instances, filter_spec=filter_spec, slice_spec=slice_spec, shuffle=shuffle)
+    if redo_existing and redo_errors:
+        logger.info("--redo-existing overrides --redo-errors; running all instances.")
     if not redo_existing and (output_path / "preds.json").exists():
-        existing_instances = list(json.loads((output_path / "preds.json").read_text()).keys())
-        logger.info(f"Skipping {len(existing_instances)} existing instances")
-        instances = [instance for instance in instances if instance["instance_id"] not in existing_instances]
+        existing_instances = set(json.loads((output_path / "preds.json").read_text()).keys())
+        if redo_errors:
+            candidate_ids = {instance["instance_id"] for instance in instances}
+            existing_instances &= candidate_ids
+            error_instances = {
+                instance_id
+                for instance_id in existing_instances
+                if is_error_trajectory(output_path / instance_id / f"{instance_id}.traj.json")
+            }
+            skip_instances = existing_instances - error_instances
+            if error_instances:
+                logger.info(f"Redoing {len(error_instances)} instances with error trajectories")
+            if skip_instances:
+                logger.info(f"Skipping {len(skip_instances)} existing instances")
+            instances = [instance for instance in instances if instance["instance_id"] not in skip_instances]
+        else:
+            logger.info(f"Skipping {len(existing_instances)} existing instances")
+            instances = [instance for instance in instances if instance["instance_id"] not in existing_instances]
     logger.info(f"Running on {len(instances)} instances...")
 
     config_path = get_config_path(config_spec)

@@ -14,6 +14,11 @@
 
     Check out the [control flow guide](../../advanced/control_flow.md) for a visual explanation of the agent's control flow.
 
+!!! note "Verifier support"
+
+    The default agent can optionally sample multiple candidate actions per step and use a verifier to select the best
+    action. This is configured via the `candidate_sampling` and `verifier` fields on `AgentConfig`.
+
 ::: minisweagent.agents.default.AgentConfig
 
 ::: minisweagent.agents.default.DefaultAgent

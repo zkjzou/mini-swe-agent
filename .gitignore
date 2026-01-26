@@ -185,4 +185,4 @@ pyrightconfig.json
 .agent/
 AGENTS.md
 PROJECT.md
-
+.worktrees/

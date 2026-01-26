@@ -63,6 +63,7 @@ nav:
       - "<code>mini -v</code>": usage/mini_v.md
       - "SWE-bench": usage/swebench.md
       - "Inspector": usage/inspector.md
+      - "Monte Carlo": usage/monte_carlo.md
     - "Language models":
       - "Quick start": models/quickstart.md
       - "Local models": models/local_models.md

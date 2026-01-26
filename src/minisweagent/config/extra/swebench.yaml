@@ -246,3 +246,16 @@ model:
   model_kwargs:
     api_base: "http://localhost:8080/v1"  # adjust if using a non-default port/address
     temperature: 0.15
+rejected_action_sampling:
+  enabled: false
+  mode: online  # online, offline, or both
+  k_per_step: 2
+  selection_policy: round_robin  # round_robin or random
+  max_attempts_per_step: 4
+  timeout_s: 30
+  overwrite: false
+  model_pool:
+    - model_name: "gpt-4o-mini"
+      model_class: "litellm"
+      model_kwargs:
+        temperature: 0.7

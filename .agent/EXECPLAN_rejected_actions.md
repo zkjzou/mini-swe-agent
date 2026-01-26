@@ -2,7 +2,7 @@
 
 This ExecPlan is a living document. The sections Progress, Surprises & Discoveries, Decision Log, and Outcomes & Retrospective must be kept up to date as work proceeds.
 
-Follow /home/zkjzou/SWE-PRM/mini-swe-agent/.agent/PLANS.md. This document must remain fully self-contained and updated as the work advances.
+Follow /home/zkjzou/SWE-PRM/mini-swe-agent/.worktrees/feature-verifier-rejected-actions/.agent/PLANS.md. This document must remain fully self-contained and updated as the work advances.
 
 ## Purpose / Big Picture
 
@@ -10,12 +10,12 @@ After this change, a user can generate multiple rejected actions per step, sourc
 
 ## Progress
 
-- [x] (2026-01-25 19:25Z) Create the branch and add the ExecPlan file.
-- [x] (2026-01-25 19:25Z) Implement rejected-action sampling data model and storage format.
-- [x] (2026-01-25 19:25Z) Add online sampling hook to the agent execution path.
-- [x] (2026-01-25 19:25Z) Add offline sampling CLI and utilities.
-- [ ] (2026-01-25 19:25Z) Add tests and validation steps.
-- [ ] (2026-01-25 19:25Z) Run validations and capture evidence.
+- [x] (2026-01-26 03:36Z) Create the implementation branch/worktree and confirm clean status.
+- [x] (2026-01-26 03:36Z) Implement rejected-action sampling data model and storage format.
+- [x] (2026-01-26 03:36Z) Add online sampling hook to the agent execution path.
+- [x] (2026-01-26 03:36Z) Add offline sampling CLI and utilities.
+- [x] (2026-01-26 03:36Z) Add tests and validation steps.
+- [ ] (2026-01-26 03:36Z) Run validations and capture evidence (blocked: pytest not available in environment).
 
 ## Surprises & Discoveries
 
@@ -24,21 +24,21 @@ After this change, a user can generate multiple rejected actions per step, sourc
 
 ## Decision Log
 
-- Decision: Store rejected actions in a per-trajectory sidecar JSONL file rather than embedding in the trajectory JSON.
+- Decision: Store rejected actions in a per-trajectory sidecar JSONL file rather than embedding them in the trajectory JSON.
   Rationale: Rejected actions can be large and numerous; a sidecar file keeps trajectories lightweight and allows independent re-generation in offline mode.
-  Date/Author: 2026-01-24 / assistant
+  Date/Author: 2026-01-26 / assistant
 
-- Decision: Define an error-free expert action as the action parsed from the assistant message at each step and use the prompt messages immediately before that assistant message as the sampling input for rejected actions.
+- Decision: Define the expert action as the action parsed from the assistant message at each step and use the prompt messages immediately before that assistant message as the sampling input for rejected actions.
   Rationale: This mirrors the expert model's input and avoids leaking the expert action into the rejected proposals.
-  Date/Author: 2026-01-24 / assistant
+  Date/Author: 2026-01-26 / assistant
 
 - Decision: Enforce that rejected actions are generated only by models in an explicit model pool that excludes the expert model by name and by class path.
   Rationale: The requirement is to sample from models other than the expert coding agent; explicit exclusion prevents accidental reuse.
-  Date/Author: 2026-01-24 / assistant
+  Date/Author: 2026-01-26 / assistant
 
-- Decision: Online sampling appends a run identifier to the rejected-action filename, while offline sampling refuses to overwrite unless explicitly requested.
-  Rationale: Online sampling should avoid cross-run collisions while still appending multiple steps; offline sampling must be safe and deterministic when re-run.
-  Date/Author: 2026-01-25 / assistant
+- Decision: Online sampling writes to a run-identified sidecar file (.<run_id>.jsonl) while offline sampling refuses to overwrite unless explicitly requested.
+  Rationale: Online sampling should avoid cross-run collisions while preserving per-run provenance; offline sampling must be safe and deterministic when repeated.
+  Date/Author: 2026-01-26 / assistant
 
 ## Outcomes & Retrospective
 
@@ -66,37 +66,32 @@ Add tests that validate that online sampling records the right count and does no
 
 ## Concrete Steps
 
-1) Create the branch and confirm clean working directory.
-   Working directory: /home/zkjzou/SWE-PRM/mini-swe-agent
-   Command:
-     git checkout -b verifier-rejected-actions
-
-2) Add the rejected action schema and storage utilities.
+1) Add the rejected action schema and storage utilities.
    Edit or add:
    - src/minisweagent/run/utils/rejected_actions.py
    This module should define a sampler class and JSONL writer for rejected actions.
 
-3) Add config and wiring for online sampling.
+2) Add config and wiring for online sampling.
    Edit:
    - src/minisweagent/config/extra/swebench.yaml
    - src/minisweagent/agents/default.py
    Ensure the expert model is excluded from the pool by name and class, and ensure the sampler is only invoked when enabled.
 
-4) Add offline sampling CLI.
+3) Add offline sampling CLI.
    Add:
    - src/minisweagent/run/extra/rejected_actions.py
    Register in:
    - src/minisweagent/run/mini_extra.py
    The CLI should accept a path (file or directory), a model pool config, and output directory or overwrite flag.
 
-5) Add tests.
+4) Add tests.
    Add or update:
    - tests/run/test_swebench.py
    - tests/run/test_rejected_actions.py (new)
    Include fixtures that simulate a short trajectory and confirm the JSONL schema and model exclusions.
 
-6) Run validation commands.
-   Working directory: /home/zkjzou/SWE-PRM/mini-swe-agent
+5) Run validation commands.
+   Working directory: /home/zkjzou/SWE-PRM/mini-swe-agent/.worktrees/feature-verifier-rejected-actions
    Commands:
      pytest -n auto tests/run/test_rejected_actions.py
      pytest -n auto tests/run/test_swebench.py -k rejected
@@ -126,19 +121,19 @@ The offline sampler must be safe to re-run. Provide a clear flag (for example, -
 ## Artifacts and Notes
 
 Example JSONL entry format (one line per rejected action, shown as indented text):
-  {"step_index": 3, "expert_action": "ls -la", "rejected_action": "git status", "rejected_model_id": "alt-model-1", "mode": "online", "timestamp": "2026-01-24T00:00:00Z"}
+  {"step_index": 3, "expert_action": "ls -la", "rejected_action": "git status", "rejected_model_id": "alt-model-1", "mode": "online", "timestamp": "2026-01-26T00:00:00Z"}
 
 Example CLI usage (shown as indented text):
   mini-extra rejected-actions /path/to/trajectories --config /path/to/swebench.yaml --overwrite
 
 ## Interfaces and Dependencies
 
-The rejected action sampler utility lives in src/minisweagent/run/utils/rejected_actions.py and exposes:
+The rejected action sampler utility should live in src/minisweagent/run/utils/rejected_actions.py and expose:
 
 - RejectedActionSampler with methods sample_records(...) to return records and sample_and_write(...) to append to the configured JSONL file.
 - write_rejected_actions(path, records, overwrite) for direct JSONL writes.
 - extract_action_from_response(content, action_regex) to parse expert actions consistently.
 
-The online sampling hook is added to the agent run loop in src/minisweagent/agents/default.py. It captures prompt messages before the expert query, executes the expert query as usual, then calls the sampler with the same prompt messages and the action regex from the agent config. The offline CLI reuses the sampler and parses the expert action using the action regex stored in the trajectory info config (info.config.agent.action_regex), falling back to the default regex if not present.
+The online sampling hook should be added to the agent run loop in src/minisweagent/agents/default.py. It must capture prompt messages before the expert query, execute the expert query as usual, then call the sampler with the same prompt messages and the action regex from the agent config. The offline CLI should reuse the sampler and parse the expert action using the action regex stored in the trajectory info config (info.config.agent.action_regex), falling back to the default regex if not present.
 
-Plan Update (2026-01-25): Updated progress to reflect completed implementation steps and aligned interfaces and filenames with the current code changes, including run_id-based filenames and overwrite behavior. Recorded missing pytest availability during validation.
+Plan Update (2026-01-26): Reset the ExecPlan for the feature-verifier-rejected-actions worktree and recorded the current implementation progress, decisions, and validation blocker.

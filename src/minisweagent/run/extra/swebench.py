@@ -4,12 +4,14 @@
 # Read this first: https://mini-swe-agent.com/latest/usage/swebench/  (usage docs)
 
 import concurrent.futures
+import copy
 import json
 import random
 import re
 import threading
 import time
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 import typer
@@ -136,6 +138,8 @@ def process_instance(
     output_dir: Path,
     config: dict,
     progress_manager: RunBatchProgressManager,
+    run_id: str | None,
+    rejected_action_sampling: dict | None,
 ) -> None:
     """Process a single SWEBench instance."""
     instance_id = instance["instance_id"]
@@ -144,6 +148,15 @@ def process_instance(
     remove_from_preds_file(output_dir / "preds.json", instance_id)
     (instance_dir / f"{instance_id}.traj.json").unlink(missing_ok=True)
     model = get_model(config=config.get("model", {}))
+    sampling_config = None
+    if rejected_action_sampling and rejected_action_sampling.get("enabled"):
+        mode = rejected_action_sampling.get("mode", "online")
+        if mode in {"online", "both"}:
+            sampling_config = copy.deepcopy(rejected_action_sampling)
+            sampling_config["output_path"] = str(instance_dir / f"{instance_id}.rejected.jsonl")
+            sampling_config["run_id"] = run_id
+            sampling_config["expert_model_name"] = getattr(model.config, "model_name", None)
+            sampling_config["expert_model_class"] = f"{model.__class__.__module__}.{model.__class__.__name__}"
     task = instance["problem_statement"]
 
     progress_manager.on_instance_start(instance_id)
@@ -160,6 +173,7 @@ def process_instance(
             env,
             progress_manager=progress_manager,
             instance_id=instance_id,
+            rejected_action_sampling=sampling_config,
             **config.get("agent", {}),
         )
         exit_status, result = agent.run(task)
@@ -265,6 +279,8 @@ def main(
         config.setdefault("model", {})["model_class"] = model_class
 
     progress_manager = RunBatchProgressManager(len(instances), output_path / f"exit_statuses_{time.time()}.yaml")
+    run_id = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    rejected_action_sampling = config.get("rejected_action_sampling", {})
 
     def process_futures(futures: dict[concurrent.futures.Future, str]):
         for future in concurrent.futures.as_completed(futures):
@@ -280,9 +296,15 @@ def main(
     with Live(progress_manager.render_group, refresh_per_second=4):
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {
-                executor.submit(process_instance, instance, output_path, config, progress_manager): instance[
-                    "instance_id"
-                ]
+                executor.submit(
+                    process_instance,
+                    instance,
+                    output_path,
+                    config,
+                    progress_manager,
+                    run_id,
+                    rejected_action_sampling,
+                ): instance["instance_id"]
                 for instance in instances
             }
             try:

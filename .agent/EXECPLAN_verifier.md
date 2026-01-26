@@ -10,10 +10,10 @@ After this change, the agent can sample multiple candidate actions per step, sen
 
 ## Progress
 
-- [x] (2026-01-25 01:10Z) Initialize work on branch `feature-verifier-rejected-actions`.
-- [x] (2026-01-25 01:12Z) Implemented candidate sampling and verifier selection in `DefaultAgent`.
-- [x] (2026-01-25 01:14Z) Added verifier types (`first_valid`, `llm`) and configuration schema.
-- [x] (2026-01-25 01:16Z) Updated configs/docs and added tests validating selection behavior and trajectory metadata.
+- [x] (2026-01-25 01:25Z) Reset plan for branch `feature/verifier-action-selection`.
+- [x] (2026-01-25 01:30Z) Implemented candidate sampling and verifier selection in `DefaultAgent`.
+- [x] (2026-01-25 01:32Z) Added verifier types (`first_valid`, `llm`) and configuration schema.
+- [x] (2026-01-25 01:35Z) Updated configs/docs and added tests validating selection behavior and trajectory metadata.
 
 ## Surprises & Discoveries
 
@@ -151,4 +151,4 @@ Keep any updated or new config snippets minimal, and document them in prose in t
 
 The final behavior must be: for each agent step, multiple candidates are sampled; the verifier chooses one; only that one is executed and added to the conversation, with metadata captured for inspection.
 
-Plan reset note (2026-01-25): Reset progress tracking to align with the new worktree branch request.
+Plan reset note (2026-01-25): Reset progress tracking and re-implemented the feature on branch `feature/verifier-action-selection`.

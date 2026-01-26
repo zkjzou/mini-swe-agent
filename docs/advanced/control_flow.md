@@ -31,10 +31,12 @@ Essentially, `DefaultAgent.run` calls `DefaultAgent.step` in a loop until the ag
 The `step` method is the core of the agent. It does the following:
 
 1. Queries the model for a response based on the current messages (`DefaultAgent.query`, calling `Model.query`)
-2. Parses the response to get the action, i.e., the shell command to execute (`DefaultAgent.parse_action`)
-3. Executes the action in the environment (`DefaultAgent.execute_action`, calling `Environment.execute`)
-4. Renders the observation message with `DefaultAgent.render_template`
-5. Adds the observation to the messages
+2. Optionally samples multiple candidate actions and runs a verifier to pick the best candidate (configured via
+   `candidate_sampling` and `verifier` in the agent config)
+3. Parses the response to get the action, i.e., the shell command to execute (`DefaultAgent.parse_action`)
+4. Executes the action in the environment (`DefaultAgent.execute_action`, calling `Environment.execute`)
+5. Renders the observation message with `DefaultAgent.render_template`
+6. Adds the observation to the messages
 
 The interesting bit is how we handle error conditions and the finish condition:
 This uses exceptions of two types: `TerminatingException` and `NonTerminatingException`.

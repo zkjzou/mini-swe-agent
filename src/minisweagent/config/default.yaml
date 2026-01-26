@@ -162,6 +162,26 @@ agent:
     Please try another command and make sure to avoid those requiring interactive input.
   step_limit: 0.
   cost_limit: 0.
+  candidate_sampling:
+    num_candidates: 1
+    use_n: false
+    sampling_kwargs: {}
+  verifier:
+    enabled: false
+    verifier_type: first_valid
+    model: {}
+    system_template: |
+      You are a verifier that selects the best candidate action for the agent to execute.
+    selection_template: |
+      Choose the best candidate action for the task. Return only the number of the chosen candidate.
+
+      {% for c in candidates %}
+      Candidate {{ c.index + selection_index_base }}:
+      {{ c.content }}
+      {% endfor %}
+    selection_regex: '(\d+)'
+    selection_index_base: 1
+    fallback: first_candidate
 environment:
   env:
     PAGER: cat

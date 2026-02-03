@@ -11,15 +11,14 @@ The goal is to let a user take an existing saved trajectory, reproduce the execu
 ## Progress
 
 - [x] (2026-01-24 00:00Z) ExecPlan drafted with repository context, design decisions, and acceptance criteria.
-- [x] (2026-01-25 00:10Z) Implement trajectory loading, step segmentation, message-history filtering (include/exclude thoughts), and replay-to-step logic.
-- [x] (2026-01-25 00:15Z) Implement Monte Carlo rollout runner and CLI integration.
-- [x] (2026-01-25 00:18Z) Add tests and update docs for the new command.
-- [ ] (2026-01-25 00:19Z) Validate end-to-end with sample trajectories and parallel rollouts (tests blocked by missing pytest).
+- [ ] Implement trajectory loading, step segmentation, message-history filtering (include/exclude thoughts), and replay-to-step logic.
+- [ ] Implement Monte Carlo rollout runner and CLI integration.
+- [ ] Add tests and update docs for the new command.
+- [ ] Validate end-to-end with sample trajectories and parallel rollouts.
 
 ## Surprises & Discoveries
 
-- Observation: `pytest` is not available in the environment, so the new tests could not be executed.
-  Evidence: `/bin/bash: pytest: command not found`
+No surprises recorded yet.
 
 ## Decision Log
 
@@ -146,4 +145,4 @@ Implement the CLI in `src/minisweagent/run/extra/monte_carlo.py` using Typer, an
 
 Note: Initial creation of ExecPlan per user request to save in `.agent/`.
 Update: Added include/exclude thoughts CLI argument, message-history filtering, and an action-selection abstraction to future-proof rejected-action rollouts per user request.
-Update: Implemented trajectory utilities, replay/rollout modules, CLI wiring, docs, and tests; recorded pytest unavailability during validation.
+Update: Reset progress and discovery logs per user request to restart implementation in worktrees.

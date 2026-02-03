@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -25,6 +26,10 @@ class SingularityEnvironmentConfig(BaseModel):
     """Path to the singularity executable."""
     sandbox_build_retries: int = 3
     """Number of retries for building the sandbox if an error occurs."""
+    save_local_image: bool = False
+    """Whether to pull and reuse a local image when building the sandbox."""
+    local_image_dir: str | None = None
+    """Directory to store pulled images when save_local_image is True."""
 
 
 class SingularityEnvironment:
@@ -36,14 +41,55 @@ class SingularityEnvironment:
         self.config = config_class(**kwargs)
         self.sandbox_dir = self._build_sandbox()
 
+    def _sanitize_image_name(self, image: str) -> str:
+        if "://" in image:
+            image = image.split("://", 1)[1]
+        sanitized = re.sub(r"[^A-Za-z0-9_.-]+", "_", image).strip("_")
+        return sanitized or "image"
+
+    def _local_image_path(self) -> Path:
+        if not self.config.local_image_dir:
+            raise ValueError("local_image_dir must be set when save_local_image is True")
+        local_dir = Path(self.config.local_image_dir).expanduser()
+        local_dir.mkdir(parents=True, exist_ok=True)
+        return local_dir / f"{self._sanitize_image_name(self.config.image)}.sif"
+
+    def _ensure_local_image(self) -> Path:
+        local_image_path = self._local_image_path()
+        if local_image_path.exists():
+            return local_image_path
+        self.logger.info(f"Pulling image {self.config.image} -> {local_image_path}")
+        try:
+            subprocess.run(
+                [self.config.executable, "pull", str(local_image_path), self.config.image],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            self.logger.error(
+                f"Error pulling image {self.config.image} to {local_image_path}, stdout: {e.stdout}, stderr: {e.stderr}"
+            )
+            raise
+        return local_image_path
+
+    def _resolve_image_source(self) -> str:
+        if not self.config.save_local_image:
+            return self.config.image
+        image_path = Path(self.config.image).expanduser()
+        if image_path.exists():
+            return str(image_path)
+        return str(self._ensure_local_image())
+
     def _build_sandbox(self) -> Path:
         # Building the sandbox can fail (very rarely), so we retry it
+        image_source = self._resolve_image_source()
         max_retries = self.config.sandbox_build_retries
         for attempt in range(max_retries):
             sandbox_dir = Path(tempfile.gettempdir()) / f"minisweagent-{uuid.uuid4().hex[:8]}"
             try:
                 subprocess.run(
-                    [self.config.executable, "build", "--sandbox", sandbox_dir, self.config.image],
+                    [self.config.executable, "build", "--sandbox", sandbox_dir, image_source],
                     check=True,
                     capture_output=True,
                 )
@@ -51,7 +97,7 @@ class SingularityEnvironment:
             except subprocess.CalledProcessError as e:
                 shutil.rmtree(sandbox_dir, ignore_errors=True)
                 self.logger.error(
-                    f"Error building image {self.config.image}, stdout: {e.stdout}, stderr: {e.stderr} (attempt {attempt + 1}/{max_retries})"
+                    f"Error building image {image_source}, stdout: {e.stdout}, stderr: {e.stderr} (attempt {attempt + 1}/{max_retries})"
                 )
                 if attempt == max_retries - 1:
                     raise

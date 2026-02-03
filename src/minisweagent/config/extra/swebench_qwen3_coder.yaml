@@ -240,6 +240,8 @@ environment:
     PIP_PROGRESS_BAR: 'off'
     TQDM_DISABLE: '1'
   environment_class: singularity
+  save_local_image: true
+  local_image_dir: /scratch/wangluxy_owned_root/wangluxy_owned1/shared_data/containers/SWE-Bench-Verified/
 
 model:
   model_name: "hosted_vllm/Qwen/Qwen3-Coder-30B-A3B-Instruct"  # or hosted_vllm/path/to/local/model

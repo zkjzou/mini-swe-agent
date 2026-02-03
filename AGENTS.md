@@ -8,6 +8,7 @@ After each action you take, you need to output you didn't edit files outside the
 - `tests/` holds pytest suites, typically named `test_*.py` and grouped by area (e.g., `tests/models/`).
 - `docs/` contains MkDocs content and assets; `mkdocs.yml` is the site config.
 - `tests/test_data/` stores fixture data (excluded from linting).
+- `.worktrees/` stores all feature branches that are WIP. 
 
 Example layout:
 ```

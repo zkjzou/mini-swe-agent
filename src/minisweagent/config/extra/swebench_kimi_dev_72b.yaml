@@ -242,8 +242,8 @@ environment:
   environment_class: singularity
   save_local_image: true
   local_image_dir: /scratch/wangluxy_owned_root/wangluxy_owned1/shared_data/containers/SWE-Bench-Verified/
+
 model:
-  model_name: "hosted_vllm/mistralai/Devstral-Small-2-24B-Instruct-2512"  # or hosted_vllm/path/to/local/model
+  model_name: "hosted_vllm/moonshotai/Kimi-Dev-72B"
   model_kwargs:
-    api_base: "http://localhost:8080/v1"  # adjust if using a non-default port/address
-    temperature: 0.15
+    api_base: "http://localhost:8080/v1"

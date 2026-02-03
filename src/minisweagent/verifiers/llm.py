@@ -13,19 +13,34 @@ class LLMVerifier:
         self.model = model
         self.config = config
 
-    def select(self, *, candidates: list[dict[str, Any]], template_vars: dict[str, Any] | None = None) -> tuple[int, dict]:
+    def select(
+        self,
+        *,
+        candidates: list[dict[str, Any]],
+        template_vars: dict[str, Any] | None = None,
+        task: str | None = None,
+        messages: list[dict[str, Any]] | None = None,
+        steps: list[list[dict[str, Any]]] | None = None,
+    ) -> tuple[int, dict]:
         template_vars = template_vars or {}
+        verifier_vars = dict(template_vars)
+        if task is not None:
+            verifier_vars["task"] = task
+        if messages is not None:
+            verifier_vars["messages"] = messages
+        if steps is not None:
+            verifier_vars["steps"] = steps
         system_prompt = self._render(
             self.config.system_template,
             candidates=candidates,
             selection_index_base=self.config.selection_index_base,
-            **template_vars,
+            **verifier_vars,
         )
         selection_prompt = self._render(
             self.config.selection_template,
             candidates=candidates,
             selection_index_base=self.config.selection_index_base,
-            **template_vars,
+            **verifier_vars,
         )
         response = self.model.query(
             [
@@ -34,10 +49,10 @@ class LLMVerifier:
             ]
         )
         content = response.get("content", "")
-        match = re.search(self.config.selection_regex, content)
+        matches = re.findall(self.config.selection_regex, content, re.MULTILINE)
         selected_index = None
-        if match:
-            raw_index = int(match.group(1))
+        if matches:
+            raw_index = int(matches[-1])
             selected_index = raw_index - self.config.selection_index_base
         if selected_index is None or not (0 <= selected_index < len(candidates)):
             selected_index = self._fallback_index(candidates)

@@ -32,6 +32,8 @@ class VerifierConfig(BaseModel):
     system_template: str = (
         "You are a verifier that selects the best candidate action for the agent to execute."
     )
+    history_steps: int = 6
+    """How many recent action+observation steps to pass to the verifier. Use -1 for all steps."""
     selection_template: str = (
         "Choose the best candidate action for the task. "
         "Return only the number of the chosen candidate.\n\n"
@@ -91,6 +93,7 @@ class DefaultAgent:
         self.env = env
         self.extra_template_vars = {}
         self.verifier = self._build_verifier()
+        self._step_count = 0
 
     def render_template(self, template: str, **kwargs) -> str:
         template_vars = self.config.model_dump() | self.env.get_template_vars() | self.model.get_template_vars()
@@ -118,18 +121,32 @@ class DefaultAgent:
 
     def step(self) -> dict:
         """Query the LM, execute the action, return the observation."""
+        self._check_step_limit()
+        self._step_count += 1
         return self.get_observation(self.query())
+
+    @property
+    def step_count(self) -> int:
+        return self._step_count
 
     def query(self) -> dict:
         """Query the model and return the response."""
         self._check_limits()
         responses, candidate_infos = self._sample_candidates()
         selected_index = 0
-        verifier_metadata = {"enabled": False}
+        verifier_metadata = {
+            "enabled": False,
+            "selected_index": 0,
+            "selection_index_base": self.config.verifier.selection_index_base,
+            "candidates": candidate_infos,
+        }
         if self.verifier:
             selected_index, verifier_output = self.verifier.select(
                 candidates=candidate_infos,
                 template_vars=self.extra_template_vars,
+                task=self.extra_template_vars.get("task"),
+                messages=self._get_verifier_messages(),
+                steps=self._get_verifier_steps(),
             )
             selected_index = max(0, min(selected_index, len(responses) - 1))
             verifier_metadata = {
@@ -141,13 +158,16 @@ class DefaultAgent:
                 "verifier_output": verifier_output,
             }
         response = responses[selected_index]
-        if self.verifier:
-            response = self._attach_verifier_metadata(response, verifier_metadata)
+        response = self._attach_verifier_metadata(response, verifier_metadata)
         self.add_message("assistant", **response)
         return response
 
     def _check_limits(self) -> None:
-        if 0 < self.config.step_limit <= self.model.n_calls or 0 < self.config.cost_limit <= self.model.cost:
+        if 0 < self.config.cost_limit <= self.model.cost:
+            raise LimitsExceeded()
+
+    def _check_step_limit(self) -> None:
+        if 0 < self.config.step_limit <= self._step_count:
             raise LimitsExceeded()
 
     def _build_verifier(self):
@@ -162,6 +182,25 @@ class DefaultAgent:
                 verifier_model = get_model(model_config.get("model_name"), model_config)
             return LLMVerifier(verifier_model, self.config.verifier)
         raise ValueError(f"Unknown verifier type: {self.config.verifier.verifier_type}")
+
+    def _get_verifier_steps(self) -> list[list[dict[str, Any]]]:
+        steps: list[list[dict[str, Any]]] = []
+        current_step: list[dict[str, Any]] = []
+        for message in self.messages:
+            current_step.append(message)
+            if message.get("role") == "user" and "<returncode>" in message.get("content", ""):
+                steps.append(current_step)
+                current_step = []
+        if current_step:
+            steps.append(current_step)
+        history_steps = self.config.verifier.history_steps
+        if history_steps is None or history_steps < 0:
+            return steps
+        return steps[-history_steps:]
+
+    def _get_verifier_messages(self) -> list[dict[str, Any]]:
+        steps = self._get_verifier_steps()
+        return [message for step in steps for message in step]
 
     def _sample_candidates(self) -> tuple[list[dict], list[dict[str, Any]]]:
         sampling_config = self.config.candidate_sampling

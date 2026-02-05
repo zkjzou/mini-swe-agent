@@ -1,0 +1,318 @@
+{
+  "generated_at": "2026-02-04T15:34:14Z",
+  "root": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM",
+  "files_count": 3912,
+  "errors": 0,
+  "totals": {
+    "cost": 13.722512999999996,
+    "prompt_tokens": 4098107683,
+    "completion_tokens": 37007432,
+    "total_tokens": 4135115115,
+    "actions": 180106,
+    "api_calls": 180112
+  },
+  "runs": [
+    {
+      "run_dir": "test_devtral_0",
+      "files_count": 500,
+      "errors": 0,
+      "totals": {
+        "cost": 0.0,
+        "prompt_tokens": 981193332,
+        "completion_tokens": 7134484,
+        "total_tokens": 988327816,
+        "actions": 42259,
+        "api_calls": 42259
+      },
+      "averages_per_file": {
+        "cost": 0.0,
+        "prompt_tokens": 1962386.664,
+        "completion_tokens": 14268.968,
+        "total_tokens": 1976655.632,
+        "actions": 84.518,
+        "api_calls": 84.518
+      }
+    },
+    {
+      "run_dir": "test_devtral_1",
+      "files_count": 500,
+      "errors": 0,
+      "totals": {
+        "cost": 0.0,
+        "prompt_tokens": 873295262,
+        "completion_tokens": 6633309,
+        "total_tokens": 879928571,
+        "actions": 40256,
+        "api_calls": 40256
+      },
+      "averages_per_file": {
+        "cost": 0.0,
+        "prompt_tokens": 1746590.524,
+        "completion_tokens": 13266.618,
+        "total_tokens": 1759857.142,
+        "actions": 80.512,
+        "api_calls": 80.512
+      }
+    },
+    {
+      "run_dir": "test_devtral_simple_reward",
+      "files_count": 50,
+      "errors": 0,
+      "totals": {
+        "cost": 0.0,
+        "prompt_tokens": 63944895,
+        "completion_tokens": 1711578,
+        "total_tokens": 65656473,
+        "actions": 3515,
+        "api_calls": 3515
+      },
+      "averages_per_file": {
+        "cost": 0.0,
+        "prompt_tokens": 1278897.9,
+        "completion_tokens": 34231.56,
+        "total_tokens": 1313129.46,
+        "actions": 70.3,
+        "api_calls": 70.3
+      }
+    },
+    {
+      "run_dir": "test_devtral_verify",
+      "files_count": 50,
+      "errors": 0,
+      "totals": {
+        "cost": 0.0,
+        "prompt_tokens": 78958444,
+        "completion_tokens": 2032933,
+        "total_tokens": 80991377,
+        "actions": 3607,
+        "api_calls": 3607
+      },
+      "averages_per_file": {
+        "cost": 0.0,
+        "prompt_tokens": 1579168.88,
+        "completion_tokens": 40658.66,
+        "total_tokens": 1619827.54,
+        "actions": 72.14,
+        "api_calls": 72.14
+      }
+    },
+    {
+      "run_dir": "test_gpt5_mini",
+      "files_count": 500,
+      "errors": 0,
+      "totals": {
+        "cost": 8.101806550000001,
+        "prompt_tokens": 47135175,
+        "completion_tokens": 2283152,
+        "total_tokens": 49418327,
+        "actions": 4296,
+        "api_calls": 4296
+      },
+      "averages_per_file": {
+        "cost": 0.016203613100000003,
+        "prompt_tokens": 94270.35,
+        "completion_tokens": 4566.304,
+        "total_tokens": 98836.654,
+        "actions": 8.592,
+        "api_calls": 8.592
+      }
+    },
+    {
+      "run_dir": "test_gpt5_mini_simple_reward",
+      "files_count": 50,
+      "errors": 0,
+      "totals": {
+        "cost": 2.4569735,
+        "prompt_tokens": 5079390,
+        "completion_tokens": 939739,
+        "total_tokens": 6019129,
+        "actions": 571,
+        "api_calls": 571
+      },
+      "averages_per_file": {
+        "cost": 0.049139470000000005,
+        "prompt_tokens": 101587.8,
+        "completion_tokens": 18794.78,
+        "total_tokens": 120382.58,
+        "actions": 11.42,
+        "api_calls": 11.42
+      }
+    },
+    {
+      "run_dir": "test_gpt5_mini_verify",
+      "files_count": 50,
+      "errors": 0,
+      "totals": {
+        "cost": 3.16373295,
+        "prompt_tokens": 7786271,
+        "completion_tokens": 1253069,
+        "total_tokens": 9039340,
+        "actions": 628,
+        "api_calls": 628
+      },
+      "averages_per_file": {
+        "cost": 0.063274659,
+        "prompt_tokens": 155725.42,
+        "completion_tokens": 25061.38,
+        "total_tokens": 180786.8,
+        "actions": 12.56,
+        "api_calls": 12.56
+      }
+    },
+    {
+      "run_dir": "test_kat_dev",
+      "files_count": 119,
+      "errors": 0,
+      "totals": {
+        "cost": 0.0,
+        "prompt_tokens": 375177872,
+        "completion_tokens": 2626426,
+        "total_tokens": 377804298,
+        "actions": 11034,
+        "api_calls": 11034
+      },
+      "averages_per_file": {
+        "cost": 0.0,
+        "prompt_tokens": 3152755.2268907563,
+        "completion_tokens": 22070.806722689074,
+        "total_tokens": 3174826.0336134452,
+        "actions": 92.72268907563026,
+        "api_calls": 92.72268907563026
+      }
+    },
+    {
+      "run_dir": "test_qwen3_32b",
+      "files_count": 500,
+      "errors": 0,
+      "totals": {
+        "cost": 0.0,
+        "prompt_tokens": 734890791,
+        "completion_tokens": 2844169,
+        "total_tokens": 737734960,
+        "actions": 27331,
+        "api_calls": 27331
+      },
+      "averages_per_file": {
+        "cost": 0.0,
+        "prompt_tokens": 1469781.582,
+        "completion_tokens": 5688.338,
+        "total_tokens": 1475469.92,
+        "actions": 54.662,
+        "api_calls": 54.662
+      }
+    },
+    {
+      "run_dir": "test_qwen3_32b_simple_reward",
+      "files_count": 46,
+      "errors": 0,
+      "totals": {
+        "cost": 0.0,
+        "prompt_tokens": 8724206,
+        "completion_tokens": 235556,
+        "total_tokens": 8959762,
+        "actions": 728,
+        "api_calls": 730
+      },
+      "averages_per_file": {
+        "cost": 0.0,
+        "prompt_tokens": 189656.65217391305,
+        "completion_tokens": 5120.782608695652,
+        "total_tokens": 194777.4347826087,
+        "actions": 15.826086956521738,
+        "api_calls": 15.869565217391305
+      }
+    },
+    {
+      "run_dir": "test_qwen3_32b_verify",
+      "files_count": 47,
+      "errors": 0,
+      "totals": {
+        "cost": 0.0,
+        "prompt_tokens": 35651294,
+        "completion_tokens": 564638,
+        "total_tokens": 36215932,
+        "actions": 1633,
+        "api_calls": 1637
+      },
+      "averages_per_file": {
+        "cost": 0.0,
+        "prompt_tokens": 758538.1702127659,
+        "completion_tokens": 12013.574468085106,
+        "total_tokens": 770551.7446808511,
+        "actions": 34.744680851063826,
+        "api_calls": 34.829787234042556
+      }
+    },
+    {
+      "run_dir": "test_qwen3_4b",
+      "files_count": 500,
+      "errors": 0,
+      "totals": {
+        "cost": 0.0,
+        "prompt_tokens": 258003229,
+        "completion_tokens": 2119823,
+        "total_tokens": 260123052,
+        "actions": 8415,
+        "api_calls": 8415
+      },
+      "averages_per_file": {
+        "cost": 0.0,
+        "prompt_tokens": 516006.458,
+        "completion_tokens": 4239.646,
+        "total_tokens": 520246.104,
+        "actions": 16.83,
+        "api_calls": 16.83
+      }
+    },
+    {
+      "run_dir": "test_qwen3_coder_0",
+      "files_count": 500,
+      "errors": 0,
+      "totals": {
+        "cost": 0.0,
+        "prompt_tokens": 302314430,
+        "completion_tokens": 3303753,
+        "total_tokens": 305618183,
+        "actions": 17777,
+        "api_calls": 17777
+      },
+      "averages_per_file": {
+        "cost": 0.0,
+        "prompt_tokens": 604628.86,
+        "completion_tokens": 6607.506,
+        "total_tokens": 611236.366,
+        "actions": 35.554,
+        "api_calls": 35.554
+      }
+    },
+    {
+      "run_dir": "test_qwen3_coder_1",
+      "files_count": 500,
+      "errors": 0,
+      "totals": {
+        "cost": 0.0,
+        "prompt_tokens": 325953092,
+        "completion_tokens": 3324803,
+        "total_tokens": 329277895,
+        "actions": 18056,
+        "api_calls": 18056
+      },
+      "averages_per_file": {
+        "cost": 0.0,
+        "prompt_tokens": 651906.184,
+        "completion_tokens": 6649.606,
+        "total_tokens": 658555.79,
+        "actions": 36.112,
+        "api_calls": 36.112
+      }
+    }
+  ],
+  "averages_per_file": {
+    "cost": 0.003507799846625766,
+    "prompt_tokens": 1047573.538599182,
+    "completion_tokens": 9459.977505112474,
+    "total_tokens": 1057033.5161042945,
+    "actions": 46.039366053169736,
+    "api_calls": 46.04089979550102
+  }
+}

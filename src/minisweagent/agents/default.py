@@ -12,6 +12,7 @@ from minisweagent import Environment, Model
 from minisweagent.models import get_model
 from minisweagent.verifiers.first_valid import FirstValidVerifier
 from minisweagent.verifiers.llm import LLMVerifier
+from minisweagent.verifiers.prompt_loader import apply_prompt_overrides
 
 
 class CandidateSamplingConfig(BaseModel):
@@ -25,10 +26,14 @@ class CandidateSamplingConfig(BaseModel):
 
 class VerifierConfig(BaseModel):
     enabled: bool = False
-    verifier_type: Literal["first_valid", "llm"] = "first_valid"
+    verifier_type: Literal["first_valid", "llm", "reward_model"] = "first_valid"
     """Which verifier to use when enabled."""
     model: dict[str, Any] = Field(default_factory=dict)
     """Model configuration for the verifier (can differ from the agent model)."""
+    prompt_name: str | None = None
+    """Optional prompt alias to load templates from prompts/verifier/<prompt_name>."""
+    prompt_dir: str = "prompts/verifier"
+    """Directory containing prompt variants (relative to CWD unless absolute)."""
     system_template: str = (
         "You are a verifier that selects the best candidate action for the agent to execute."
     )
@@ -44,6 +49,17 @@ class VerifierConfig(BaseModel):
     )
     selection_regex: str = r"(\d+)"
     selection_index_base: int = 1
+    reward_system_template: str = (
+        "You are a reward model that scores candidate actions for a coding agent."
+    )
+    reward_prompt_template: str = (
+        "Score the candidate action for how well it advances the task safely and correctly. "
+        "Return a single line: REWARD: <number>.\n\n"
+        "Task: {{ task }}\n"
+        "Candidate:\n"
+        "{{ candidate.content }}\n"
+    )
+    reward_regex: str = r"REWARD:\s*([+-]?\d+(?:\.\d+)?)"
     fallback: Literal["first_candidate", "first_valid"] = "first_candidate"
 
 
@@ -173,14 +189,23 @@ class DefaultAgent:
     def _build_verifier(self):
         if not self.config.verifier.enabled:
             return None
+        verifier_config = apply_prompt_overrides(self.config.verifier)
         if self.config.verifier.verifier_type == "first_valid":
-            return FirstValidVerifier(self.config.verifier)
+            return FirstValidVerifier(verifier_config)
         if self.config.verifier.verifier_type == "llm":
-            model_config = self.config.verifier.model
+            model_config = verifier_config.model
             verifier_model = self.model
             if model_config:
                 verifier_model = get_model(model_config.get("model_name"), model_config)
-            return LLMVerifier(verifier_model, self.config.verifier)
+            return LLMVerifier(verifier_model, verifier_config)
+        if self.config.verifier.verifier_type == "reward_model":
+            model_config = verifier_config.model
+            verifier_model = self.model
+            if model_config:
+                verifier_model = get_model(model_config.get("model_name"), model_config)
+            from minisweagent.verifiers.reward_model import RewardModelVerifier
+
+            return RewardModelVerifier(verifier_model, verifier_config)
         raise ValueError(f"Unknown verifier type: {self.config.verifier.verifier_type}")
 
     def _get_verifier_steps(self) -> list[list[dict[str, Any]]]:

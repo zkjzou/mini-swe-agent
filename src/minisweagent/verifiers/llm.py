@@ -24,8 +24,7 @@ class LLMVerifier:
     ) -> tuple[int, dict]:
         template_vars = template_vars or {}
         verifier_vars = dict(template_vars)
-        if task is not None:
-            verifier_vars["task"] = task
+        verifier_vars["task"] = task or ""
         if messages is not None:
             verifier_vars["messages"] = messages
         if steps is not None:

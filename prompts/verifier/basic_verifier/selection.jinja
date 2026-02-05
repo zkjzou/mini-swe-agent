@@ -1,0 +1,23 @@
+Task: {{ task }}
+
+Recent conversation (latest last):
+{% for msg in messages[-6:] %}
+{{ msg.role }}: {{ msg.content }}
+{% endfor %}
+
+Candidates:
+{% for c in candidates %}
+Candidate {{ c.index + selection_index_base }}:
+{{ c.content }}
+{% endfor %}
+
+Choose the single best candidate action.
+Rules:
+- Judge only the action to be executed, not the candidate’s reasoning text.
+- Prefer commands that are safe, minimal, and likely to succeed.
+- Avoid destructive operations unless explicitly required.
+- If all candidates are invalid, pick the least harmful option.
+
+Output format:
+REASONING: <2-5 sentences>
+FINAL: <number>

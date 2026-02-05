@@ -1,5 +1,6 @@
 import os
 import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -27,6 +28,43 @@ def test_singularity_environment_config_defaults():
     assert config.forward_env == []
     assert config.timeout == 30
     assert config.executable == "singularity"
+    assert config.save_local_image is False
+    assert config.local_image_dir is None
+
+
+def test_singularity_environment_local_image_requires_dir():
+    with pytest.raises(ValueError, match="local_image_dir"):
+        SingularityEnvironment(image="docker://python:3.11-slim", save_local_image=True)
+
+
+def test_singularity_environment_local_image_pull(tmp_path, monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        cmd_strings = [str(part) for part in cmd]
+        calls.append(cmd_strings)
+        if cmd_strings[1] == "pull":
+            Path(cmd_strings[2]).parent.mkdir(parents=True, exist_ok=True)
+            Path(cmd_strings[2]).write_text("fake")
+        if cmd_strings[1] == "build":
+            Path(cmd_strings[3]).mkdir(parents=True, exist_ok=True)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr("tempfile.gettempdir", lambda: str(tmp_path))
+
+    image_dir = tmp_path / "images"
+    env = SingularityEnvironment(
+        image="docker://python:3.11-slim",
+        save_local_image=True,
+        local_image_dir=str(image_dir),
+    )
+
+    local_image_path = image_dir / "python_3.11-slim.sif"
+    assert local_image_path.exists()
+    assert any(cmd[1] == "pull" and cmd[2] == str(local_image_path) for cmd in calls)
+    assert any(cmd[1] == "build" and cmd[-1] == str(local_image_path) for cmd in calls)
+    env.cleanup()
 
 
 @pytest.mark.slow

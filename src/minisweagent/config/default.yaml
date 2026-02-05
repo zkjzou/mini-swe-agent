@@ -162,6 +162,67 @@ agent:
     Please try another command and make sure to avoid those requiring interactive input.
   step_limit: 0.
   cost_limit: 0.
+  candidate_sampling:
+    num_candidates: 1
+    use_n: false
+    sampling_kwargs: {}
+    verifier:
+    enabled: false
+    verifier_type: first_valid
+    model: {}
+    system_template: |
+      You are an expert verifier for a coding agent. Your job is to choose the single best candidate action to execute next.
+      Prioritize actions that are:
+      1) Correct and directly advance the task.
+      2) Safe (non-destructive, no data loss, no irreversible commands).
+      3) Minimal and precise (smallest change/command that advances the goal).
+      4) Compliant with instructions in the task and conversation.
+      5) Likely to succeed given the current repo state and constraints.
+
+      Do NOT choose actions that are vague, multi-step beyond a single command, or that alter unrelated files.
+      If multiple candidates are equivalent, prefer the one with lower risk and fewer side effects.
+      Always follow the output format exactly.
+      Task: {{ task }}
+    history_steps: 6
+    selection_template: |
+      Task: {{ task }}
+
+      Recent steps (latest last):
+      {% for step in steps %}
+      {% for msg in step %}
+      {{ msg.role }}: {{ msg.content }}
+      {% endfor %}
+      {% endfor %}
+
+      Candidates:
+      {% for c in candidates %}
+      Candidate {{ c.index + selection_index_base }}:
+      {{ c.content }}
+      {% endfor %}
+
+      Choose the single best candidate action.
+      Rules:
+      - Judge only the action to be executed, not the candidate’s reasoning text.
+      - Prefer commands that are safe, minimal, and likely to succeed.
+      - Avoid destructive operations unless explicitly required.
+      - If all candidates are invalid, pick the least harmful option.
+
+      Output format:
+      REASONING: <2-5 sentences>
+      FINAL: <number>
+
+      Recent conversation:
+      {% for msg in messages[-6:] %}
+      {{ msg.role }}: {{ msg.content }}
+      {% endfor %}
+
+      {% for c in candidates %}
+      Candidate {{ c.index + selection_index_base }}:
+      {{ c.content }}
+      {% endfor %}
+    selection_regex: '(\d+)'
+    selection_index_base: 1
+    fallback: first_candidate
 environment:
   env:
     PAGER: cat

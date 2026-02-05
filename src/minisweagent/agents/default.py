@@ -3,11 +3,64 @@
 import re
 import subprocess
 import time
+from typing import Any, Literal
 
 from jinja2 import StrictUndefined, Template
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from minisweagent import Environment, Model
+from minisweagent.models import get_model
+from minisweagent.verifiers.first_valid import FirstValidVerifier
+from minisweagent.verifiers.llm import LLMVerifier
+from minisweagent.verifiers.prompt_loader import apply_prompt_overrides
+
+
+class CandidateSamplingConfig(BaseModel):
+    num_candidates: int = 1
+    """How many candidate actions to sample per step."""
+    use_n: bool = False
+    """If True, try to request multiple candidates in a single model call using n."""
+    sampling_kwargs: dict[str, Any] = Field(default_factory=dict)
+    """Extra kwargs passed to model.query for sampling (e.g., temperature, top_p, max_tokens)."""
+
+
+class VerifierConfig(BaseModel):
+    enabled: bool = False
+    verifier_type: Literal["first_valid", "llm", "reward_model"] = "first_valid"
+    """Which verifier to use when enabled."""
+    model: dict[str, Any] = Field(default_factory=dict)
+    """Model configuration for the verifier (can differ from the agent model)."""
+    prompt_name: str | None = None
+    """Optional prompt alias to load templates from prompts/verifier/<prompt_name>."""
+    prompt_dir: str = "prompts/verifier"
+    """Directory containing prompt variants (relative to CWD unless absolute)."""
+    system_template: str = (
+        "You are a verifier that selects the best candidate action for the agent to execute."
+    )
+    history_steps: int = 6
+    """How many recent action+observation steps to pass to the verifier. Use -1 for all steps."""
+    selection_template: str = (
+        "Choose the best candidate action for the task. "
+        "Return only the number of the chosen candidate.\n\n"
+        "{% for c in candidates %}"
+        "Candidate {{ c.index + selection_index_base }}:\n"
+        "{{ c.content }}\n"
+        "{% endfor %}"
+    )
+    selection_regex: str = r"(\d+)"
+    selection_index_base: int = 1
+    reward_system_template: str = (
+        "You are a reward model that scores candidate actions for a coding agent."
+    )
+    reward_prompt_template: str = (
+        "Score the candidate action for how well it advances the task safely and correctly. "
+        "Return a single line: REWARD: <number>.\n\n"
+        "Task: {{ task }}\n"
+        "Candidate:\n"
+        "{{ candidate.content }}\n"
+    )
+    reward_regex: str = r"REWARD:\s*([+-]?\d+(?:\.\d+)?)"
+    fallback: Literal["first_candidate", "first_valid"] = "first_candidate"
 
 
 class AgentConfig(BaseModel):
@@ -20,6 +73,8 @@ class AgentConfig(BaseModel):
     action_regex: str = r"```bash\s*\n(.*?)\n```"
     step_limit: int = 0
     cost_limit: float = 3.0
+    candidate_sampling: CandidateSamplingConfig = Field(default_factory=CandidateSamplingConfig)
+    verifier: VerifierConfig = Field(default_factory=VerifierConfig)
 
 
 class NonTerminatingException(Exception):
@@ -53,6 +108,8 @@ class DefaultAgent:
         self.model = model
         self.env = env
         self.extra_template_vars = {}
+        self.verifier = self._build_verifier()
+        self._step_count = 0
 
     def render_template(self, template: str, **kwargs) -> str:
         template_vars = self.config.model_dump() | self.env.get_template_vars() | self.model.get_template_vars()
@@ -80,14 +137,166 @@ class DefaultAgent:
 
     def step(self) -> dict:
         """Query the LM, execute the action, return the observation."""
+        self._check_step_limit()
+        self._step_count += 1
         return self.get_observation(self.query())
+
+    @property
+    def step_count(self) -> int:
+        return self._step_count
 
     def query(self) -> dict:
         """Query the model and return the response."""
-        if 0 < self.config.step_limit <= self.model.n_calls or 0 < self.config.cost_limit <= self.model.cost:
-            raise LimitsExceeded()
-        response = self.model.query(self.messages)
+        self._check_limits()
+        responses, candidate_infos = self._sample_candidates()
+        selected_index = 0
+        verifier_metadata = {
+            "enabled": False,
+            "selected_index": 0,
+            "selection_index_base": self.config.verifier.selection_index_base,
+            "candidates": candidate_infos,
+        }
+        if self.verifier:
+            selected_index, verifier_output = self.verifier.select(
+                candidates=candidate_infos,
+                template_vars=self.extra_template_vars,
+                task=self.extra_template_vars.get("task"),
+                messages=self._get_verifier_messages(),
+                steps=self._get_verifier_steps(),
+            )
+            selected_index = max(0, min(selected_index, len(responses) - 1))
+            verifier_metadata = {
+                "enabled": True,
+                "type": self.config.verifier.verifier_type,
+                "selected_index": selected_index,
+                "selection_index_base": self.config.verifier.selection_index_base,
+                "candidates": candidate_infos,
+                "verifier_output": verifier_output,
+            }
+        response = responses[selected_index]
+        response = self._attach_verifier_metadata(response, verifier_metadata)
         self.add_message("assistant", **response)
+        return response
+
+    def _check_limits(self) -> None:
+        if 0 < self.config.cost_limit <= self.model.cost:
+            raise LimitsExceeded()
+
+    def _check_step_limit(self) -> None:
+        if 0 < self.config.step_limit <= self._step_count:
+            raise LimitsExceeded()
+
+    def _build_verifier(self):
+        if not self.config.verifier.enabled:
+            return None
+        verifier_config = apply_prompt_overrides(self.config.verifier)
+        if self.config.verifier.verifier_type == "first_valid":
+            return FirstValidVerifier(verifier_config)
+        if self.config.verifier.verifier_type == "llm":
+            model_config = verifier_config.model
+            verifier_model = self.model
+            if model_config:
+                verifier_model = get_model(model_config.get("model_name"), model_config)
+            return LLMVerifier(verifier_model, verifier_config)
+        if self.config.verifier.verifier_type == "reward_model":
+            model_config = verifier_config.model
+            verifier_model = self.model
+            if model_config:
+                verifier_model = get_model(model_config.get("model_name"), model_config)
+            from minisweagent.verifiers.reward_model import RewardModelVerifier
+
+            return RewardModelVerifier(verifier_model, verifier_config)
+        raise ValueError(f"Unknown verifier type: {self.config.verifier.verifier_type}")
+
+    def _get_verifier_steps(self) -> list[list[dict[str, Any]]]:
+        steps: list[list[dict[str, Any]]] = []
+        current_step: list[dict[str, Any]] = []
+        for message in self.messages:
+            current_step.append(message)
+            if message.get("role") == "user" and "<returncode>" in message.get("content", ""):
+                steps.append(current_step)
+                current_step = []
+        if current_step:
+            steps.append(current_step)
+        history_steps = self.config.verifier.history_steps
+        if history_steps is None or history_steps < 0:
+            return steps
+        return steps[-history_steps:]
+
+    def _get_verifier_messages(self) -> list[dict[str, Any]]:
+        steps = self._get_verifier_steps()
+        return [message for step in steps for message in step]
+
+    def _sample_candidates(self) -> tuple[list[dict], list[dict[str, Any]]]:
+        sampling_config = self.config.candidate_sampling
+        num_candidates = max(1, sampling_config.num_candidates)
+        responses: list[dict] = []
+        if num_candidates == 1:
+            responses = [self._query_once(**sampling_config.sampling_kwargs)]
+        else:
+            if sampling_config.use_n:
+                response = None
+                try:
+                    response = self._query_once(n=num_candidates, **sampling_config.sampling_kwargs)
+                    responses = self._split_n_response(response, num_candidates)
+                except (TerminatingException, NonTerminatingException):
+                    raise
+                except Exception:
+                    responses = []
+                if not responses and response is not None:
+                    responses = [response]
+            while len(responses) < num_candidates:
+                responses.append(self._query_once(**sampling_config.sampling_kwargs))
+        candidate_infos = [self._build_candidate_info(response, idx) for idx, response in enumerate(responses)]
+        return responses, candidate_infos
+
+    def _query_once(self, **kwargs) -> dict:
+        self._check_limits()
+        return self.model.query(self.messages, **kwargs)
+
+    def _split_n_response(self, response: dict, num_candidates: int) -> list[dict]:
+        extra = response.get("extra", {}) or {}
+        raw = extra.get("response")
+        if not isinstance(raw, dict):
+            return []
+        choices = raw.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return []
+        responses: list[dict] = []
+        for idx, choice in enumerate(choices[:num_candidates]):
+            message = choice.get("message", {}) if isinstance(choice, dict) else {}
+            content = message.get("content") or ""
+            responses.append(self._make_choice_response(response, content, idx))
+        return responses
+
+    def _make_choice_response(self, response: dict, content: str, choice_index: int) -> dict:
+        extra = dict(response.get("extra", {}) or {})
+        extra["choice_index"] = choice_index
+        return {"content": content, "extra": extra}
+
+    def _build_candidate_info(self, response: dict, index: int) -> dict[str, Any]:
+        content = response.get("content", "")
+        action, actions_found = self._extract_action(content)
+        info: dict[str, Any] = {
+            "index": index,
+            "content": content,
+            "action": action,
+            "actions_found": actions_found,
+        }
+        if action is None:
+            info["parse_error"] = f"expected 1 action, found {actions_found}"
+        return info
+
+    def _extract_action(self, content: str) -> tuple[str | None, int]:
+        actions = re.findall(self.config.action_regex, content, re.DOTALL)
+        if len(actions) == 1:
+            return actions[0].strip(), len(actions)
+        return None, len(actions)
+
+    def _attach_verifier_metadata(self, response: dict, metadata: dict) -> dict:
+        extra = dict(response.get("extra", {}) or {})
+        extra["verifier"] = metadata
+        response["extra"] = extra
         return response
 
     def get_observation(self, response: dict) -> dict:

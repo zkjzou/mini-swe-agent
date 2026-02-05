@@ -18,6 +18,11 @@
         <img src="../../../assets/mini_control_flow.svg" alt="Agent control flow" style="max-width: 500px;" />
     </div>
 
+!!! note "Verifier support"
+
+    The default agent can optionally sample multiple candidate actions per step and use a verifier to select the best
+    action. This is configured via the `candidate_sampling` and `verifier` fields on `AgentConfig`.
+
 ::: minisweagent.agents.default.AgentConfig
 
 ::: minisweagent.agents.default.DefaultAgent

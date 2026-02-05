@@ -4,6 +4,9 @@
 * `default.yaml` - Default config for the `default.py` agent.
 * `github_issue.yaml` - Config for the `run/github_issue.py` entry point.
 
+Both `mini.yaml` and `default.yaml` include optional `candidate_sampling` and `verifier` sections to enable sampling
+multiple candidate actions and selecting the best one with a verifier.
+
 ## Extras
 
 * `extra/swebench.yaml` - Config for the `run/extra/swebench.py` entry point.

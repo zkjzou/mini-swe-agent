@@ -39,6 +39,7 @@ def test_swebench_single_end_to_end(github_test_data, tmp_path):
         mock_get_model.return_value = _make_model_from_fixture(model_responses, cost_per_call=0.1)
 
         # Test with explicit instance ID
+        output_path = tmp_path / "test_output.json"
         main(
             subset="_test",
             split="test",
@@ -47,11 +48,16 @@ def test_swebench_single_end_to_end(github_test_data, tmp_path):
             config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
             environment_class="docker",
             exit_immediately=False,
-            output=tmp_path / "test_output.json",
+            output=output_path,
+            model_class=None,
+            agent_class=None,
+            yolo=False,
+            cost_limit=None,
         )
 
         # Verify model was called with correct parameters
         mock_get_model.assert_called_once()
+        assert output_path.exists()
 
 
 @pytest.mark.slow
@@ -72,6 +78,7 @@ def test_swebench_single_end_to_end_exit_immediately(github_test_data, tmp_path)
         mock_get_model.return_value = _make_model_from_fixture(model_responses, cost_per_call=0.1)
 
         # Test with explicit instance ID
+        output_path = tmp_path / "test_output.json"
         main(
             subset="_test",
             split="test",
@@ -80,8 +87,13 @@ def test_swebench_single_end_to_end_exit_immediately(github_test_data, tmp_path)
             config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
             environment_class="docker",
             exit_immediately=True,
-            output=tmp_path / "test_output.json",
+            output=output_path,
+            model_class=None,
+            agent_class=None,
+            yolo=False,
+            cost_limit=None,
         )
 
         # Verify model was called with correct parameters
         mock_get_model.assert_called_once()
+        assert output_path.exists()

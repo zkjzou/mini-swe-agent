@@ -3,6 +3,10 @@
 
 <h1 style="margin-bottom: 1ex;">The 100 line AI agent that's actually useful</h1>
 
+</div>
+
+<div align="center">
+
 <a href="https://join.slack.com/t/swe-bench/shared_invite/zt-36pj9bu5s-o3_yXPZbaH2wVnxnss1EkQ">
     <img src="https://img.shields.io/badge/Slack-4A154B?style=for-the-badge&logo=slack&logoColor=white" alt="Slack">
 </a>
@@ -14,6 +18,11 @@
 </a>
 
 </div>
+
+!!! warning "This is mini-swe-agent v2"
+
+    Read the [migration guide](https://mini-swe-agent.com/latest/advanced/v2_migration/). For the previous version, check out the [v1 documentation](https://mini-swe-agent.com/v1/) or the [v1 branch](https://github.com/SWE-agent/mini-swe-agent/tree/v1).
+
 In 2024, [SWE-bench](https://swebench.com) & [SWE-agent](https://swe-agent.com) helped kickstart the coding agent revolution.
 
 We now ask: **What if the agent was 100x smaller, and still worked nearly as well?**
@@ -148,7 +157,7 @@ agent.run("Write a sudoku game")</code></pre>
 
 !!! info "Upgrading to v2?"
 
-    Check out our [v2 migration guide](v2_migration.md) for all the changes and how to update your code.
+    Check out our [v2 migration guide](advanced/v2_migration.md) for all the changes and how to update your code.
 
 ## Continue reading:
 
@@ -206,6 +215,7 @@ agent.run("Write a sudoku game")</code></pre>
 
 ## 📣 News
 
+* [New tutorial on building minimal AI agents](https://minimal-agent.com/)
 * Nov 19: [Gemini 3 Pro reaches 74% on SWE-bench verified with mini-swe-agent!](https://x.com/KLieret/status/1991164693839270372)
 * Aug 19: [New blogpost: Randomly switching between GPT-5 and Sonnet 4 boosts performance](https://www.swebench.com/SWE-bench/blog/2025/08/19/mini-roulette/)
 

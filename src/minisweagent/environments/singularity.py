@@ -122,10 +122,7 @@ class SingularityEnvironment:
     def execute(self, action: dict, cwd: str = "", *, timeout: int | None = None) -> dict[str, Any]:
         """Execute a command in a Singularity container and return the result as a dict."""
         command = action.get("command", "")
-        cmd = [self.config.executable, "exec"]
-
-        # Do not inherit directories and env vars from host
-        cmd.extend(["--contain", "--cleanenv"])
+        cmd = [self.config.executable, *self.config.global_args, "exec", *self.config.exec_args]
 
         work_dir = cwd or self.config.cwd
         if work_dir and work_dir != "/":

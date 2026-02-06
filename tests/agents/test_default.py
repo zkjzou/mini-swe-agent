@@ -5,6 +5,7 @@ import yaml
 
 from minisweagent.agents.default import DefaultAgent
 from minisweagent.environments.local import LocalEnvironment
+from minisweagent.exceptions import FormatError
 from minisweagent.models.test_models import (
     DeterministicModel,
     DeterministicResponseAPIToolcallModel,
@@ -179,6 +180,62 @@ def test_cost_limit_enforcement(model_factory):
 
     info = agent.run("Test cost limit")
     assert info["exit_status"] == "LimitsExceeded"
+
+
+def test_format_error_added_to_conversation_by_default(default_config):
+    """FormatError feedback should be appended unless disabled."""
+    format_error_message = {
+        "role": "user",
+        "content": "format error feedback",
+        "extra": {"interrupt_type": "FormatError"},
+    }
+    agent = DefaultAgent(
+        model=DeterministicModel(
+            outputs=[
+                make_output("", [{"raise": FormatError(format_error_message)}]),
+                make_output(
+                    "Finish",
+                    [{"command": "echo 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'\necho 'done'"}],
+                ),
+            ]
+        ),
+        env=LocalEnvironment(),
+        **default_config,
+    )
+
+    info = agent.run("Test format error handling")
+    assert info["exit_status"] == "Submitted"
+    assert any(
+        msg.get("extra", {}).get("interrupt_type") == "FormatError"
+        and get_text(msg) == "format error feedback"
+        for msg in agent.messages
+    )
+
+
+def test_format_error_not_added_when_disabled(default_config):
+    """FormatError feedback can be skipped via config."""
+    format_error_message = {
+        "role": "user",
+        "content": "format error feedback",
+        "extra": {"interrupt_type": "FormatError"},
+    }
+    agent = DefaultAgent(
+        model=DeterministicModel(
+            outputs=[
+                make_output("", [{"raise": FormatError(format_error_message)}]),
+                make_output(
+                    "Finish",
+                    [{"command": "echo 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'\necho 'done'"}],
+                ),
+            ]
+        ),
+        env=LocalEnvironment(),
+        **{**default_config, "add_format_error_to_conversation": False},
+    )
+
+    info = agent.run("Test format error handling")
+    assert info["exit_status"] == "Submitted"
+    assert all(msg.get("extra", {}).get("interrupt_type") != "FormatError" for msg in agent.messages)
 
 
 def test_timeout_handling(model_factory):

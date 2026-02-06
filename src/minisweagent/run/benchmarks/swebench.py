@@ -71,10 +71,17 @@ class ProgressTrackingAgent(DefaultAgent):
         super().__init__(*args, **kwargs)
         self.progress_manager: RunBatchProgressManager = progress_manager
         self.instance_id = instance_id
+        self._display_step = 0
 
     def step(self) -> dict:
         """Override step to provide progress updates."""
-        self.progress_manager.update_instance_status(self.instance_id, f"Step {self.n_calls + 1:3d} (${self.cost:.2f})")
+        # Display step attempts (outer agent loop iterations): this avoids inflation from
+        # candidate sampling and still advances on retry loops.
+        self._display_step += 1
+        self.progress_manager.update_instance_status(
+            self.instance_id,
+            f"Step {self._display_step:3d} (${self.cost:.2f})",
+        )
         return super().step()
 
 

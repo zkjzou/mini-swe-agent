@@ -4,7 +4,14 @@ import yaml
 
 from minisweagent.agents.default import DefaultAgent
 from minisweagent.environments.local import LocalEnvironment
-from minisweagent.models.test_models import DeterministicModel
+from minisweagent.models.test_models import DeterministicModel, make_output
+
+
+class _StaticRewardModel:
+    def query(self, messages, **kwargs):
+        prompt = messages[-1].get("content", "")
+        score = "0.9" if "Option 2" in prompt else "0.2"
+        return {"role": "assistant", "content": f"REWARD: {score}"}
 
 
 def _load_default_agent_config() -> dict:
@@ -18,27 +25,22 @@ def test_reward_model_selects_highest_reward():
     config["verifier"] = {
         "enabled": True,
         "verifier_type": "reward_model",
-        "model": {
-            "model_class": "deterministic",
-            "model_name": "deterministic",
-            "outputs": ["REWARD: 0.2", "REWARD: 0.9"],
-        },
         "reward_regex": r"REWARD:\s*([+-]?\d+(?:\.\d+)?)",
     }
 
     model = DeterministicModel(
         outputs=[
-            "Option 1\n```bash\necho 'first'\n```",
-            "Option 2\n```bash\necho 'second'\n```",
+            make_output("Option 1", [{"command": "echo first"}]),
+            make_output("Option 2", [{"command": "echo second"}]),
         ]
     )
     env = LocalEnvironment()
     agent = DefaultAgent(model=model, env=env, **config)
-    agent.add_message("system", "system")
-    agent.add_message("user", "task")
+    agent.verifier.model = _StaticRewardModel()
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
 
     response = agent.query()
-    assert "second" in response.get("content", "")
+    assert "Option 2" in response.get("content", "")
     extra = response.get("extra", {})
     verifier = extra.get("verifier", {})
     assert verifier.get("selected_index") == 1

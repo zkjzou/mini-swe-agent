@@ -103,6 +103,7 @@ agent:
     ```
   step_limit: 0.
   cost_limit: 3.
+  add_format_error_to_conversation: true
   mode: confirm
 environment:
   env:

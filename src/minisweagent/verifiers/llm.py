@@ -34,16 +34,21 @@ class LLMVerifier:
             ]
         )
         content = response.get("content", "")
-        match = re.search(self.config.selection_regex, content)
+        matches = re.findall(self.config.selection_regex, content)
         selected_index = None
-        if match:
-            raw_index = int(match.group(1))
+        raw_index = None
+        if matches:
+            raw_index = matches[-1]
+            if isinstance(raw_index, tuple):
+                raw_index = raw_index[0]
+            raw_index = int(raw_index)
             selected_index = raw_index - self.config.selection_index_base
         if selected_index is None or not (0 <= selected_index < len(candidates)):
             selected_index = self._fallback_index(candidates)
         metadata = {
             "verifier_type": "llm",
             "raw_output": content,
+            "raw_index": raw_index,
             "parsed_index": selected_index,
             "response": response,
         }

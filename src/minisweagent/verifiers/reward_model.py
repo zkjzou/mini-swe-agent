@@ -7,6 +7,8 @@ from typing import Any
 
 from jinja2 import StrictUndefined, Template
 
+from minisweagent.verifiers.query_utils import query_verifier_text
+
 
 class RewardModelVerifier:
     """Scores each candidate action with a reward model and picks the highest reward."""
@@ -31,8 +33,9 @@ class RewardModelVerifier:
             verifier_vars["messages"] = messages
         if steps is not None:
             verifier_vars["steps"] = steps
+        n_checklist_items = self._count_checklist_items(verifier_vars)
 
-        def _score_candidate(candidate: dict[str, Any]) -> tuple[float | None, str, dict[str, Any]]:
+        def _score_candidate(candidate: dict[str, Any]) -> tuple[float | None, float | None, list[float | None], str, dict[str, Any], float]:
             system_prompt = self._render(
                 self.config.reward_system_template,
                 candidates=candidates,
@@ -48,14 +51,17 @@ class RewardModelVerifier:
             last_exc: Exception | None = None
             for attempt in range(3):
                 try:
-                    response = self.model.query(
+                    content, response, response_cost = query_verifier_text(
+                        self.model,
                         [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": reward_prompt},
-                        ]
+                        ],
                     )
-                    content = response.get("content", "")
-                    return self._parse_reward(content), content, response
+                    reward = self._parse_reward(content)
+                    progress_score = self._parse_progress_score(content)
+                    checklist_item_scores = self._parse_checklist_item_scores(content, n_checklist_items)
+                    return reward, progress_score, checklist_item_scores, content, response, response_cost
                 except Exception as exc:
                     last_exc = exc
                     if attempt < 2:
@@ -65,22 +71,31 @@ class RewardModelVerifier:
         rewards: list[float | None] = [None] * len(candidates)
         raw_outputs: list[str] = [""] * len(candidates)
         responses: list[dict[str, Any]] = [{} for _ in candidates]
+        response_costs: list[float] = [0.0] * len(candidates)
+        progress_scores: list[float | None] = [None] * len(candidates)
+        checklist_item_scores_by_candidate: list[list[float | None]] = [[] for _ in candidates]
         with ThreadPoolExecutor(max_workers=min(len(candidates), 8)) as executor:
             futures = {
                 executor.submit(_score_candidate, candidate): idx for idx, candidate in enumerate(candidates)
             }
             for future in as_completed(futures):
                 idx = futures[future]
-                reward, content, response = future.result()
+                reward, progress_score, checklist_item_scores, content, response, response_cost = future.result()
                 rewards[idx] = reward
+                progress_scores[idx] = progress_score
+                checklist_item_scores_by_candidate[idx] = checklist_item_scores
                 raw_outputs[idx] = content
                 responses[idx] = response
+                response_costs[idx] = response_cost
         selected_index = self._select_best(rewards, candidates)
         metadata = {
             "verifier_type": "reward_model",
             "rewards": rewards,
+            "candidate_progress_scores": progress_scores,
+            "candidate_checklist_item_scores": checklist_item_scores_by_candidate,
             "raw_outputs": raw_outputs,
             "responses": responses,
+            "response_costs": response_costs,
         }
         return selected_index, metadata
 
@@ -98,6 +113,44 @@ class RewardModelVerifier:
             return float(raw)
         except ValueError:
             return None
+
+    def _parse_progress_score(self, content: str) -> float | None:
+        progress_regex = getattr(self.config, "checklist_progress_regex", r"PROGRESS:\s*([+-]?\d+(?:\.\d+)?)")
+        matches = re.findall(progress_regex, content, re.MULTILINE)
+        if not matches:
+            return None
+        raw_score = matches[-1]
+        if isinstance(raw_score, tuple):
+            raw_score = raw_score[0]
+        try:
+            return float(raw_score)
+        except (ValueError, TypeError):
+            return None
+
+    def _parse_checklist_item_scores(self, content: str, n_items: int) -> list[float | None]:
+        if n_items <= 0:
+            return []
+        item_score_regex = getattr(self.config, "checklist_item_score_regex", r"Item\s+(\d+)\s*:\s*([+-]?\d+(?:\.\d+)?)")
+        scores: list[float | None] = [None] * n_items
+        for match in re.finditer(item_score_regex, content, re.MULTILINE):
+            groups = match.groups()
+            if len(groups) < 2:
+                continue
+            try:
+                raw_idx, raw_score = groups[0], groups[1]
+                idx = int(raw_idx) - 1
+                score = float(raw_score)
+            except (ValueError, TypeError):
+                continue
+            if 0 <= idx < len(scores):
+                scores[idx] = score
+        return scores
+
+    def _count_checklist_items(self, template_vars: dict[str, Any]) -> int:
+        checklist_items = template_vars.get("checklist_items")
+        if not isinstance(checklist_items, list):
+            return 0
+        return len(checklist_items)
 
     def _parse_rewards(self, content: str, n_candidates: int) -> list[float | None]:
         matches = re.findall(self.config.reward_regex, content, re.MULTILINE)

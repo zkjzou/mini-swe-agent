@@ -7,6 +7,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import random
 import traceback
 from pathlib import Path
 from typing import Any, Literal
@@ -22,6 +23,8 @@ from minisweagent.models.utils.content_string import get_content_string
 from minisweagent.utils.serialize import recursive_merge
 from minisweagent.verifiers.first_valid import FirstValidVerifier
 from minisweagent.verifiers.llm import LLMVerifier
+from minisweagent.verifiers.action_similarity import analyze_action_similarity
+from minisweagent.verifiers.checklist import generate_issue_checklist
 from minisweagent.verifiers.prompt_loader import apply_prompt_overrides
 from minisweagent.verifiers.reward_model import RewardModelVerifier
 
@@ -57,6 +60,7 @@ class VerifierConfig(BaseModel):
         "{% endfor %}"
     )
     selection_regex: str = r"(\d+)"
+    selection_score_regex: str = r"Candidate\s+(\d+)\s*:\s*([+-]?\d+(?:\.\d+)?)"
     selection_index_base: int = 1
     reward_system_template: str = "You are a reward model that scores candidate actions for a coding agent."
     reward_prompt_template: str = (
@@ -68,6 +72,44 @@ class VerifierConfig(BaseModel):
     )
     reward_regex: str = r"REWARD:\s*([+-]?\d+(?:\.\d+)?)"
     fallback: Literal["first_candidate", "first_valid"] = "first_candidate"
+    checklist_mode: Literal["off", "issue_progress"] = "off"
+    """Whether to generate and use an issue-derived verifier checklist."""
+    checklist_generate_once: bool = True
+    """If True, generate checklist only once per agent run and reuse it."""
+    checklist_min_items: int = 3
+    """Minimum checklist items to keep after parsing."""
+    checklist_max_items: int = 8
+    """Maximum checklist items to keep after parsing."""
+    checklist_item_regex: str = r"^\s*(?:[-*]|\d+[.)])\s*(.+?)\s*$"
+    """Regex for extracting checklist items from checklist-generation output."""
+    checklist_progress_regex: str = r"PROGRESS:\s*([+-]?\d+(?:\.\d+)?)"
+    """Regex for extracting overall progress score from verifier output."""
+    checklist_item_score_regex: str = r"Item\s+(\d+)\s*:\s*([+-]?\d+(?:\.\d+)?)"
+    """Regex for extracting per-checklist-item scores from verifier output."""
+    checklist_system_template: str = (
+        "You are a verifier assistant that writes concise issue-progress checklists for coding tasks. "
+        "Return only checklist content and no tool calls."
+    )
+    checklist_prompt_template: str = (
+        "Issue description:\n"
+        "{{ task }}\n\n"
+        "Recent agent context:\n"
+        "{% for msg in messages[-6:] %}{{ msg.role }}: {{ msg.content }}\n{% endfor %}\n"
+        "Generate {{ checklist_min_items }} to {{ checklist_max_items }} checklist items that track concrete progress "
+        "from diagnosis to validated fix. Keep each item short and observable.\n\n"
+        "Output format:\n"
+        "CHECKLIST:\n"
+        "- <item 1>\n"
+        "- <item 2>\n"
+    )
+    skip_if_actions_similar: bool = False
+    """If True, skip verifier when all candidate actions are very similar and sample uniformly at random."""
+    action_similarity_metric: Literal["token_jaccard"] = "token_jaccard"
+    """Similarity metric used to compare candidate actions."""
+    action_similarity_threshold: float = 0.9
+    """Skip verifier when all pairwise candidate similarities exceed this threshold."""
+    action_similarity_seed: int | None = None
+    """Optional seed for deterministic random sampling when verifier is skipped."""
 
 
 class AgentConfig(BaseModel):
@@ -99,16 +141,26 @@ class DefaultAgent:
         self.extra_template_vars: dict[str, Any] = {}
         self.logger = logging.getLogger("agent")
         self.cost = 0.0
+        self.base_model_cost = 0.0
+        self.verifier_cost = 0.0
         self.n_calls = 0
         self.step_count = 0
         self.verifier = self._build_verifier()
+        self._similarity_rng = random.Random(self.config.verifier.action_similarity_seed)
+        self._verifier_checklist_cache: dict[str, Any] | None = None
 
     def get_template_vars(self, **kwargs) -> dict:
         return recursive_merge(
             self.config.model_dump(),
             self.env.get_template_vars(),
             self.model.get_template_vars(),
-            {"n_model_calls": self.n_calls, "model_cost": self.cost, "step_count": self.step_count},
+            {
+                "n_model_calls": self.n_calls,
+                "model_cost": self.cost,
+                "base_model_cost": self.base_model_cost,
+                "verifier_model_cost": self.verifier_cost,
+                "step_count": self.step_count,
+            },
             self.extra_template_vars,
             kwargs,
         )
@@ -141,7 +193,10 @@ class DefaultAgent:
         self.messages = []
         self.step_count = 0
         self.cost = 0.0
+        self.base_model_cost = 0.0
+        self.verifier_cost = 0.0
         self.n_calls = 0
+        self._verifier_checklist_cache = None
         self.add_messages(
             self.model.format_message(role="system", content=self._render_template(self.config.system_template)),
             self.model.format_message(role="user", content=self._render_template(self.config.instance_template)),
@@ -192,8 +247,34 @@ class DefaultAgent:
             "candidates": candidate_infos,
             "verifier_output": {},
         }
+        skip_verifier = False
+        if self.verifier and self.config.verifier.skip_if_actions_similar and len(candidate_infos) > 1:
+            similarity_info = analyze_action_similarity(
+                candidate_infos,
+                threshold=self.config.verifier.action_similarity_threshold,
+                metric=self.config.verifier.action_similarity_metric,
+            )
+            if similarity_info.get("should_skip_verifier"):
+                selected_index = self._similarity_rng.randrange(len(responses))
+                verifier_output = {
+                    "skipped": True,
+                    "skip_reason": "similar_actions",
+                    "sampling_policy": "uniform_random",
+                    "random_seed": self.config.verifier.action_similarity_seed,
+                    **similarity_info,
+                }
+                verifier_metadata = {
+                    "enabled": True,
+                    "type": "similarity_gate",
+                    "selected_index": selected_index,
+                    "selection_index_base": self.config.verifier.selection_index_base,
+                    "candidates": candidate_infos,
+                    "verifier_output": verifier_output,
+                }
+                skip_verifier = True
 
-        if self.verifier:
+        if self.verifier and not skip_verifier:
+            verifier_vars, checklist_metadata = self._prepare_checklist_template_vars(verifier_vars)
             if self.config.verifier.verifier_type == "reward_model":
                 selected_index, verifier_output = self.verifier.select(
                     candidates=candidate_infos,
@@ -207,6 +288,10 @@ class DefaultAgent:
                     candidates=candidate_infos,
                     template_vars=verifier_vars,
                 )
+            if checklist_metadata is not None:
+                verifier_output = dict(verifier_output)
+                verifier_output["checklist"] = checklist_metadata
+            self._add_verifier_cost(verifier_output)
             selected_index = max(0, min(selected_index, len(responses) - 1))
             verifier_metadata = {
                 "enabled": True,
@@ -216,7 +301,6 @@ class DefaultAgent:
                 "candidates": candidate_infos,
                 "verifier_output": verifier_output,
             }
-
         message = copy.deepcopy(responses[selected_index])
         message = self._attach_verifier_metadata(message, verifier_metadata)
         self.add_messages(message)
@@ -283,8 +367,78 @@ class DefaultAgent:
         self._check_limits()
         self.n_calls += 1
         message = self.model.query(self.messages, **kwargs)
-        self.cost += message.get("extra", {}).get("cost", 0.0)
+        self.base_model_cost += float(message.get("extra", {}).get("cost", 0.0) or 0.0)
+        self.cost = self.base_model_cost + self.verifier_cost
         return message
+
+    def _add_verifier_cost(self, verifier_output: dict[str, Any]) -> None:
+        for key in ("cost", "response_cost"):
+            if (value := verifier_output.get(key)) is not None:
+                self.verifier_cost += float(value or 0.0)
+
+        response_costs = verifier_output.get("response_costs")
+        if isinstance(response_costs, list):
+            self.verifier_cost += sum(float(cost or 0.0) for cost in response_costs)
+        self.cost = self.base_model_cost + self.verifier_cost
+
+    def _prepare_checklist_template_vars(
+        self, verifier_vars: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        if not self._should_use_checklist_mode():
+            return verifier_vars, None
+
+        checklist_data = self._verifier_checklist_cache
+        generated_this_step = False
+        if checklist_data is None or not self.config.verifier.checklist_generate_once:
+            checklist_data = generate_issue_checklist(
+                self._get_checklist_model(),
+                self.config.verifier,
+                template_vars={
+                    **verifier_vars,
+                    "checklist_min_items": self.config.verifier.checklist_min_items,
+                    "checklist_max_items": self.config.verifier.checklist_max_items,
+                },
+            )
+            self._verifier_checklist_cache = checklist_data
+            generated_this_step = True
+            self._add_verifier_cost({"response_cost": checklist_data.get("response_cost", 0.0)})
+
+        raw_items = checklist_data.get("items", []) if isinstance(checklist_data, dict) else []
+        checklist_items = [item.strip() for item in raw_items if isinstance(item, str) and item.strip()]
+        checklist_text = "\n".join(f"{idx + 1}. {item}" for idx, item in enumerate(checklist_items))
+
+        updated_vars = dict(verifier_vars)
+        updated_vars.update(
+            {
+                "checklist_items": checklist_items,
+                "checklist_text": checklist_text,
+                "checklist_count": len(checklist_items),
+            }
+        )
+
+        checklist_metadata = {
+            "items": checklist_items,
+            "raw_output": checklist_data.get("raw_output", "") if isinstance(checklist_data, dict) else "",
+            "response": checklist_data.get("response", {}) if isinstance(checklist_data, dict) else {},
+            "response_cost": checklist_data.get("response_cost", 0.0) if isinstance(checklist_data, dict) else 0.0,
+            "generated_once": self.config.verifier.checklist_generate_once,
+            "generated_this_step": generated_this_step,
+            "source": "issue_description",
+        }
+        return updated_vars, checklist_metadata
+
+    def _should_use_checklist_mode(self) -> bool:
+        if not self.verifier:
+            return False
+        if self.config.verifier.checklist_mode != "issue_progress":
+            return False
+        return self.config.verifier.verifier_type in {"llm", "reward_model"}
+
+    def _get_checklist_model(self) -> Model:
+        verifier_model = getattr(self.verifier, "model", None)
+        if verifier_model is not None:
+            return verifier_model
+        return self.model
 
     def _split_n_response(self, response: dict, num_candidates: int) -> list[dict]:
         raw_response = (response.get("extra", {}) or {}).get("response")
@@ -439,6 +593,8 @@ class DefaultAgent:
             "info": {
                 "model_stats": {
                     "instance_cost": self.cost,
+                    "base_model_cost": self.base_model_cost,
+                    "verifier_model_cost": self.verifier_cost,
                     "api_calls": self.n_calls,
                     "step_count": self.step_count,
                 },

@@ -63,10 +63,78 @@ class InteractiveAgent(DefaultAgent):
                     end="",
                     highlight=False,
                 )
+                self._print_verifier_candidate_scores(msg)
             else:
                 console.print(f"\n[bold green]{role.capitalize()}[/bold green]:\n", end="", highlight=False)
             console.print(content, highlight=False, markup=False)
         return super().add_messages(*messages)
+
+    def _print_verifier_candidate_scores(self, message: dict) -> None:
+        extra = message.get("extra", {}) or {}
+        verifier = extra.get("verifier", {}) or {}
+        if not isinstance(verifier, dict) or not verifier.get("enabled"):
+            return
+
+        candidates = verifier.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            return
+
+        selection_index_base = verifier.get("selection_index_base", 1)
+        selected_index = verifier.get("selected_index")
+        rewards = self._extract_reward_scores(verifier)
+        verifier_type = verifier.get("type", "unknown")
+        console.print(f"Verifier candidates ({verifier_type}):", highlight=False, markup=False)
+
+        for i, candidate in enumerate(candidates):
+            if not isinstance(candidate, dict):
+                continue
+            raw_index = candidate.get("index", i)
+            index = raw_index if isinstance(raw_index, int) else i
+            display_index = index + selection_index_base if isinstance(selection_index_base, int) else index + 1
+            score = rewards[index] if index < len(rewards) else None
+            score_text = f"{float(score):.4f}" if isinstance(score, (int, float)) else "n/a"
+            selected_prefix = "*" if selected_index == index else " "
+            console.print(
+                f"{selected_prefix} Candidate {display_index} | score={score_text}",
+                highlight=False,
+                markup=False,
+            )
+
+            commands = self._candidate_commands(candidate)
+            command_text = " ; ".join(commands) if commands else "<no parsed action>"
+            console.print(f"  action: {command_text}", highlight=False, markup=False)
+
+    def _extract_reward_scores(self, verifier: dict) -> list[float | None]:
+        verifier_output = verifier.get("verifier_output", {}) or {}
+        if not isinstance(verifier_output, dict):
+            return []
+        rewards = verifier_output.get("rewards")
+        if not isinstance(rewards, list):
+            return []
+        parsed_rewards: list[float | None] = []
+        for reward in rewards:
+            if isinstance(reward, (int, float)):
+                parsed_rewards.append(float(reward))
+            else:
+                parsed_rewards.append(None)
+        return parsed_rewards
+
+    def _candidate_commands(self, candidate: dict) -> list[str]:
+        commands: list[str] = []
+        actions = candidate.get("actions")
+        if isinstance(actions, list):
+            for action in actions:
+                if not isinstance(action, dict):
+                    continue
+                command = action.get("command")
+                if isinstance(command, str) and command:
+                    commands.append(command)
+        if commands:
+            return commands
+        action = candidate.get("action")
+        if isinstance(action, str) and action:
+            return [action]
+        return []
 
     def query(self) -> dict:
         # Extend supermethod to handle human mode
@@ -83,8 +151,8 @@ class InteractiveAgent(DefaultAgent):
                     self.add_messages(msg)
                     return msg
         try:
-            with console.status("Waiting for the LM to respond..."):
-                return super().query()
+            #with console.status("Waiting for the LM to respond..."):
+            return super().query()
         except LimitsExceeded:
             console.print(
                 f"Limits exceeded. Limits: {self.config.step_limit} steps, ${self.config.cost_limit}.\n"

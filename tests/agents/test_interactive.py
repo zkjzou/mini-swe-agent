@@ -1152,3 +1152,38 @@ def test_confirm_exit_config_field_can_be_set(model_factory):
         },
     )
     assert agent_without_confirm.config.confirm_exit is False
+
+
+def test_prints_verifier_candidate_scores(default_config):
+    agent = InteractiveAgent(
+        model=DeterministicModel(outputs=[]),
+        env=LocalEnvironment(),
+        **default_config,
+    )
+    message = {
+        "role": "assistant",
+        "content": "Selected candidate.",
+        "extra": {
+            "verifier": {
+                "enabled": True,
+                "type": "reward_model",
+                "selected_index": 1,
+                "selection_index_base": 1,
+                "candidates": [
+                    {"index": 0, "actions": [{"command": "echo first"}]},
+                    {"index": 1, "actions": [{"command": "echo second"}]},
+                ],
+                "verifier_output": {"rewards": [0.2, 0.9]},
+            }
+        },
+    }
+
+    with patch("minisweagent.agents.interactive.console.print") as mock_print:
+        agent.add_messages(message)
+
+    printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
+    assert "Verifier candidates (reward_model):" in printed_output
+    assert "Candidate 1 | score=0.2000" in printed_output
+    assert "Candidate 2 | score=0.9000" in printed_output
+    assert "action: echo first" in printed_output
+    assert "action: echo second" in printed_output

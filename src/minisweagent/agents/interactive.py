@@ -110,6 +110,8 @@ class InteractiveAgent(DefaultAgent):
             return []
         rewards = verifier_output.get("rewards")
         if not isinstance(rewards, list):
+            rewards = verifier_output.get("scores")
+        if not isinstance(rewards, list):
             return []
         parsed_rewards: list[float | None] = []
         for reward in rewards:

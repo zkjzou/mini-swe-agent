@@ -1187,3 +1187,36 @@ def test_prints_verifier_candidate_scores(default_config):
     assert "Candidate 2 | score=0.9000" in printed_output
     assert "action: echo first" in printed_output
     assert "action: echo second" in printed_output
+
+
+def test_prints_llm_verifier_candidate_scores(default_config):
+    agent = InteractiveAgent(
+        model=DeterministicModel(outputs=[]),
+        env=LocalEnvironment(),
+        **default_config,
+    )
+    message = {
+        "role": "assistant",
+        "content": "Selected candidate.",
+        "extra": {
+            "verifier": {
+                "enabled": True,
+                "type": "llm",
+                "selected_index": 1,
+                "selection_index_base": 1,
+                "candidates": [
+                    {"index": 0, "actions": [{"command": "echo first"}]},
+                    {"index": 1, "actions": [{"command": "echo second"}]},
+                ],
+                "verifier_output": {"scores": [0.3, 0.8]},
+            }
+        },
+    }
+
+    with patch("minisweagent.agents.interactive.console.print") as mock_print:
+        agent.add_messages(message)
+
+    printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
+    assert "Verifier candidates (llm):" in printed_output
+    assert "Candidate 1 | score=0.3000" in printed_output
+    assert "Candidate 2 | score=0.8000" in printed_output

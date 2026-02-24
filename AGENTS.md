@@ -3,6 +3,12 @@
 # The MOST IMPORTANT RULE YOU NEED TO FOLLOW: ONLY EDIT FILES IN /home/zkjzou/SWE-PRM/mini-swe-agent
 After each action you take, you need to output you didn't edit files outside the current work directory. Otherwise, I will assume you disobey this rule. 
 
+# Commit & Pull Request Guidelines
+- Recent commits use short prefixes like `Feat:`, `Fix:`, `Doc:`, `CI:`, or `chore:` (often with PR numbers).
+- When modifying the codebase, create a git commit at the end of each round with a meaningful commit message describing the round's changes.
+- PRs should include: a brief summary, linked issues, and tests run (or note if not run).
+- For UI/textual changes, include a screenshot or short GIF when practical.
+
 ## Project Structure & Module Organization
 - `src/minisweagent/` is the main package. Core areas: `agents/`, `models/`, `environments/`, `run/`, and `config/`.
 - `tests/` holds pytest suites, typically named `test_*.py` and grouped by area (e.g., `tests/models/`).
@@ -37,12 +43,6 @@ docs/
 - Tests use `pytest` with `pytest-xdist` for parallel runs.
 - Place new tests under `tests/` near related domains (e.g., `tests/environments/`).
 - Keep tests concise and readable; avoid verbose fixtures unless needed.
-
-## Commit & Pull Request Guidelines
-- Recent commits use short prefixes like `Feat:`, `Fix:`, `Doc:`, `CI:`, or `chore:` (often with PR numbers).
-- When modifying the codebase, create a git commit at the end of each round with a meaningful commit message describing the round's changes.
-- PRs should include: a brief summary, linked issues, and tests run (or note if not run).
-- For UI/textual changes, include a screenshot or short GIF when practical.
 
 ## Design & Architecture Notes
 - The project aims to stay minimal, hackable, and high-quality.

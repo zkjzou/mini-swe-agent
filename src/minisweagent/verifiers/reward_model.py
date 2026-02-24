@@ -103,29 +103,62 @@ class RewardModelVerifier:
         return Template(template, undefined=StrictUndefined).render(**kwargs)
 
     def _parse_reward(self, content: str) -> float | None:
-        matches = re.findall(self.config.reward_regex, content, re.MULTILINE)
-        if not matches:
-            return None
-        raw = matches[-1]
-        if isinstance(raw, tuple):
-            raw = raw[0]
-        try:
-            return float(raw)
-        except ValueError:
-            return None
+        patterns: list[str] = []
+        configured_pattern = getattr(self.config, "reward_regex", None)
+        if isinstance(configured_pattern, str) and configured_pattern.strip():
+            patterns.append(configured_pattern)
+        for fallback_pattern in (
+            r"FINAL:\s*([+-]?\d+(?:\.\d+)?)",
+            r"SCORE:\s*([+-]?\d+(?:\.\d+)?)",
+            r"REWARD:\s*([+-]?\d+(?:\.\d+)?)",
+        ):
+            if fallback_pattern not in patterns:
+                patterns.append(fallback_pattern)
+
+        for pattern in patterns:
+            matches = re.findall(pattern, content, re.MULTILINE)
+            if not matches:
+                continue
+            raw = matches[-1]
+            if isinstance(raw, tuple):
+                raw = raw[0]
+            try:
+                return float(raw)
+            except ValueError:
+                continue
+        return None
 
     def _parse_progress_score(self, content: str) -> float | None:
         progress_regex = getattr(self.config, "checklist_progress_regex", r"PROGRESS:\s*([+-]?\d+(?:\.\d+)?)")
         matches = re.findall(progress_regex, content, re.MULTILINE)
-        if not matches:
+        if matches:
+            raw_score = matches[-1]
+            if isinstance(raw_score, tuple):
+                raw_score = raw_score[0]
+            try:
+                return float(raw_score)
+            except (ValueError, TypeError):
+                pass
+
+        # Backward-compatible fallback for textual progress labels such as:
+        # "PROGRESS: Yes + short reason" or "PROGRESS: No + short reason".
+        text_matches = re.findall(r"PROGRESS:\s*(.+)", content, re.MULTILINE)
+        if not text_matches:
             return None
-        raw_score = matches[-1]
-        if isinstance(raw_score, tuple):
-            raw_score = raw_score[0]
-        try:
-            return float(raw_score)
-        except (ValueError, TypeError):
+        raw_text = text_matches[-1].strip().lower()
+        if not raw_text:
             return None
+        if raw_text.startswith("yes"):
+            return 1.0
+        if raw_text.startswith("no"):
+            return 0.0
+        percent_match = re.search(r"([+-]?\d+(?:\.\d+)?)\s*%", raw_text)
+        if percent_match:
+            try:
+                return float(percent_match.group(1)) / 100.0
+            except (ValueError, TypeError):
+                return None
+        return None
 
     def _parse_checklist_item_scores(self, content: str, n_items: int) -> list[float | None]:
         if n_items <= 0:

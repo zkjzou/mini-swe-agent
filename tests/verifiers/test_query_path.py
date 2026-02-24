@@ -151,6 +151,59 @@ def test_reward_verifier_uses_raw_query_path_and_extracts_response_output_text()
     assert model.query_called is False
 
 
+def test_reward_verifier_falls_back_to_score_when_configured_regex_misses():
+    class _ScoreOnlyModel:
+        def _prepare_messages_for_api(self, messages):
+            return messages
+
+        def _query(self, messages, **kwargs):
+            score = "0.85" if "Option 2" in messages[-1]["content"] else "0.15"
+            return {
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": (
+                                    "CHECKLIST_ITEM_SCORES:\n- Item 1: 0.6\n"
+                                    "PROGRESS: Yes + moved forward\n"
+                                    f"SCORE: {score}"
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            }
+
+        def _calculate_cost(self, response):
+            return {"cost": 0.1}
+
+    model = _ScoreOnlyModel()
+    config = SimpleNamespace(
+        reward_system_template="system",
+        reward_prompt_template="Candidate action:\n{{ candidate.content }}",
+        reward_regex=r"FINAL:\s*([01](?:\.\d+)?)",
+        fallback="first_candidate",
+    )
+    verifier = RewardModelVerifier(model, config)
+    candidates = [
+        {"index": 0, "content": "Option 1", "action": "echo first"},
+        {"index": 1, "content": "Option 2", "action": "echo second"},
+    ]
+
+    selected_index, metadata = verifier.select(
+        candidates=candidates,
+        template_vars={"checklist_items": ["reproduce"]},
+    )
+
+    assert selected_index == 1
+    assert metadata["rewards"] == [0.15, 0.85]
+    assert metadata["candidate_progress_scores"] == [1.0, 1.0]
+    assert "SCORE: 0.85" in metadata["raw_outputs"][1]
+
+
 def test_llm_verifier_falls_back_to_query_when_raw_query_path_not_available():
     model = _QueryOnlyModel()
     config = SimpleNamespace(

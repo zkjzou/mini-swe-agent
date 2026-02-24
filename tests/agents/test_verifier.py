@@ -220,3 +220,71 @@ def test_checklist_mode_generates_once_and_reuses_across_queries():
     assert first_verifier_output.get("checklist_item_scores") == [0.6, 0.2, 0.1]
     assert second_verifier_output.get("checklist_item_scores") == [0.8, 0.7, 0.4]
     assert agent.verifier_cost == 3.0
+
+
+def test_dynamic_checklist_regenerate_mode_refreshes_each_query():
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [
+                make_output("CHECKLIST:\n- Reproduce issue\n- Implement fix\n- Validate behavior", []),
+                make_output(
+                    "REASONING: choose 1\n"
+                    "CHECKLIST_ITEM_SCORES:\n- Item 1: 0.6\n- Item 2: 0.2\n- Item 3: 0.1\n"
+                    "PROGRESS: 0.3\nFINAL: 1",
+                    [],
+                ),
+                make_output("CHECKLIST:\n- Reproduce issue again\n- Patch source\n- Re-run focused tests", []),
+                make_output(
+                    "REASONING: choose 2\n"
+                    "CHECKLIST_ITEM_SCORES:\n- Item 1: 0.7\n- Item 2: 0.8\n- Item 3: 0.6\n"
+                    "PROGRESS: 0.6\nFINAL: 2",
+                    [],
+                ),
+            ],
+        },
+        "checklist_mode": "issue_progress",
+        "checklist_dynamic": True,
+        "checklist_update_mode": "regenerate",
+        "checklist_generate_once": True,
+        "checklist_min_items": 3,
+        "checklist_max_items": 5,
+    }
+
+    model = DeterministicModel(
+        outputs=[
+            make_output("Candidate 1A", [{"command": "echo first-a"}]),
+            make_output("Candidate 2A", [{"command": "echo second-a"}]),
+            make_output("Candidate 1B", [{"command": "echo first-b"}]),
+            make_output("Candidate 2B", [{"command": "echo second-b"}]),
+        ]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    assert agent.verifier.config.prompt_name == "dynamic_checklist_regenerate/verifier"
+    assert "Generate a complete NEW checklist" in agent.verifier.config.checklist_prompt_template
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    first = agent.query()
+    second = agent.query()
+
+    first_verifier_output = first.get("extra", {}).get("verifier", {}).get("verifier_output", {})
+    second_verifier_output = second.get("extra", {}).get("verifier", {}).get("verifier_output", {})
+    first_checklist = first_verifier_output.get("checklist", {})
+    second_checklist = second_verifier_output.get("checklist", {})
+
+    assert first_checklist.get("generated_this_step") is True
+    assert second_checklist.get("generated_this_step") is True
+    assert first_checklist.get("dynamic") is True
+    assert second_checklist.get("dynamic") is True
+    assert first_checklist.get("update_mode") == "regenerate"
+    assert second_checklist.get("update_mode") == "regenerate"
+    assert first_checklist.get("items") == ["Reproduce issue", "Implement fix", "Validate behavior"]
+    assert second_checklist.get("items") == ["Reproduce issue again", "Patch source", "Re-run focused tests"]
+    assert agent.verifier_cost == 4.0

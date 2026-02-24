@@ -111,3 +111,82 @@ def test_reward_model_checklist_mode_attaches_progress_metadata():
     assert checklist.get("items") == ["Reproduce issue", "Implement fix", "Validate tests"]
     assert checklist.get("generated_this_step") is True
     assert agent.verifier_cost == 0.8
+
+
+def test_dynamic_checklist_modify_mode_uses_previous_checklist_context():
+    class _DynamicChecklistRewardModel:
+        def __init__(self):
+            self.checklist_prompts: list[str] = []
+
+        def query(self, messages, **kwargs):
+            prompt = messages[-1].get("content", "")
+            if "Output format:" in prompt and "CHECKLIST:" in prompt:
+                self.checklist_prompts.append(prompt)
+                if len(self.checklist_prompts) == 1:
+                    return {
+                        "role": "assistant",
+                        "content": "CHECKLIST:\n- Reproduce issue\n- Implement fix\n- Validate tests\n",
+                        "extra": {"cost": 0.1},
+                    }
+                return {
+                    "role": "assistant",
+                    "content": "CHECKLIST:\n- Confirm repro still valid\n- Implement fix\n- Validate tests\n",
+                    "extra": {"cost": 0.1},
+                }
+            return {
+                "role": "assistant",
+                "content": (
+                    "CHECKLIST_ITEM_SCORES:\n- Item 1: 0.4\n- Item 2: 0.5\n- Item 3: 0.6\n"
+                    "PROGRESS: 0.4\nREWARD: 0.5"
+                ),
+                "extra": {"cost": 0.1},
+            }
+
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "reward_model",
+        "reward_regex": r"REWARD:\s*([+-]?\d+(?:\.\d+)?)",
+        "checklist_mode": "issue_progress",
+        "checklist_dynamic": True,
+        "checklist_update_mode": "modify",
+        "checklist_generate_once": True,
+        "checklist_min_items": 3,
+        "checklist_max_items": 5,
+    }
+
+    model = DeterministicModel(
+        outputs=[
+            make_output("Option 1", [{"command": "echo first"}]),
+            make_output("Option 1 again", [{"command": "echo second"}]),
+        ]
+    )
+    env = LocalEnvironment()
+    agent = DefaultAgent(model=model, env=env, **config)
+    dynamic_model = _DynamicChecklistRewardModel()
+    agent.verifier.model = dynamic_model
+    assert agent.verifier.config.prompt_name == "dynamic_checklist_modify/reward"
+    assert "Existing checklist:" in agent.verifier.config.checklist_prompt_template
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    first = agent.query()
+    second = agent.query()
+
+    first_verifier_output = first.get("extra", {}).get("verifier", {}).get("verifier_output", {})
+    second_verifier_output = second.get("extra", {}).get("verifier", {}).get("verifier_output", {})
+    first_checklist = first_verifier_output.get("checklist", {})
+    second_checklist = second_verifier_output.get("checklist", {})
+
+    assert len(dynamic_model.checklist_prompts) == 2
+    assert "Existing checklist:" in dynamic_model.checklist_prompts[1]
+    assert "1. Reproduce issue" in dynamic_model.checklist_prompts[1]
+    assert first_checklist.get("generated_this_step") is True
+    assert second_checklist.get("generated_this_step") is True
+    assert first_checklist.get("dynamic") is True
+    assert second_checklist.get("dynamic") is True
+    assert first_checklist.get("update_mode") == "modify"
+    assert second_checklist.get("update_mode") == "modify"
+    assert first_checklist.get("items") == ["Reproduce issue", "Implement fix", "Validate tests"]
+    assert second_checklist.get("items") == ["Confirm repro still valid", "Implement fix", "Validate tests"]
+    assert abs(agent.verifier_cost - 0.4) < 1e-9

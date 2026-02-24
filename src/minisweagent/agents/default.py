@@ -74,6 +74,10 @@ class VerifierConfig(BaseModel):
     fallback: Literal["first_candidate", "first_valid"] = "first_candidate"
     checklist_mode: Literal["off", "issue_progress"] = "off"
     """Whether to generate and use an issue-derived verifier checklist."""
+    checklist_dynamic: bool = False
+    """If True, regenerate checklist each step using latest context."""
+    checklist_update_mode: Literal["regenerate", "modify"] = "regenerate"
+    """Dynamic checklist update strategy: regenerate from scratch or modify prior checklist."""
     checklist_generate_once: bool = True
     """If True, generate checklist only once per agent run and reuse it."""
     checklist_min_items: int = 3
@@ -324,7 +328,16 @@ class DefaultAgent:
     def _build_verifier(self):
         if not self.config.verifier.enabled:
             return None
-        verifier_config = apply_prompt_overrides(self.config.verifier.model_copy(deep=True))
+        verifier_config = self.config.verifier.model_copy(deep=True)
+        if (
+            verifier_config.checklist_mode == "issue_progress"
+            and verifier_config.checklist_dynamic
+            and verifier_config.verifier_type in {"llm", "reward_model"}
+            and not verifier_config.prompt_name
+        ):
+            suffix = "verifier" if verifier_config.verifier_type == "llm" else "reward"
+            verifier_config.prompt_name = f"dynamic_checklist_{verifier_config.checklist_update_mode}/{suffix}"
+        verifier_config = apply_prompt_overrides(verifier_config)
         if verifier_config.verifier_type == "first_valid":
             return FirstValidVerifier(verifier_config)
         verifier_model = self.model
@@ -387,16 +400,29 @@ class DefaultAgent:
         if not self._should_use_checklist_mode():
             return verifier_vars, None
 
+        checklist_config = self._get_checklist_config()
         checklist_data = self._verifier_checklist_cache
+        dynamic_enabled = bool(getattr(checklist_config, "checklist_dynamic", False))
+        update_mode = getattr(checklist_config, "checklist_update_mode", "regenerate")
+        previous_items = (
+            [item.strip() for item in checklist_data.get("items", []) if isinstance(item, str) and item.strip()]
+            if isinstance(checklist_data, dict)
+            else []
+        )
+        previous_text = "\n".join(f"{idx + 1}. {item}" for idx, item in enumerate(previous_items))
         generated_this_step = False
-        if checklist_data is None or not self.config.verifier.checklist_generate_once:
+        should_generate = dynamic_enabled or checklist_data is None or not bool(checklist_config.checklist_generate_once)
+        if should_generate:
             checklist_data = generate_issue_checklist(
                 self._get_checklist_model(),
-                self.config.verifier,
+                checklist_config,
                 template_vars={
                     **verifier_vars,
-                    "checklist_min_items": self.config.verifier.checklist_min_items,
-                    "checklist_max_items": self.config.verifier.checklist_max_items,
+                    "checklist_min_items": checklist_config.checklist_min_items,
+                    "checklist_max_items": checklist_config.checklist_max_items,
+                    "checklist_update_mode": update_mode,
+                    "previous_checklist_items": previous_items,
+                    "previous_checklist_text": previous_text,
                 },
             )
             self._verifier_checklist_cache = checklist_data
@@ -421,9 +447,12 @@ class DefaultAgent:
             "raw_output": checklist_data.get("raw_output", "") if isinstance(checklist_data, dict) else "",
             "response": checklist_data.get("response", {}) if isinstance(checklist_data, dict) else {},
             "response_cost": checklist_data.get("response_cost", 0.0) if isinstance(checklist_data, dict) else 0.0,
-            "generated_once": self.config.verifier.checklist_generate_once,
+            "generated_once": checklist_config.checklist_generate_once,
             "generated_this_step": generated_this_step,
-            "source": "issue_description",
+            "dynamic": dynamic_enabled,
+            "update_mode": update_mode if dynamic_enabled else None,
+            "generation_mode": "dynamic" if dynamic_enabled else "static",
+            "source": "dynamic_checklist" if dynamic_enabled else "issue_description",
         }
         return updated_vars, checklist_metadata
 
@@ -439,6 +468,12 @@ class DefaultAgent:
         if verifier_model is not None:
             return verifier_model
         return self.model
+
+    def _get_checklist_config(self) -> VerifierConfig:
+        verifier_config = getattr(self.verifier, "config", None)
+        if isinstance(verifier_config, VerifierConfig):
+            return verifier_config
+        return self.config.verifier
 
     def _split_n_response(self, response: dict, num_candidates: int) -> list[dict]:
         raw_response = (response.get("extra", {}) or {}).get("response")

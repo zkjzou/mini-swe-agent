@@ -33,6 +33,18 @@ def _iter_trajectory_files(root: Path) -> list[Path]:
     raise FileNotFoundError(f"Path does not exist: {root}")
 
 
+def _parse_models(models: list[str] | None) -> set[str]:
+    parsed: set[str] = set()
+    if not models:
+        return parsed
+    for item in models:
+        for token in item.split(","):
+            token = token.strip()
+            if token:
+                parsed.add(token)
+    return parsed
+
+
 def _count_role(messages: Any, role: str) -> int:
     if not isinstance(messages, list):
         return 0
@@ -208,6 +220,15 @@ def _group_key(root: Path, path: Path) -> str:
     return rel.parts[0] if rel.parts else "."
 
 
+def _filter_files_by_groups(root: Path, files: list[Path], groups: set[str]) -> tuple[list[Path], list[str]]:
+    if not groups:
+        return files, []
+    available = {_group_key(root, path) for path in files}
+    missing = sorted(groups - available)
+    filtered = [path for path in files if _group_key(root, path) in groups]
+    return filtered, missing
+
+
 def _empty_metrics() -> Dict[str, Any]:
     return {
         "cost": 0.0,
@@ -270,8 +291,10 @@ def _analyze_payload(obj: Dict[str, Any], path: Path, *, root: Path) -> Dict[str
     }
 
 
-def summarize(root: Path, *, include_files: bool = False) -> Dict[str, Any]:
+def summarize(root: Path, *, include_files: bool = False, models: set[str] | None = None) -> Dict[str, Any]:
     files = _iter_trajectory_files(root)
+    selected_models = set(models or [])
+    files, missing_models = _filter_files_by_groups(root, files, selected_models)
     summary: Dict[str, Any] = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "root": str(root),
@@ -280,6 +303,10 @@ def summarize(root: Path, *, include_files: bool = False) -> Dict[str, Any]:
         "totals": _empty_metrics(),
         "runs": [],
     }
+    if selected_models:
+        summary["selected_models"] = sorted(selected_models)
+        if missing_models:
+            summary["missing_models"] = missing_models
 
     runs: Dict[str, Dict[str, Any]] = {}
 
@@ -350,9 +377,26 @@ def main() -> int:
         action="store_true",
         help="Include per-file metrics in the output.",
     )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        default=None,
+        help=(
+            "Exact top-level run_dir names to include (space- and/or comma-separated). "
+            "Example: --models run_a run_b"
+        ),
+    )
     args = parser.parse_args()
 
-    summary = summarize(Path(args.root), include_files=args.include_files)
+    root = Path(args.root)
+    models = _parse_models(args.models)
+    if root.is_file() and models:
+        raise ValueError("--models requires --root to be a directory")
+
+    summary = summarize(root, include_files=args.include_files, models=models)
+    missing_models = summary.get("missing_models", [])
+    if missing_models:
+        raise ValueError(f"Exact model match not found for: {', '.join(missing_models)}")
     payload = json.dumps(summary, indent=2, sort_keys=False)
 
     if args.output:

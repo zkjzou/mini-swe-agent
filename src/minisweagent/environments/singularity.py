@@ -18,7 +18,7 @@ from minisweagent.utils.serialize import recursive_merge
 
 class SingularityEnvironmentConfig(BaseModel):
     image: str
-    cwd: str = "/"
+    cwd: str = "/testbed"
     env: dict[str, str] = {}
     """Environment variables to set in the container."""
     forward_env: list[str] = []
@@ -33,6 +33,10 @@ class SingularityEnvironmentConfig(BaseModel):
     """Whether to pull and reuse a local image when building the sandbox."""
     local_image_dir: str | None = None
     """Directory to store pulled images when save_local_image is True."""
+    global_args: list[str] = ["--quiet"]
+    """Global arguments passed before the subcommand (e.g., --quiet, --debug)."""
+    exec_args: list[str] = ["--contain", "--cleanenv"]
+    """Arguments passed to `singularity exec`."""
 
 
 class SingularityEnvironment:
@@ -109,6 +113,15 @@ class SingularityEnvironment:
     def get_template_vars(self, **kwargs) -> dict[str, Any]:
         return recursive_merge(self.config.model_dump(), kwargs)
 
+    @staticmethod
+    def _ensure_default_python(command: str) -> str:
+        stripped_command = command.lstrip()
+        if re.match(r"^python(\s|$)", stripped_command):
+            return re.sub(r"^python(?=\s|$)", "/opt/miniconda3/envs/testbed/bin/python", stripped_command, count=1)
+        if re.match(r"^python3(\s|$)", stripped_command):
+            return re.sub(r"^python3(?=\s|$)", "/opt/miniconda3/envs/testbed/bin/python", stripped_command, count=1)
+        return command
+
     def serialize(self) -> dict:
         return {
             "info": {
@@ -121,7 +134,7 @@ class SingularityEnvironment:
 
     def execute(self, action: dict, cwd: str = "", *, timeout: int | None = None) -> dict[str, Any]:
         """Execute a command in a Singularity container and return the result as a dict."""
-        command = action.get("command", "")
+        command = self._ensure_default_python(action.get("command", ""))
         cmd = [self.config.executable, *self.config.global_args, "exec", *self.config.exec_args]
 
         work_dir = cwd or self.config.cwd

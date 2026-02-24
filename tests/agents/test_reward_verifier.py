@@ -183,6 +183,8 @@ def test_dynamic_checklist_modify_mode_uses_previous_checklist_context():
     second_checklist = second_verifier_output.get("checklist", {})
 
     assert len(dynamic_model.checklist_prompts) == 2
+    assert "Existing checklist:" not in dynamic_model.checklist_prompts[0]
+    assert "Generate 3 to 5 checklist items" in dynamic_model.checklist_prompts[0]
     assert "Existing checklist:" in dynamic_model.checklist_prompts[1]
     assert "1. Reproduce issue" in dynamic_model.checklist_prompts[1]
     assert first_checklist.get("generated_this_step") is True
@@ -191,6 +193,8 @@ def test_dynamic_checklist_modify_mode_uses_previous_checklist_context():
     assert second_checklist.get("dynamic") is True
     assert first_checklist.get("update_mode") == "modify"
     assert second_checklist.get("update_mode") == "modify"
+    assert first_checklist.get("source") == "static_checklist_seed"
+    assert second_checklist.get("source") == "dynamic_checklist"
     assert first_checklist.get("items") == ["Reproduce issue", "Implement fix", "Validate tests"]
     assert second_checklist.get("items") == ["Confirm repro still valid", "Implement fix", "Validate tests"]
     assert abs(agent.verifier_cost - 0.4) < 1e-9

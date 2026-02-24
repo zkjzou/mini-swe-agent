@@ -441,17 +441,22 @@ class DefaultAgent:
         generated_this_step = False
         generated_response_cost = 0.0
         generated_api_calls = 0
+        seeded_from_static_prompt = False
         should_generate = (
             dynamic_enabled or checklist_data is None or not bool(checklist_config.checklist_generate_once)
         )
         if should_generate:
+            generation_config = checklist_config
+            if dynamic_enabled and update_mode == "modify" and not previous_items:
+                generation_config = self._get_static_seed_checklist_config(checklist_config)
+                seeded_from_static_prompt = True
             checklist_data = generate_issue_checklist(
                 self._get_checklist_model(),
-                checklist_config,
+                generation_config,
                 template_vars={
                     **verifier_vars,
-                    "checklist_min_items": checklist_config.checklist_min_items,
-                    "checklist_max_items": checklist_config.checklist_max_items,
+                    "checklist_min_items": generation_config.checklist_min_items,
+                    "checklist_max_items": generation_config.checklist_max_items,
                     "checklist_update_mode": update_mode,
                     "previous_checklist_items": previous_items,
                     "previous_checklist_text": previous_text,
@@ -489,7 +494,13 @@ class DefaultAgent:
             "dynamic": dynamic_enabled,
             "update_mode": update_mode if dynamic_enabled else None,
             "generation_mode": "dynamic" if dynamic_enabled else "static",
-            "source": "dynamic_checklist" if dynamic_enabled else "issue_description",
+            "source": (
+                "issue_description"
+                if not dynamic_enabled
+                else "static_checklist_seed"
+                if seeded_from_static_prompt
+                else "dynamic_checklist"
+            ),
         }
         return updated_vars, checklist_metadata
 
@@ -513,6 +524,18 @@ class DefaultAgent:
         if isinstance(self._resolved_verifier_config, VerifierConfig):
             return self._resolved_verifier_config
         return self.config.verifier
+
+    def _get_static_seed_checklist_config(self, checklist_config: VerifierConfig) -> VerifierConfig:
+        static_prompt_name: str | None = None
+        if checklist_config.verifier_type == "llm":
+            static_prompt_name = "checklist/verifier"
+        elif checklist_config.verifier_type == "reward_model":
+            static_prompt_name = "checklist/reward"
+        if static_prompt_name is None:
+            return checklist_config
+        static_config = checklist_config.model_copy(deep=True)
+        static_config.prompt_name = static_prompt_name
+        return apply_prompt_overrides(static_config)
 
     def _split_n_response(self, response: dict, num_candidates: int) -> list[dict]:
         raw_response = (response.get("extra", {}) or {}).get("response")

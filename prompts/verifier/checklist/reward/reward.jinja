@@ -35,13 +35,14 @@ Assign a scalar score in [0.0, 1.0] reflecting how appropriate this candidate is
 Also estimate completion score for each checklist item and overall progress.
 
 Output format:
-REASONING: <2-5 sentences>
 CHECKLIST_ITEM_SCORES:
 {% for item in checklist_items %}
 - Item {{ loop.index }}: <scalar 0.0-1.0>
+- REASONING: <1-2 sentences to explain why the score is assigned to this item>
 {% endfor %}
-PROGRESS: <scalar 0.0-1.0>
-FINAL: <scalar value between 0.0 and 1.0>
+PROGRESS: <Yes/No + short reason>
+REASONING: <2-3 sentences>
+SCORE: <scalar 0.0-1.0>
 
 [[[CHECKLIST_SYSTEM_TEMPLATE]]]
 You generate concise issue-progress checklists for a coding agent verifier.

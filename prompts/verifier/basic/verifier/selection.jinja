@@ -32,12 +32,14 @@ Rules:
 - Prefer commands that are safe, minimal, and likely to succeed.
 - Avoid destructive operations unless explicitly required.
 - If all candidates are invalid, pick the least harmful option.
-- Assign each candidate a scalar score between 0.0 and 1.0.
+- For each candidate, predict a concrete next-state progression grounded in the context and assign a score.
+- Always include a scalar score for every candidate action.
 
 Output format:
-REASONING: <2-5 sentences>
-SCORES:
 {% for c in candidates %}
-- Candidate {{ c.index + selection_index_base }}: <scalar 0.0-1.0>
+- Candidate {{ c.index + selection_index_base }}: 
+  REASONING: <2-5 sentences>
+  SCORE: <scalar 0.0-1.0>
 {% endfor %}
+REASONING: <2-5 sentences>
 FINAL: <number>

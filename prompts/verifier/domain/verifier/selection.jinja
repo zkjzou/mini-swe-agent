@@ -58,9 +58,10 @@ For each candidate, assign a scalar reward in [0.0, 1.0] reflecting how good it 
 Then select the single best candidate.
 
 Output format:
-REASONING: <2-5 sentences summarizing the comparison and why the best candidate wins>
-SCORES:
 {% for c in candidates %}
-- Candidate {{ c.index + selection_index_base }}: <scalar 0.0-1.0>
+- Candidate {{ c.index + selection_index_base }}: 
+  REASONING: <2-3 sentences>
+  SCORE: <scalar 0.0-1.0>
 {% endfor %}
-FINAL: <number of best candidate>
+REASONING: <2-5 sentences summarizing the comparison and why the best candidate wins>
+FINAL: <best candidate number>

@@ -35,21 +35,24 @@ Rules:
 - Prefer commands that are safe, minimal, and likely to succeed.
 - Avoid destructive operations unless explicitly required.
 - If all candidates are invalid, pick the least harmful option.
-- Assign each candidate a scalar score between 0.0 and 1.0.
-- Estimate completion score for each checklist item and overall progress.
+- For each candidate, predict a concrete next-state progression and assign a scalar score.
+- Estimate completion score for each checklist item and overall PROGRESS.
+- Keep each candidate score parseable as `Candidate N: <number>`.
 
 Output format:
-REASONING: <2-5 sentences>
-SCORES:
 {% for c in candidates %}
-- Candidate {{ c.index + selection_index_base }}: <scalar 0.0-1.0>
+- Candidate {{ c.index + selection_index_base }}:
+  CHECKLIST_ITEM_SCORES:
+  {% for item in checklist_items %}
+  - Item {{ loop.index }}: <scalar 0.0-1.0>
+  - REASONING: <1-2 sentences to explain why the score is assigned to this item>
+  {% endfor %}
+  PROGRESS: <Yes/No + short reason>
+  REASONING: <2-3 sentences>
+  SCORE: <scalar 0.0-1.0>
 {% endfor %}
-CHECKLIST_ITEM_SCORES:
-{% for item in checklist_items %}
-- Item {{ loop.index }}: <scalar 0.0-1.0>
-{% endfor %}
-PROGRESS: <scalar 0.0-1.0>
-FINAL: <number>
+REASONING: <2-5 sentences>
+FINAL: <best candidate number>
 
 [[[CHECKLIST_SYSTEM_TEMPLATE]]]
 You generate concise issue-progress checklists for a coding agent verifier.

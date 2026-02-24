@@ -40,6 +40,7 @@ docs/
 
 ## Commit & Pull Request Guidelines
 - Recent commits use short prefixes like `Feat:`, `Fix:`, `Doc:`, `CI:`, or `chore:` (often with PR numbers).
+- For every file you edit or change, create a separate git commit for that file with a meaningful commit message that clearly describes the change in that file.
 - PRs should include: a brief summary, linked issues, and tests run (or note if not run).
 - For UI/textual changes, include a screenshot or short GIF when practical.
 

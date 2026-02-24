@@ -15,9 +15,16 @@ Task: {{ task }}
 [[[SELECTION_TEMPLATE]]]
 Task: {{ task }}
 
-Recent conversation (latest last):
-{% for msg in messages[-6:] %}
+Recent steps (history_steps={{ history_steps }}, latest last):
+{% if history_steps == -1 %}
+{% set visible_steps = all_steps %}
+{% else %}
+{% set visible_steps = steps %}
+{% endif %}
+{% for step in visible_steps %}
+{% for msg in step %}
 {{ msg.role }}: {{ msg.content }}
+{% endfor %}
 {% endfor %}
 
 Issue Progress Checklist:
@@ -37,6 +44,7 @@ Rules:
 - If all candidates are invalid, pick the least harmful option.
 - For each candidate, predict a concrete next-state progression and assign a scalar score.
 - Estimate completion score for each checklist item and overall PROGRESS.
+- Keep each candidate score parseable as `Candidate N: <number>`.
 
 Output format:
 {% for c in candidates %}
@@ -61,13 +69,17 @@ Return checklist content only. Do not call tools.
 Issue description:
 {{ task }}
 
-Recent conversation (latest last):
-{% for msg in messages[-6:] %}
+Recent steps (history_steps={{ history_steps }}, latest last):
+{% if history_steps == -1 %}
+{% set visible_steps = all_steps %}
+{% else %}
+{% set visible_steps = steps %}
+{% endif %}
+{% for step in visible_steps %}
+{% for msg in step %}
 {{ msg.role }}: {{ msg.content }}
 {% endfor %}
-
-Generate a complete NEW checklist from the current context.
-Do not reuse previous checklist items and do not reference previous checklist state.
+{% endfor %}
 
 Generate {{ checklist_min_items }} to {{ checklist_max_items }} checklist items that track progress from diagnosis
 to validated fix. Keep each item concrete and observable.

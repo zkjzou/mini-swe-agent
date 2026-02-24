@@ -17,8 +17,13 @@ Task: {{ task }}
 [[[REWARD_PROMPT_TEMPLATE]]]
 Task: {{ task }}
 
-Recent steps (latest last):
-{% for step in steps %}
+Recent steps (history_steps={{ history_steps }}, latest last):
+{% if history_steps == -1 %}
+{% set visible_steps = all_steps %}
+{% else %}
+{% set visible_steps = steps %}
+{% endif %}
+{% for step in visible_steps %}
 {% for msg in step %}
 {{ msg.role }}: {{ msg.content }}
 {% endfor %}

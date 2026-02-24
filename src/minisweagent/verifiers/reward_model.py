@@ -35,7 +35,9 @@ class RewardModelVerifier:
             verifier_vars["steps"] = steps
         n_checklist_items = self._count_checklist_items(verifier_vars)
 
-        def _score_candidate(candidate: dict[str, Any]) -> tuple[float | None, float | None, list[float | None], str, dict[str, Any], float]:
+        def _score_candidate(
+            candidate: dict[str, Any],
+        ) -> tuple[float | None, float | None, list[float | None], str, dict[str, Any], float, int]:
             system_prompt = self._render(
                 self.config.reward_system_template,
                 candidates=candidates,
@@ -49,7 +51,9 @@ class RewardModelVerifier:
                 **verifier_vars,
             )
             last_exc: Exception | None = None
+            api_calls = 0
             for attempt in range(3):
+                api_calls += 1
                 try:
                     content, response, response_cost = query_verifier_text(
                         self.model,
@@ -61,7 +65,7 @@ class RewardModelVerifier:
                     reward = self._parse_reward(content)
                     progress_score = self._parse_progress_score(content)
                     checklist_item_scores = self._parse_checklist_item_scores(content, n_checklist_items)
-                    return reward, progress_score, checklist_item_scores, content, response, response_cost
+                    return reward, progress_score, checklist_item_scores, content, response, response_cost, api_calls
                 except Exception as exc:
                     last_exc = exc
                     if attempt < 2:
@@ -74,19 +78,23 @@ class RewardModelVerifier:
         response_costs: list[float] = [0.0] * len(candidates)
         progress_scores: list[float | None] = [None] * len(candidates)
         checklist_item_scores_by_candidate: list[list[float | None]] = [[] for _ in candidates]
+        candidate_api_calls: list[int] = [0] * len(candidates)
         with ThreadPoolExecutor(max_workers=min(len(candidates), 8)) as executor:
             futures = {
                 executor.submit(_score_candidate, candidate): idx for idx, candidate in enumerate(candidates)
             }
             for future in as_completed(futures):
                 idx = futures[future]
-                reward, progress_score, checklist_item_scores, content, response, response_cost = future.result()
+                reward, progress_score, checklist_item_scores, content, response, response_cost, api_calls = (
+                    future.result()
+                )
                 rewards[idx] = reward
                 progress_scores[idx] = progress_score
                 checklist_item_scores_by_candidate[idx] = checklist_item_scores
                 raw_outputs[idx] = content
                 responses[idx] = response
                 response_costs[idx] = response_cost
+                candidate_api_calls[idx] = api_calls
         selected_index = self._select_best(rewards, candidates)
         metadata = {
             "verifier_type": "reward_model",
@@ -96,6 +104,8 @@ class RewardModelVerifier:
             "raw_outputs": raw_outputs,
             "responses": responses,
             "response_costs": response_costs,
+            "candidate_api_calls": candidate_api_calls,
+            "api_calls": sum(candidate_api_calls),
         }
         return selected_index, metadata
 
@@ -163,7 +173,9 @@ class RewardModelVerifier:
     def _parse_checklist_item_scores(self, content: str, n_items: int) -> list[float | None]:
         if n_items <= 0:
             return []
-        item_score_regex = getattr(self.config, "checklist_item_score_regex", r"Item\s+(\d+)\s*:\s*([+-]?\d+(?:\.\d+)?)")
+        item_score_regex = getattr(
+            self.config, "checklist_item_score_regex", r"Item\s+(\d+)\s*:\s*([+-]?\d+(?:\.\d+)?)"
+        )
         scores: list[float | None] = [None] * n_items
         for match in re.finditer(item_score_regex, content, re.MULTILINE):
             groups = match.groups()

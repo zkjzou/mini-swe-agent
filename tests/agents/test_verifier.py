@@ -219,7 +219,16 @@ def test_checklist_mode_generates_once_and_reuses_across_queries():
     assert second_verifier_output.get("progress_score") == 0.6
     assert first_verifier_output.get("checklist_item_scores") == [0.6, 0.2, 0.1]
     assert second_verifier_output.get("checklist_item_scores") == [0.8, 0.7, 0.4]
+    assert first_verifier_output.get("api_calls") == 1
+    assert second_verifier_output.get("api_calls") == 1
+    assert first_checklist.get("api_calls") == 1
+    assert second_checklist.get("api_calls") == 0
     assert agent.verifier_cost == 3.0
+    stats = agent.serialize()["info"]["model_stats"]
+    assert stats["agent_api_calls"] == 4
+    assert stats["verifier_api_calls"] == 2
+    assert stats["checklist_api_calls"] == 1
+    assert stats["api_calls"] == 7
 
 
 def test_dynamic_checklist_regenerate_mode_refreshes_each_query():
@@ -268,7 +277,8 @@ def test_dynamic_checklist_regenerate_mode_refreshes_each_query():
     )
     agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
     assert agent.verifier.config.prompt_name == "dynamic_checklist_regenerate/verifier"
-    assert "Generate a complete NEW checklist" in agent.verifier.config.checklist_prompt_template
+    assert "Generate a complete NEW checklist" not in agent.verifier.config.checklist_prompt_template
+    assert "Existing checklist:" not in agent.verifier.config.checklist_prompt_template
     agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
 
     first = agent.query()
@@ -288,3 +298,132 @@ def test_dynamic_checklist_regenerate_mode_refreshes_each_query():
     assert first_checklist.get("items") == ["Reproduce issue", "Implement fix", "Validate behavior"]
     assert second_checklist.get("items") == ["Reproduce issue again", "Patch source", "Re-run focused tests"]
     assert agent.verifier_cost == 4.0
+
+
+def test_serialize_uses_resolved_llm_prompt_and_blanks_unused_prompt_sections(tmp_path):
+    prompt_root = tmp_path / "prompts" / "verifier" / "basic" / "verifier"
+    prompt_root.mkdir(parents=True)
+    prompt_root.joinpath("system.jinja").write_text("LLM verifier system prompt")
+    prompt_root.joinpath("selection.jinja").write_text("LLM verifier selection prompt")
+
+    config = _load_default_agent_config()
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "prompt_dir": str(tmp_path / "prompts" / "verifier"),
+        "prompt_name": "basic/verifier",
+        "checklist_mode": "off",
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("FINAL: 1", [])],
+        },
+    }
+
+    agent = DefaultAgent(
+        model=DeterministicModel(outputs=[make_output("Candidate", [{"command": "echo hi"}])]),
+        env=LocalEnvironment(),
+        **config,
+    )
+    verifier_config = agent.serialize()["info"]["config"]["agent"]["verifier"]
+
+    assert verifier_config["system_template"] == "LLM verifier system prompt"
+    assert verifier_config["selection_template"] == "LLM verifier selection prompt"
+    assert verifier_config["reward_system_template"] == ""
+    assert verifier_config["reward_prompt_template"] == ""
+    assert verifier_config["checklist_system_template"] == ""
+    assert verifier_config["checklist_prompt_template"] == ""
+
+
+def test_serialize_uses_resolved_reward_prompt_and_blanks_unused_prompt_sections(tmp_path):
+    prompt_root = tmp_path / "prompts" / "verifier" / "domain" / "reward"
+    prompt_root.mkdir(parents=True)
+    prompt_root.joinpath("system.jinja").write_text("Reward verifier system prompt")
+    prompt_root.joinpath("reward.jinja").write_text("Reward verifier scoring prompt")
+
+    config = _load_default_agent_config()
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "reward_model",
+        "prompt_dir": str(tmp_path / "prompts" / "verifier"),
+        "prompt_name": "domain/reward",
+        "checklist_mode": "off",
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("FINAL: 0.9", [])],
+        },
+    }
+
+    agent = DefaultAgent(
+        model=DeterministicModel(outputs=[make_output("Candidate", [{"command": "echo hi"}])]),
+        env=LocalEnvironment(),
+        **config,
+    )
+    verifier_config = agent.serialize()["info"]["config"]["agent"]["verifier"]
+
+    assert verifier_config["system_template"] == ""
+    assert verifier_config["selection_template"] == ""
+    assert verifier_config["reward_system_template"] == "Reward verifier system prompt"
+    assert verifier_config["reward_prompt_template"] == "Reward verifier scoring prompt"
+    assert verifier_config["checklist_system_template"] == ""
+    assert verifier_config["checklist_prompt_template"] == ""
+
+
+@pytest.mark.parametrize(
+    ("history_steps", "expected_visible_steps"),
+    [
+        (1, 1),
+        (-1, 2),
+    ],
+)
+def test_prompt_templates_can_use_history_steps(history_steps, expected_visible_steps):
+    class _CaptureVerifierModel:
+        def __init__(self):
+            self.messages = None
+
+        def query(self, messages, **kwargs):
+            self.messages = messages
+            return {"role": "assistant", "content": "FINAL: 1", "extra": {"cost": 0.0}}
+
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "history_steps": history_steps,
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "system_template": "Verifier system",
+        "selection_template": (
+            "History steps value: {{ history_steps }}\n"
+            "{% if history_steps == -1 %}{% set visible_steps = all_steps %}{% else %}"
+            "{% set visible_steps = steps %}{% endif %}\n"
+            "Visible steps count: {{ visible_steps|length }}\n"
+            "{% for c in candidates %}Candidate {{ c.index + selection_index_base }}:\n{{ c.content }}\n{% endfor %}"
+        ),
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("FINAL: 1", [])],
+        },
+    }
+
+    model = DeterministicModel(outputs=[make_output("Candidate", [{"command": "echo hi"}])])
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    capture_model = _CaptureVerifierModel()
+    agent.verifier.model = capture_model
+    agent.add_messages(
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "step1"},
+        {"role": "user", "content": "obs1"},
+        {"role": "assistant", "content": "step2"},
+        {"role": "user", "content": "obs2"},
+    )
+
+    agent.query()
+    assert capture_model.messages is not None
+    prompt = capture_model.messages[-1]["content"]
+    assert f"History steps value: {history_steps}" in prompt
+    assert f"Visible steps count: {expected_visible_steps}" in prompt

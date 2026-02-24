@@ -44,8 +44,10 @@ def test_reward_model_selects_highest_reward():
     extra = response.get("extra", {})
     verifier = extra.get("verifier", {})
     assert verifier.get("selected_index") == 1
-    rewards = verifier.get("verifier_output", {}).get("rewards")
+    verifier_output = verifier.get("verifier_output", {})
+    rewards = verifier_output.get("rewards")
     assert rewards == [0.2, 0.9]
+    assert verifier_output.get("api_calls") == 2
 
 
 def test_reward_model_checklist_mode_attaches_progress_metadata():
@@ -108,8 +110,10 @@ def test_reward_model_checklist_mode_attaches_progress_metadata():
     assert verifier_output.get("rewards") == [0.2, 0.9]
     assert verifier_output.get("candidate_progress_scores") == [0.2, 0.7]
     assert verifier_output.get("candidate_checklist_item_scores") == [[0.3, 0.2, 0.1], [0.8, 0.7, 0.4]]
+    assert verifier_output.get("api_calls") == 2
     assert checklist.get("items") == ["Reproduce issue", "Implement fix", "Validate tests"]
     assert checklist.get("generated_this_step") is True
+    assert checklist.get("api_calls") == 1
     assert agent.verifier_cost == 0.8
 
 

@@ -44,6 +44,7 @@ def generate_issue_checklist(
         "raw_output": content,
         "response": response,
         "response_cost": response_cost,
+        "api_calls": 1,
     }
 
 

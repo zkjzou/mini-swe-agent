@@ -148,7 +148,11 @@ class DefaultAgent:
         self.base_model_cost = 0.0
         self.verifier_cost = 0.0
         self.n_calls = 0
+        self.agent_api_calls = 0
+        self.verifier_api_calls = 0
+        self.checklist_api_calls = 0
         self.step_count = 0
+        self._resolved_verifier_config: VerifierConfig | None = None
         self.verifier = self._build_verifier()
         self._similarity_rng = random.Random(self.config.verifier.action_similarity_seed)
         self._verifier_checklist_cache: dict[str, Any] | None = None
@@ -200,6 +204,9 @@ class DefaultAgent:
         self.base_model_cost = 0.0
         self.verifier_cost = 0.0
         self.n_calls = 0
+        self.agent_api_calls = 0
+        self.verifier_api_calls = 0
+        self.checklist_api_calls = 0
         self._verifier_checklist_cache = None
         self.add_messages(
             self.model.format_message(role="system", content=self._render_template(self.config.system_template)),
@@ -232,13 +239,19 @@ class DefaultAgent:
         """Query the model and return model messages. Override to add hooks."""
         self._check_limits()
         responses, candidate_infos = self._sample_candidates()
-        verifier_steps = self._get_verifier_steps()
+        configured_history_steps = self._get_verifier_history_steps()
+        all_verifier_steps = self._get_verifier_steps(history_steps=-1)
+        verifier_steps = self._get_verifier_steps(history_steps=configured_history_steps)
         verifier_messages = [message for step in verifier_steps for message in step]
+        all_verifier_messages = [message for step in all_verifier_steps for message in step]
         verifier_vars = {
             **self.extra_template_vars,
             "task": self.extra_template_vars.get("task", ""),
             "messages": verifier_messages,
+            "all_messages": all_verifier_messages,
             "steps": verifier_steps,
+            "all_steps": all_verifier_steps,
+            "history_steps": configured_history_steps,
         }
 
         selected_index = 0
@@ -296,6 +309,7 @@ class DefaultAgent:
                 verifier_output = dict(verifier_output)
                 verifier_output["checklist"] = checklist_metadata
             self._add_verifier_cost(verifier_output)
+            self._add_verifier_api_calls(verifier_output)
             selected_index = max(0, min(selected_index, len(responses) - 1))
             verifier_metadata = {
                 "enabled": True,
@@ -326,6 +340,7 @@ class DefaultAgent:
             )
 
     def _build_verifier(self):
+        self._resolved_verifier_config = None
         if not self.config.verifier.enabled:
             return None
         verifier_config = self.config.verifier.model_copy(deep=True)
@@ -338,6 +353,7 @@ class DefaultAgent:
             suffix = "verifier" if verifier_config.verifier_type == "llm" else "reward"
             verifier_config.prompt_name = f"dynamic_checklist_{verifier_config.checklist_update_mode}/{suffix}"
         verifier_config = apply_prompt_overrides(verifier_config)
+        self._resolved_verifier_config = verifier_config.model_copy(deep=True)
         if verifier_config.verifier_type == "first_valid":
             return FirstValidVerifier(verifier_config)
         verifier_model = self.model
@@ -379,6 +395,7 @@ class DefaultAgent:
     def _query_once(self, **kwargs) -> dict:
         self._check_limits()
         self.n_calls += 1
+        self.agent_api_calls += 1
         message = self.model.query(self.messages, **kwargs)
         self.base_model_cost += float(message.get("extra", {}).get("cost", 0.0) or 0.0)
         self.cost = self.base_model_cost + self.verifier_cost
@@ -393,6 +410,17 @@ class DefaultAgent:
         if isinstance(response_costs, list):
             self.verifier_cost += sum(float(cost or 0.0) for cost in response_costs)
         self.cost = self.base_model_cost + self.verifier_cost
+
+    def _add_verifier_api_calls(self, verifier_output: dict[str, Any]) -> None:
+        api_calls = verifier_output.get("api_calls")
+        if api_calls is None:
+            return
+        try:
+            count = int(api_calls)
+        except (TypeError, ValueError):
+            return
+        if count > 0:
+            self.verifier_api_calls += count
 
     def _prepare_checklist_template_vars(
         self, verifier_vars: dict[str, Any]
@@ -411,7 +439,11 @@ class DefaultAgent:
         )
         previous_text = "\n".join(f"{idx + 1}. {item}" for idx, item in enumerate(previous_items))
         generated_this_step = False
-        should_generate = dynamic_enabled or checklist_data is None or not bool(checklist_config.checklist_generate_once)
+        generated_response_cost = 0.0
+        generated_api_calls = 0
+        should_generate = (
+            dynamic_enabled or checklist_data is None or not bool(checklist_config.checklist_generate_once)
+        )
         if should_generate:
             checklist_data = generate_issue_checklist(
                 self._get_checklist_model(),
@@ -427,7 +459,11 @@ class DefaultAgent:
             )
             self._verifier_checklist_cache = checklist_data
             generated_this_step = True
-            self._add_verifier_cost({"response_cost": checklist_data.get("response_cost", 0.0)})
+            generated_response_cost = float(checklist_data.get("response_cost", 0.0) or 0.0)
+            generated_api_calls = int(checklist_data.get("api_calls", 0) or 0)
+            self._add_verifier_cost({"response_cost": generated_response_cost})
+            if generated_api_calls > 0:
+                self.checklist_api_calls += generated_api_calls
 
         raw_items = checklist_data.get("items", []) if isinstance(checklist_data, dict) else []
         checklist_items = [item.strip() for item in raw_items if isinstance(item, str) and item.strip()]
@@ -446,7 +482,8 @@ class DefaultAgent:
             "items": checklist_items,
             "raw_output": checklist_data.get("raw_output", "") if isinstance(checklist_data, dict) else "",
             "response": checklist_data.get("response", {}) if isinstance(checklist_data, dict) else {},
-            "response_cost": checklist_data.get("response_cost", 0.0) if isinstance(checklist_data, dict) else 0.0,
+            "response_cost": generated_response_cost,
+            "api_calls": generated_api_calls,
             "generated_once": checklist_config.checklist_generate_once,
             "generated_this_step": generated_this_step,
             "dynamic": dynamic_enabled,
@@ -473,6 +510,8 @@ class DefaultAgent:
         verifier_config = getattr(self.verifier, "config", None)
         if isinstance(verifier_config, VerifierConfig):
             return verifier_config
+        if isinstance(self._resolved_verifier_config, VerifierConfig):
+            return self._resolved_verifier_config
         return self.config.verifier
 
     def _split_n_response(self, response: dict, num_candidates: int) -> list[dict]:
@@ -591,7 +630,15 @@ class DefaultAgent:
         response["extra"] = extra
         return response
 
-    def _get_verifier_steps(self) -> list[list[dict[str, Any]]]:
+    def _get_verifier_history_steps(self) -> int:
+        verifier_config = getattr(self.verifier, "config", None)
+        if isinstance(verifier_config, VerifierConfig):
+            return int(verifier_config.history_steps)
+        if isinstance(self._resolved_verifier_config, VerifierConfig):
+            return int(self._resolved_verifier_config.history_steps)
+        return int(self.config.verifier.history_steps)
+
+    def _get_verifier_steps(self, *, history_steps: int | None = None) -> list[list[dict[str, Any]]]:
         steps: list[list[dict[str, Any]]] = []
         current_step: list[dict[str, Any]] = []
         started = False
@@ -606,7 +653,8 @@ class DefaultAgent:
         if current_step:
             steps.append(current_step)
 
-        history_steps = self.config.verifier.history_steps
+        if history_steps is None:
+            history_steps = self._get_verifier_history_steps()
         if history_steps is None or history_steps < 0:
             return steps
         return steps[-history_steps:]
@@ -624,17 +672,21 @@ class DefaultAgent:
         """Serialize agent state to a json-compatible nested dictionary for saving."""
         last_message = self.messages[-1] if self.messages else {}
         last_extra = last_message.get("extra", {})
+        total_api_calls = self.agent_api_calls + self.verifier_api_calls + self.checklist_api_calls
         agent_data = {
             "info": {
                 "model_stats": {
                     "instance_cost": self.cost,
                     "base_model_cost": self.base_model_cost,
                     "verifier_model_cost": self.verifier_cost,
-                    "api_calls": self.n_calls,
+                    "api_calls": total_api_calls,
+                    "agent_api_calls": self.agent_api_calls,
+                    "verifier_api_calls": self.verifier_api_calls,
+                    "checklist_api_calls": self.checklist_api_calls,
                     "step_count": self.step_count,
                 },
                 "config": {
-                    "agent": self.config.model_dump(mode="json"),
+                    "agent": self._serialize_agent_config(),
                     "agent_type": f"{self.__class__.__module__}.{self.__class__.__name__}",
                 },
                 "mini_version": __version__,
@@ -645,6 +697,50 @@ class DefaultAgent:
             "trajectory_format": "mini-swe-agent-1.1",
         }
         return recursive_merge(agent_data, self.model.serialize(), self.env.serialize(), *extra_dicts)
+
+    def _serialize_agent_config(self) -> dict[str, Any]:
+        agent_config = self.config.model_dump(mode="json")
+        verifier_config = self._get_resolved_verifier_config_for_serialize()
+        if verifier_config is None:
+            return agent_config
+
+        serialized_verifier = verifier_config.model_dump(mode="json")
+        if not serialized_verifier.get("enabled", False):
+            serialized_verifier["system_template"] = ""
+            serialized_verifier["selection_template"] = ""
+            serialized_verifier["reward_system_template"] = ""
+            serialized_verifier["reward_prompt_template"] = ""
+            serialized_verifier["checklist_system_template"] = ""
+            serialized_verifier["checklist_prompt_template"] = ""
+        else:
+            verifier_type = serialized_verifier.get("verifier_type")
+            if verifier_type == "llm":
+                serialized_verifier["reward_system_template"] = ""
+                serialized_verifier["reward_prompt_template"] = ""
+            elif verifier_type == "reward_model":
+                serialized_verifier["system_template"] = ""
+                serialized_verifier["selection_template"] = ""
+
+            uses_checklist = (
+                verifier_type in {"llm", "reward_model"}
+                and serialized_verifier.get("checklist_mode") == "issue_progress"
+            )
+            if not uses_checklist:
+                serialized_verifier["checklist_system_template"] = ""
+                serialized_verifier["checklist_prompt_template"] = ""
+
+        agent_config["verifier"] = serialized_verifier
+        return agent_config
+
+    def _get_resolved_verifier_config_for_serialize(self) -> VerifierConfig | None:
+        verifier_config = getattr(self.verifier, "config", None)
+        if isinstance(verifier_config, VerifierConfig):
+            return verifier_config
+        if isinstance(self._resolved_verifier_config, VerifierConfig):
+            return self._resolved_verifier_config
+        if isinstance(self.config.verifier, VerifierConfig):
+            return self.config.verifier
+        return None
 
     def save(self, path: Path | None, *extra_dicts) -> dict:
         """Save the trajectory of the agent to a file if path is given. Returns full serialized data.

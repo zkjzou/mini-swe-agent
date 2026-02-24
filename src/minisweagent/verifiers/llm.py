@@ -15,7 +15,9 @@ class LLMVerifier:
         self.model = model
         self.config = config
 
-    def select(self, *, candidates: list[dict[str, Any]], template_vars: dict[str, Any] | None = None) -> tuple[int, dict]:
+    def select(
+        self, *, candidates: list[dict[str, Any]], template_vars: dict[str, Any] | None = None
+    ) -> tuple[int, dict]:
         template_vars = template_vars or {}
         system_prompt = self._render(
             self.config.system_template,
@@ -61,6 +63,7 @@ class LLMVerifier:
             "checklist_item_scores": checklist_item_scores,
             "response": response,
             "response_cost": response_cost,
+            "api_calls": 1,
         }
         return selected_index, metadata
 
@@ -104,7 +107,9 @@ class LLMVerifier:
     def _parse_checklist_item_scores(self, content: str, n_items: int) -> list[float | None]:
         if n_items <= 0:
             return []
-        item_score_regex = getattr(self.config, "checklist_item_score_regex", r"Item\s+(\d+)\s*:\s*([+-]?\d+(?:\.\d+)?)")
+        item_score_regex = getattr(
+            self.config, "checklist_item_score_regex", r"Item\s+(\d+)\s*:\s*([+-]?\d+(?:\.\d+)?)"
+        )
         scores: list[float | None] = [None] * n_items
         for match in re.finditer(item_score_regex, content, re.MULTILINE):
             groups = match.groups()

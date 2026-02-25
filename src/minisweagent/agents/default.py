@@ -8,6 +8,7 @@ import copy
 import json
 import logging
 import random
+import re
 import traceback
 from pathlib import Path
 from typing import Any, Literal
@@ -34,6 +35,8 @@ class CandidateSamplingConfig(BaseModel):
     """How many candidate actions to sample per step."""
     use_n: bool = False
     """If True, try to request multiple candidates in a single model call using n."""
+    pair_thoughts_with_toolcalls: bool = False
+    """If True, build candidates by pairing multiple THOUGHTS sections with multiple tool calls from one response."""
     sampling_kwargs: dict[str, Any] = Field(default_factory=dict)
     """Extra kwargs passed to model.query for sampling."""
 
@@ -369,6 +372,16 @@ class DefaultAgent:
         sampling_config = self.config.candidate_sampling
         num_candidates = max(1, sampling_config.num_candidates)
         responses: list[dict] = []
+        if sampling_config.pair_thoughts_with_toolcalls:
+            query_kwargs = dict(sampling_config.sampling_kwargs)
+            query_kwargs.pop("n", None)
+            paired_response = self._query_once(**query_kwargs)
+            responses = self._split_paired_toolcall_response(
+                paired_response,
+                num_candidates=num_candidates,
+            )
+            candidate_infos = [self._build_candidate_info(response, idx) for idx, response in enumerate(responses)]
+            return responses, candidate_infos
 
         if num_candidates == 1:
             responses = [self._query_once(**sampling_config.sampling_kwargs)]
@@ -391,6 +404,110 @@ class DefaultAgent:
 
         candidate_infos = [self._build_candidate_info(response, idx) for idx, response in enumerate(responses)]
         return responses, candidate_infos
+
+    def _split_paired_toolcall_response(self, response: dict, *, num_candidates: int) -> list[dict]:
+        extra = response.get("extra", {}) or {}
+        raw_actions = extra.get("actions")
+        if not isinstance(raw_actions, list) or not raw_actions:
+            self._raise_pairing_format_error(
+                "No tool calls found in the response. Pairing mode requires one tool call per THOUGHTS section."
+            )
+        actions = [action for action in raw_actions if isinstance(action, dict)]
+        thought_sections = self._extract_thought_sections(response)
+
+        if len(thought_sections) != len(actions):
+            self._raise_pairing_format_error(
+                "Pairing mode requires matching counts of THOUGHTS sections and tool calls, "
+                f"found thoughts={len(thought_sections)} tool_calls={len(actions)}."
+            )
+        if len(actions) != num_candidates:
+            self._raise_pairing_format_error(
+                "Pairing mode requires exactly num_candidates thought/tool-call pairs, "
+                f"expected={num_candidates} found={len(actions)}."
+            )
+
+        tool_calls_by_id: dict[str, dict[str, Any]] = {}
+        response_tool_calls = response.get("tool_calls")
+        if isinstance(response_tool_calls, list):
+            for tool_call in response_tool_calls:
+                if not isinstance(tool_call, dict):
+                    continue
+                tool_call_id = tool_call.get("id")
+                if isinstance(tool_call_id, str):
+                    tool_calls_by_id[tool_call_id] = tool_call
+
+        candidates: list[dict] = []
+        for idx, (thought, action) in enumerate(zip(thought_sections, actions)):
+            candidate = copy.deepcopy(response)
+            candidate["content"] = f"THOUGHTS:\n{thought}"
+
+            tool_call_id = action.get("tool_call_id")
+            if isinstance(tool_call_id, str) and tool_call_id in tool_calls_by_id:
+                candidate["tool_calls"] = [copy.deepcopy(tool_calls_by_id[tool_call_id])]
+            elif isinstance(response_tool_calls, list) and idx < len(response_tool_calls):
+                maybe_tool_call = response_tool_calls[idx]
+                candidate["tool_calls"] = [copy.deepcopy(maybe_tool_call)] if isinstance(maybe_tool_call, dict) else []
+
+            candidate_extra = dict(candidate.get("extra", {}) or {})
+            candidate_extra["actions"] = [copy.deepcopy(action)]
+            candidate_extra["paired_candidate_index"] = idx
+            candidate_extra["paired_thought"] = thought
+            candidate["extra"] = candidate_extra
+            candidates.append(candidate)
+        return candidates
+
+    def _extract_thought_sections(self, response: dict) -> list[str]:
+        content_text = self._extract_response_content_text(response)
+        if not content_text:
+            return []
+        sections: list[str] = []
+        pattern = re.compile(r"^\s*THOUGHTS?:\s*(.*?)(?=^\s*THOUGHTS?:\s*|\Z)", re.MULTILINE | re.DOTALL)
+        for match in pattern.finditer(content_text):
+            thought = match.group(1).strip()
+            if thought:
+                sections.append(thought)
+        return sections
+
+    def _extract_response_content_text(self, response: dict) -> str:
+        content = response.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                    continue
+                if isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+            return "\n".join(parts).strip()
+
+        output = response.get("output")
+        if isinstance(output, list):
+            parts = []
+            for item in output:
+                if not isinstance(item, dict) or item.get("type") != "message":
+                    continue
+                for block in item.get("content", []):
+                    if isinstance(block, dict):
+                        text = block.get("text")
+                        if isinstance(text, str):
+                            parts.append(text)
+            return "\n".join(parts).strip()
+        return ""
+
+    def _raise_pairing_format_error(self, error: str) -> None:
+        format_error_template = getattr(getattr(self.model, "config", None), "format_error_template", "{{ error }}")
+        content = Template(format_error_template, undefined=StrictUndefined).render(error=error)
+        raise FormatError(
+            {
+                "role": "user",
+                "content": content,
+                "extra": {"interrupt_type": "FormatError"},
+            }
+        )
 
     def _query_once(self, **kwargs) -> dict:
         self._check_limits()

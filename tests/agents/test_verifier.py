@@ -6,8 +6,13 @@ import yaml
 
 from minisweagent.agents.default import DefaultAgent
 from minisweagent.environments.local import LocalEnvironment
-from minisweagent.exceptions import LimitsExceeded
-from minisweagent.models.test_models import DeterministicModel, make_output
+from minisweagent.exceptions import FormatError, LimitsExceeded
+from minisweagent.models.test_models import (
+    DeterministicModel,
+    DeterministicToolcallModel,
+    make_output,
+    make_toolcall_output,
+)
 
 
 def _load_default_agent_config() -> dict:
@@ -427,3 +432,144 @@ def test_prompt_templates_can_use_history_steps(history_steps, expected_visible_
     prompt = capture_model.messages[-1]["content"]
     assert f"History steps value: {history_steps}" in prompt
     assert f"Visible steps count: {expected_visible_steps}" in prompt
+
+
+def test_pair_thoughts_with_toolcalls_builds_verifier_candidates_from_one_response():
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {
+        "num_candidates": 3,
+        "use_n": False,
+        "pair_thoughts_with_toolcalls": True,
+        "sampling_kwargs": {},
+    }
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("REASONING: pick 2\nFINAL: 2", [])],
+        },
+    }
+
+    thought_content = (
+        "THOUGHTS: Inspect the repository layout.\n\n"
+        "THOUGHTS: Reproduce the failure with a focused command.\n\n"
+        "THOUGHTS: Read implementation file around the failing path."
+    )
+    tool_calls = [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "bash", "arguments": '{"command": "ls -la"}'},
+        },
+        {
+            "id": "call_2",
+            "type": "function",
+            "function": {"name": "bash", "arguments": '{"command": "pytest -q tests/test_x.py"}'},
+        },
+        {
+            "id": "call_3",
+            "type": "function",
+            "function": {"name": "bash", "arguments": '{"command": "sed -n \\"1,200p\\" src/app.py"}'},
+        },
+    ]
+    actions = [
+        {"command": "ls -la", "tool_call_id": "call_1"},
+        {"command": "pytest -q tests/test_x.py", "tool_call_id": "call_2"},
+        {"command": 'sed -n "1,200p" src/app.py', "tool_call_id": "call_3"},
+    ]
+
+    actor_model = DeterministicToolcallModel(outputs=[make_toolcall_output(thought_content, tool_calls, actions)])
+    agent = DefaultAgent(model=actor_model, env=LocalEnvironment(), **config)
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    response = agent.query()
+    verifier = response.get("extra", {}).get("verifier", {})
+    candidates = verifier.get("candidates", [])
+
+    assert agent.n_calls == 1
+    assert verifier.get("selected_index") == 1
+    assert len(candidates) == 3
+    assert "Inspect the repository layout" in candidates[0]["content"]
+    assert "Reproduce the failure" in candidates[1]["content"]
+    assert candidates[0]["action"] == "ls -la"
+    assert candidates[1]["action"] == "pytest -q tests/test_x.py"
+    assert candidates[2]["action"] == 'sed -n "1,200p" src/app.py'
+    assert response.get("extra", {}).get("actions", [{}])[0].get("command") == "pytest -q tests/test_x.py"
+
+
+def test_pair_thoughts_with_toolcalls_raises_format_error_on_count_mismatch():
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {
+        "num_candidates": 2,
+        "use_n": False,
+        "pair_thoughts_with_toolcalls": True,
+        "sampling_kwargs": {},
+    }
+    config["verifier"] = {"enabled": False}
+
+    content = "THOUGHTS: only one thought block."
+    tool_calls = [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "bash", "arguments": '{"command": "ls -la"}'},
+        },
+        {
+            "id": "call_2",
+            "type": "function",
+            "function": {"name": "bash", "arguments": '{"command": "pwd"}'},
+        },
+    ]
+    actions = [
+        {"command": "ls -la", "tool_call_id": "call_1"},
+        {"command": "pwd", "tool_call_id": "call_2"},
+    ]
+    actor_model = DeterministicToolcallModel(outputs=[make_toolcall_output(content, tool_calls, actions)])
+    agent = DefaultAgent(model=actor_model, env=LocalEnvironment(), **config)
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    with pytest.raises(FormatError) as exc_info:
+        agent.query()
+    format_msg = (exc_info.value.messages or [{}])[0].get("content", "")
+    assert "matching counts of THOUGHTS sections and tool calls" in format_msg
+
+
+def test_pair_thoughts_with_toolcalls_requires_exact_num_candidates():
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {
+        "num_candidates": 3,
+        "use_n": False,
+        "pair_thoughts_with_toolcalls": True,
+        "sampling_kwargs": {},
+    }
+    config["verifier"] = {"enabled": False}
+
+    content = "THOUGHTS: first\nTHOUGHTS: second"
+    tool_calls = [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "bash", "arguments": '{"command": "ls -la"}'},
+        },
+        {
+            "id": "call_2",
+            "type": "function",
+            "function": {"name": "bash", "arguments": '{"command": "pwd"}'},
+        },
+    ]
+    actions = [
+        {"command": "ls -la", "tool_call_id": "call_1"},
+        {"command": "pwd", "tool_call_id": "call_2"},
+    ]
+    actor_model = DeterministicToolcallModel(outputs=[make_toolcall_output(content, tool_calls, actions)])
+    agent = DefaultAgent(model=actor_model, env=LocalEnvironment(), **config)
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    with pytest.raises(FormatError) as exc_info:
+        agent.query()
+    format_msg = (exc_info.value.messages or [{}])[0].get("content", "")
+    assert "requires exactly num_candidates thought/tool-call pairs" in format_msg

@@ -166,6 +166,7 @@ class DefaultAgent:
             self.env.get_template_vars(),
             self.model.get_template_vars(),
             {
+                "num_candidates": self.config.candidate_sampling.num_candidates,
                 "n_model_calls": self.n_calls,
                 "model_cost": self.cost,
                 "base_model_cost": self.base_model_cost,

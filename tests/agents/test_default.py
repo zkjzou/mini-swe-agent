@@ -338,6 +338,31 @@ def test_custom_config(model_factory):
     assert "Test custom config" in get_text(agent.messages[1])
 
 
+def test_instance_template_can_use_num_candidates(model_factory):
+    """Test that instance_template can reference top-level num_candidates."""
+    factory, config = model_factory
+    agent = DefaultAgent(
+        model=factory(
+            [
+                (
+                    "Finish",
+                    [{"command": "echo 'COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT'\necho 'done'"}],
+                )
+            ]
+        ),
+        env=LocalEnvironment(),
+        **{
+            **config,
+            "instance_template": "Need {{num_candidates}} candidates for {{task}}.",
+            "candidate_sampling": {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}},
+        },
+    )
+
+    info = agent.run("num-candidate test")
+    assert info["exit_status"] == "Submitted"
+    assert "Need 1 candidates for num-candidate test." in get_text(agent.messages[1])
+
+
 def test_render_template_model_stats(model_factory):
     """Test that render_template has access to n_model_calls and model_cost from agent."""
     factory, config = model_factory

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import yaml
 from jinja2 import StrictUndefined, Template
 
 from minisweagent.verifiers.query_utils import query_verifier_text
@@ -14,6 +15,18 @@ _DEFAULT_CHECKLIST_ITEMS = [
     "Run focused validation to confirm the fix.",
     "Check for regressions and ensure task requirements are met.",
 ]
+
+
+def resolve_checklist_output_format(config: Any) -> str:
+    """Resolve checklist output parsing mode from explicit config or prompt variant."""
+    configured_mode = str(getattr(config, "checklist_output_format", "auto") or "auto").strip().lower()
+    if configured_mode in {"list", "rubric_yaml"}:
+        return configured_mode
+
+    prompt_name = getattr(config, "prompt_name", None)
+    if isinstance(prompt_name, str) and prompt_name.startswith("checklist_v2/"):
+        return "rubric_yaml"
+    return "list"
 
 
 def generate_issue_checklist(
@@ -33,14 +46,26 @@ def generate_issue_checklist(
             {"role": "user", "content": checklist_prompt},
         ],
     )
-    items = parse_checklist_items(content, item_regex=getattr(config, "checklist_item_regex"))
-    items = normalize_checklist_items(
-        items,
-        min_items=getattr(config, "checklist_min_items"),
-        max_items=getattr(config, "checklist_max_items"),
-    )
+    output_format = resolve_checklist_output_format(config)
+    rubric_items = parse_checklist_rubric(content)
+
+    if rubric_items:
+        items = dedupe_checklist_items([item["description"] for item in rubric_items])
+    else:
+        items = parse_checklist_items(content, item_regex=getattr(config, "checklist_item_regex"))
+
+    if output_format == "rubric_yaml":
+        items = dedupe_checklist_items(items)
+    else:
+        items = normalize_checklist_items(
+            items,
+            min_items=getattr(config, "checklist_min_items"),
+            max_items=getattr(config, "checklist_max_items"),
+        )
     return {
         "items": items,
+        "rubric_items": rubric_items,
+        "checklist_output_format": output_format,
         "raw_output": content,
         "response": response,
         "response_cost": response_cost,
@@ -68,16 +93,8 @@ def normalize_checklist_items(items: list[str], *, min_items: int, max_items: in
     """Deduplicate and clamp checklist entries, then fill missing entries if needed."""
     max_items = max(1, int(max_items))
     min_items = max(0, min(int(min_items), max_items))
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for item in items:
-        key = _normalize_key(item)
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        deduped.append(item)
-        if len(deduped) >= max_items:
-            break
+    deduped = dedupe_checklist_items(items, max_items=max_items)
+    seen = {_normalize_key(item) for item in deduped}
 
     if len(deduped) < min_items:
         for fallback_item in _DEFAULT_CHECKLIST_ITEMS:
@@ -90,6 +107,60 @@ def normalize_checklist_items(items: list[str], *, min_items: int, max_items: in
                 break
 
     return deduped[:max_items]
+
+
+def dedupe_checklist_items(items: list[str], *, max_items: int | None = None) -> list[str]:
+    """Deduplicate checklist entries while preserving order."""
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        key = _normalize_key(item)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+        if max_items is not None and len(deduped) >= max_items:
+            break
+    return deduped
+
+
+def parse_checklist_rubric(content: str) -> list[dict[str, Any]]:
+    """Parse YAML rubric checklist output into normalized structured checklist items."""
+    try:
+        parsed = yaml.safe_load(content)
+    except Exception:
+        return []
+    if not isinstance(parsed, dict):
+        return []
+
+    rubric = parsed.get("rubric")
+    if not isinstance(rubric, list):
+        return []
+
+    normalized_items: list[dict[str, Any]] = []
+    for idx, entry in enumerate(rubric):
+        if not isinstance(entry, dict):
+            continue
+        description = _clean_optional_text(entry.get("description"))
+        if not description:
+            continue
+        normalized: dict[str, Any] = {
+            "id": _clean_optional_text(entry.get("id")) or f"S{idx + 1}",
+            "description": description,
+        }
+        stage = _clean_optional_text(entry.get("stage")) or _clean_optional_text(entry.get("phase"))
+        if stage:
+            normalized["stage"] = stage
+        observable_signal = _clean_optional_text(entry.get("observable_signal")) or _clean_optional_text(
+            entry.get("done_when")
+        )
+        if observable_signal:
+            normalized["observable_signal"] = observable_signal
+        weight = _coerce_weight(entry.get("weight"))
+        if weight is not None:
+            normalized["weight"] = weight
+        normalized_items.append(normalized)
+    return normalized_items
 
 
 def _render(template: str, **kwargs) -> str:
@@ -131,3 +202,20 @@ def _normalize_key(item: str) -> str:
     lowered = re.sub(r"[^a-z0-9]+", " ", item.lower()).strip()
     tokens = [token for token in lowered.split() if token not in {"a", "an", "the", "to", "of", "for", "and"}]
     return " ".join(tokens)
+
+
+def _clean_optional_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    return re.sub(r"\s+", " ", cleaned)
+
+
+def _coerce_weight(value: Any) -> int | None:
+    try:
+        weight = int(value)
+    except (TypeError, ValueError):
+        return None
+    return weight if 1 <= weight <= 3 else None

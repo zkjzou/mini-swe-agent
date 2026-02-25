@@ -25,7 +25,7 @@ from minisweagent.utils.serialize import recursive_merge
 from minisweagent.verifiers.first_valid import FirstValidVerifier
 from minisweagent.verifiers.llm import LLMVerifier
 from minisweagent.verifiers.action_similarity import analyze_action_similarity
-from minisweagent.verifiers.checklist import generate_issue_checklist
+from minisweagent.verifiers.checklist import generate_issue_checklist, resolve_checklist_output_format
 from minisweagent.verifiers.prompt_loader import apply_prompt_overrides
 from minisweagent.verifiers.reward_model import RewardModelVerifier
 
@@ -89,6 +89,8 @@ class VerifierConfig(BaseModel):
     """Maximum checklist items to keep after parsing."""
     checklist_item_regex: str = r"^\s*(?:[-*]|\d+[.)])\s*(.+?)\s*$"
     """Regex for extracting checklist items from checklist-generation output."""
+    checklist_output_format: Literal["auto", "list", "rubric_yaml"] = "auto"
+    """Checklist generation output mode. auto infers rubric_yaml for checklist_v2 prompt variants."""
     checklist_progress_regex: str = r"PROGRESS:\s*([+-]?\d+(?:\.\d+)?)"
     """Regex for extracting overall progress score from verifier output."""
     checklist_item_score_regex: str = r"Item\s+(\d+)\s*:\s*([+-]?\d+(?:\.\d+)?)"
@@ -568,17 +570,19 @@ class DefaultAgent:
             if dynamic_enabled and update_mode == "modify" and not previous_items:
                 generation_config = self._get_static_seed_checklist_config(checklist_config)
                 seeded_from_static_prompt = True
+            generation_template_vars = {
+                **verifier_vars,
+                "checklist_update_mode": update_mode,
+                "previous_checklist_items": previous_items,
+                "previous_checklist_text": previous_text,
+            }
+            if self._resolve_checklist_output_format(generation_config) != "rubric_yaml":
+                generation_template_vars["checklist_min_items"] = generation_config.checklist_min_items
+                generation_template_vars["checklist_max_items"] = generation_config.checklist_max_items
             checklist_data = generate_issue_checklist(
                 self._get_checklist_model(),
                 generation_config,
-                template_vars={
-                    **verifier_vars,
-                    "checklist_min_items": generation_config.checklist_min_items,
-                    "checklist_max_items": generation_config.checklist_max_items,
-                    "checklist_update_mode": update_mode,
-                    "previous_checklist_items": previous_items,
-                    "previous_checklist_text": previous_text,
-                },
+                template_vars=generation_template_vars,
             )
             self._verifier_checklist_cache = checklist_data
             generated_this_step = True
@@ -590,7 +594,14 @@ class DefaultAgent:
 
         raw_items = checklist_data.get("items", []) if isinstance(checklist_data, dict) else []
         checklist_items = [item.strip() for item in raw_items if isinstance(item, str) and item.strip()]
+        raw_rubric_items = checklist_data.get("rubric_items", []) if isinstance(checklist_data, dict) else []
+        checklist_rubric = [item for item in raw_rubric_items if isinstance(item, dict)]
         checklist_text = "\n".join(f"{idx + 1}. {item}" for idx, item in enumerate(checklist_items))
+        checklist_output_format = (
+            checklist_data.get("checklist_output_format")
+            if isinstance(checklist_data, dict)
+            else self._resolve_checklist_output_format(checklist_config)
+        )
 
         updated_vars = dict(verifier_vars)
         updated_vars.update(
@@ -598,11 +609,14 @@ class DefaultAgent:
                 "checklist_items": checklist_items,
                 "checklist_text": checklist_text,
                 "checklist_count": len(checklist_items),
+                "checklist_rubric": checklist_rubric,
             }
         )
 
         checklist_metadata = {
             "items": checklist_items,
+            "rubric_items": checklist_rubric,
+            "checklist_output_format": checklist_output_format,
             "raw_output": checklist_data.get("raw_output", "") if isinstance(checklist_data, dict) else "",
             "response": checklist_data.get("response", {}) if isinstance(checklist_data, dict) else {},
             "response_cost": generated_response_cost,
@@ -644,16 +658,24 @@ class DefaultAgent:
         return self.config.verifier
 
     def _get_static_seed_checklist_config(self, checklist_config: VerifierConfig) -> VerifierConfig:
+        variant_root = (
+            "checklist_v2"
+            if self._resolve_checklist_output_format(checklist_config) == "rubric_yaml"
+            else "checklist"
+        )
         static_prompt_name: str | None = None
         if checklist_config.verifier_type == "llm":
-            static_prompt_name = "checklist/verifier"
+            static_prompt_name = f"{variant_root}/verifier"
         elif checklist_config.verifier_type == "reward_model":
-            static_prompt_name = "checklist/reward"
+            static_prompt_name = f"{variant_root}/reward"
         if static_prompt_name is None:
             return checklist_config
         static_config = checklist_config.model_copy(deep=True)
         static_config.prompt_name = static_prompt_name
         return apply_prompt_overrides(static_config)
+
+    def _resolve_checklist_output_format(self, checklist_config: VerifierConfig) -> str:
+        return resolve_checklist_output_format(checklist_config)
 
     def _split_n_response(self, response: dict, num_candidates: int) -> list[dict]:
         raw_response = (response.get("extra", {}) or {}).get("response")

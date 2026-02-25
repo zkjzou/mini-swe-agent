@@ -305,6 +305,78 @@ def test_dynamic_checklist_regenerate_mode_refreshes_each_query():
     assert agent.verifier_cost == 4.0
 
 
+def test_checklist_v2_omits_min_max_and_parses_rubric():
+    class _ChecklistV2VerifierModel:
+        def __init__(self):
+            self.checklist_prompt: str = ""
+            self.call_count = 0
+
+        def query(self, messages, **kwargs):
+            self.call_count += 1
+            prompt = messages[-1].get("content", "")
+            if self.call_count == 1:
+                self.checklist_prompt = prompt
+                return {
+                    "role": "assistant",
+                    "content": (
+                        "rubric:\n"
+                        "  - id: S1\n"
+                        "    stage: localization\n"
+                        "    weight: 3\n"
+                        "    description: Locates failing path in src/minisweagent/agents/default.py\n"
+                        "    observable_signal: Stack trace points to checklist generation\n"
+                        "  - id: S2\n"
+                        "    stage: verification\n"
+                        "    weight: 2\n"
+                        "    description: Confirms verifier outputs checklist scores for each candidate\n"
+                        "    observable_signal: Trajectory includes checklist_item_scores\n"
+                    ),
+                    "extra": {"cost": 0.1},
+                }
+            return {
+                "role": "assistant",
+                "content": (
+                    "REASONING: candidate 1 is safer.\n"
+                    "CHECKLIST_ITEM_SCORES:\n"
+                    "- Item 1: 0.8\n"
+                    "- Item 2: 0.6\n"
+                    "PROGRESS: 0.7\n"
+                    "FINAL: 1"
+                ),
+                "extra": {"cost": 0.2},
+            }
+
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "prompt_name": "checklist_v2/verifier",
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "checklist_mode": "issue_progress",
+    }
+
+    model = DeterministicModel(outputs=[make_output("Candidate 1", [{"command": "echo hi"}])])
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    verifier_model = _ChecklistV2VerifierModel()
+    agent.verifier.model = verifier_model
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    response = agent.query()
+    verifier_output = response.get("extra", {}).get("verifier", {}).get("verifier_output", {})
+    checklist = verifier_output.get("checklist", {})
+
+    assert "Generate 3 to 8 checklist items" not in verifier_model.checklist_prompt
+    assert checklist.get("checklist_output_format") == "rubric_yaml"
+    assert checklist.get("items") == [
+        "Locates failing path in src/minisweagent/agents/default.py",
+        "Confirms verifier outputs checklist scores for each candidate",
+    ]
+    assert checklist.get("rubric_items", [])[0]["id"] == "S1"
+    assert verifier_output.get("checklist_item_scores") == [0.8, 0.6]
+
+
 def test_serialize_uses_resolved_llm_prompt_and_blanks_unused_prompt_sections(tmp_path):
     prompt_root = tmp_path / "prompts" / "verifier" / "basic" / "verifier"
     prompt_root.mkdir(parents=True)

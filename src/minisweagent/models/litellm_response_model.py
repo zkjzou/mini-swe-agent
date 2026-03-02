@@ -3,6 +3,7 @@ import time
 from collections.abc import Callable
 
 import litellm
+import weave
 
 from minisweagent.models import GLOBAL_MODEL_STATS
 from minisweagent.models.litellm_model import LitellmModel, LitellmModelConfig
@@ -14,7 +15,7 @@ from minisweagent.models.utils.actions_toolcall_response import (
 from minisweagent.models.utils.retry import retry
 
 logger = logging.getLogger("litellm_response_model")
-
+litellm.callbacks = ["langfuse_otel"]
 
 class LitellmResponseModelConfig(LitellmModelConfig):
     pass

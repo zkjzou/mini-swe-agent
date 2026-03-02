@@ -302,3 +302,5 @@ model:
     drop_params: true
     reasoning_effort: "medium"
     verbosity: "medium"
+    tool_choice: "auto"
+    parallel_tool_calls: true

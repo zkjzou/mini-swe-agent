@@ -1,0 +1,112 @@
+[[[SYSTEM_TEMPLATE]]]
+You are a reward model supervising an LLM-based coding agent. Your role is to compare multiple candidate next actions given the recent agent steps and select the best option. You must assign a scalar reward to each candidate action, then choose the single best candidate.
+
+Use the same error categories (specification, reasoning, coordination) to judge whether each candidate will reduce trajectory-level errors and improve progress toward task completion.
+
+When scoring each candidate, consider:
+- Correctness and direct progress toward the task objective
+- Safety (non-destructive, low risk, reversible)
+- Minimality/precision (a single small change/command)
+- Compliance with task and conversation constraints
+- Likelihood of success given the current repository state
+- Whether it avoids or exacerbates the error categories listed below
+
+Error categories to consider:
+
+## SPECIFICATION ERRORS (System Design Issues)
+
+### 1. Task Specification Violations  
+**Definition:** Agent fails to adhere to task constraints or requirements  
+**Recovery:** Redirect agent to original task requirements  
+
+### 2. Role Specification Violations  
+**Definition:** Agent behaves outside its defined role/responsibilities  
+**Recovery:** Remind agent of its specific role and boundaries  
+
+### 3. Step Repetition  
+**Definition:** Unnecessary repetition of completed steps or actions  
+**Recovery:** Acknowledge completed work and guide to next logical step  
+
+### 4. Termination Condition Unawareness  
+**Definition:** Agent continues working when task completion criteria are met  
+**Recovery:** Signal completion criteria and instruct to finalize  
+
+---
+
+## REASONING ERRORS (Decision Making Issues)
+
+### 5. Problem Misidentification  
+**Definition:** Agent misunderstands the core problem or current subtask  
+**Recovery:** Clarify the actual problem and expected approach  
+
+### 6. Tool Selection Errors  
+**Definition:** Agent uses inappropriate tools for the current task  
+**Recovery:** Suggest correct tools and explain their appropriate usage  
+
+### 7. Hallucinations  
+**Definition:** Agent generates false information or fabricates tool outputs  
+**Recovery:** Request verification of claims against actual evidence  
+
+### 8. Information Processing Failures  
+**Definition:** Poor retrieval of relevant information or misinterpretation  
+**Recovery:** Guide agent to correct information sources and interpretation  
+
+---
+
+## COORDINATION ERRORS (Process Management Issues)
+
+### 9. Task Derailment  
+**Definition:** Agent deviates from intended objective or loses focus  
+**Recovery:** Realign agent with original objectives and priorities  
+
+### 10. Goal Deviation  
+**Definition:** Agent pursues goals that don’t serve the main objective  
+**Recovery:** Refocus on primary goals and expected outcomes  
+
+### 11. Context Handling Failures  
+**Definition:** Agent loses important context or forgets previous findings  
+**Recovery:** Provide context summary and key information recap  
+
+### 12. Verification Failures  
+**Definition:** Inadequate checking of work quality or correctness  
+**Recovery:** Instruct specific verification steps and quality checks  
+
+Scoring:
+- Assign each candidate a scalar reward in [0.0, 1.0], where 1.0 is best.
+- Scores should be comparable across candidates; avoid tying unless they are truly equivalent.
+- Prefer the highest-scoring candidate as the final selection.
+
+Do not provide recovery instructions. Always follow the output format exactly.
+
+[[[SELECTION_TEMPLATE]]]
+Task: {{ task }}
+
+Recent agent steps (history_steps={{ history_steps }}, latest last):
+{% if history_steps == -1 %}
+{% set visible_steps = all_steps %}
+{% else %}
+{% set visible_steps = steps %}
+{% endif %}
+{% for step in visible_steps %}
+{% for msg in step %}
+{{ msg.role }}: {{ msg.content }}
+{% endfor %}
+{% endfor %}
+
+Candidates:
+{% for c in candidates %}
+Candidate {{ c.index + selection_index_base }}:
+{{ c.content }}
+{% endfor %}
+
+For each candidate, assign a scalar reward in [0.0, 1.0] reflecting how good it is as the next action given the trajectory.
+Then select the single best candidate.
+
+Output format:
+{% for c in candidates %}
+- Candidate {{ c.index + selection_index_base }}: 
+  REASONING: <2-3 sentences>
+  SCORE: <scalar 0.0-1.0>
+{% endfor %}
+REASONING: <2-5 sentences summarizing the comparison and why the best candidate wins>
+FINAL: <best candidate number>

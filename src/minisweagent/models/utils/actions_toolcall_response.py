@@ -21,6 +21,7 @@ BASH_TOOL_RESPONSE_API = {
             }
         },
         "required": ["command"],
+        "strict": True,
     },
 }
 

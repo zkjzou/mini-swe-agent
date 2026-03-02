@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import litellm
+import weave
 from pydantic import BaseModel
 
 from minisweagent.models import GLOBAL_MODEL_STATS
@@ -21,6 +22,7 @@ from minisweagent.models.utils.openai_multimodal import expand_multimodal_conten
 from minisweagent.models.utils.retry import retry
 
 logger = logging.getLogger("litellm_model")
+#weave.init('weave_litellm_integration')
 
 
 class LitellmModelConfig(BaseModel):
@@ -81,6 +83,7 @@ class LitellmModel:
         for attempt in retry(logger=logger, abort_exceptions=self.abort_exceptions):
             with attempt:
                 response = self._query(self._prepare_messages_for_api(messages), **kwargs)
+        import pdb; pdb.set_trace()
         cost_output = self._calculate_cost(response)
         GLOBAL_MODEL_STATS.add(cost_output["cost"])
         message = response.choices[0].message.model_dump()

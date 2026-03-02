@@ -71,25 +71,27 @@ def _resolve_profiled_model_config(config: dict) -> dict:
     if not isinstance(profiles, dict):
         raise ValueError("Invalid config: 'profiles' must be a mapping.")
 
-    actor_profiles = profiles.get("actor_models", {}) or {}
-    verifier_profiles = profiles.get("verifier_models", {}) or {}
+    model_profiles = profiles.get("model_profiles", {}) or {}
     verifier_prompt_profiles = profiles.get("verifier_prompts", {}) or {}
 
-    if not isinstance(actor_profiles, dict):
-        raise ValueError("Invalid config: 'profiles.actor_models' must be a mapping.")
-    if not isinstance(verifier_profiles, dict):
-        raise ValueError("Invalid config: 'profiles.verifier_models' must be a mapping.")
+    if not isinstance(model_profiles, dict):
+        raise ValueError("Invalid config: 'profiles.model_profiles' must be a mapping.")
     if not isinstance(verifier_prompt_profiles, dict):
         raise ValueError("Invalid config: 'profiles.verifier_prompts' must be a mapping.")
 
-    model_profile = resolved.get("model_profile")
-    if model_profile:
-        if model_profile not in actor_profiles:
-            available = ", ".join(sorted(actor_profiles)) or "<none>"
-            raise ValueError(f"Unknown model_profile '{model_profile}'. Available profiles: {available}")
-        actor_profile = actor_profiles[model_profile]
+    agent_model_profile = resolved.get("agent_model_profile")
+    if not agent_model_profile:
+        # Backward compatibility alias for older configs/scripts.
+        agent_model_profile = resolved.get("model_profile")
+    if agent_model_profile:
+        if agent_model_profile not in model_profiles:
+            available = ", ".join(sorted(model_profiles)) or "<none>"
+            raise ValueError(
+                f"Unknown agent_model_profile '{agent_model_profile}'. Available profiles: {available}"
+            )
+        actor_profile = model_profiles[agent_model_profile]
         if not isinstance(actor_profile, dict):
-            raise ValueError(f"Invalid actor profile '{model_profile}': expected a mapping.")
+            raise ValueError(f"Invalid model profile '{agent_model_profile}': expected a mapping.")
         existing_model_config = resolved.get("model", {}) or {}
         if not isinstance(existing_model_config, dict):
             raise ValueError("Invalid config: 'model' must be a mapping.")
@@ -107,14 +109,14 @@ def _resolve_profiled_model_config(config: dict) -> dict:
             raise ValueError("Invalid config: 'agent.verifier' must be a mapping.")
 
         if verifier_model_profile:
-            if verifier_model_profile not in verifier_profiles:
-                available = ", ".join(sorted(verifier_profiles)) or "<none>"
+            if verifier_model_profile not in model_profiles:
+                available = ", ".join(sorted(model_profiles)) or "<none>"
                 raise ValueError(
                     f"Unknown verifier_model_profile '{verifier_model_profile}'. Available profiles: {available}"
                 )
-            verifier_model = verifier_profiles[verifier_model_profile]
+            verifier_model = model_profiles[verifier_model_profile]
             if not isinstance(verifier_model, dict):
-                raise ValueError(f"Invalid verifier model profile '{verifier_model_profile}': expected a mapping.")
+                raise ValueError(f"Invalid model profile '{verifier_model_profile}': expected a mapping.")
             existing_verifier_model = verifier_config.get("model", {}) or {}
             if not isinstance(existing_verifier_model, dict):
                 raise ValueError("Invalid config: 'agent.verifier.model' must be a mapping.")
@@ -142,6 +144,7 @@ def _resolve_profiled_model_config(config: dict) -> dict:
     # These are config-construction helpers, not runtime model/agent config keys.
     for helper_key in ("profiles", "model_profile", "verifier_model_profile", "verifier_prompt_profile"):
         resolved.pop(helper_key, None)
+    resolved.pop("agent_model_profile", None)
     return resolved
 
 

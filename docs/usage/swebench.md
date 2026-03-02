@@ -141,15 +141,15 @@
 Use profile selectors in the config:
 
 ```yaml
-model_profile: actor_default
-verifier_model_profile: verifier_default
+agent_model_profile: default
+verifier_model_profile: default
 verifier_prompt_profile: swebench_llm
 ```
 
 Then override selectors from CLI when launching runs:
 
 ```bash
-mini-extra swebench -c swebench.yaml -c model_profile=gpt5_mini
+mini-extra swebench -c swebench.yaml -c agent_model_profile=gpt5_mini
 mini-extra swebench -c swebench.yaml -c verifier_model_profile=gpt5_2
 mini-extra swebench -c swebench.yaml -c verifier_prompt_profile=swebench_reward
 ```

@@ -206,30 +206,13 @@ model:
     drop_params: true
 
 # Optional selectors for quick model/prompt swapping.
-model_profile: actor_default
-verifier_model_profile: verifier_default
+agent_model_profile: default
+verifier_model_profile: default
 verifier_prompt_profile: swebench_llm
 
 profiles:
-  actor_models:
-    actor_default:
-      model_name: ""
-      model_kwargs:
-        drop_params: true
-    gpt5_mini:
-      model_name: "openai/gpt-5-mini"
-      model_kwargs:
-        drop_params: true
-        reasoning_effort: "medium"
-        verbosity: "medium"
-    gpt5_2:
-      model_name: "openai/gpt-5.2"
-      model_kwargs:
-        drop_params: true
-        reasoning_effort: "medium"
-        verbosity: "medium"
-  verifier_models:
-    verifier_default:
+  model_profiles:
+    default:
       model_name: ""
       model_kwargs:
         drop_params: true

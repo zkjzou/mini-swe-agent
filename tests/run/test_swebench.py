@@ -189,12 +189,14 @@ def test_filter_instances_no_matches():
 
 def test_resolve_profiled_model_config_applies_actor_verifier_and_prompt_profiles():
     config = {
-        "model_profile": "gpt5_mini",
+        "agent_model_profile": "gpt5_mini",
         "verifier_model_profile": "gpt5_2",
         "verifier_prompt_profile": "swebench_reward",
         "profiles": {
-            "actor_models": {"gpt5_mini": {"model_name": "openai/gpt-5-mini", "model_kwargs": {"drop_params": True}}},
-            "verifier_models": {"gpt5_2": {"model_name": "openai/gpt-5.2", "model_kwargs": {"drop_params": True}}},
+            "model_profiles": {
+                "gpt5_mini": {"model_name": "openai/gpt-5-mini", "model_kwargs": {"drop_params": True}},
+                "gpt5_2": {"model_name": "openai/gpt-5.2", "model_kwargs": {"drop_params": True}},
+            },
             "verifier_prompts": {"swebench_reward": "swebench/reward"},
         },
     }
@@ -205,14 +207,14 @@ def test_resolve_profiled_model_config_applies_actor_verifier_and_prompt_profile
     assert resolved["agent"]["verifier"]["model"]["model_name"] == "openai/gpt-5.2"
     assert resolved["agent"]["verifier"]["prompt_name"] == "swebench/reward"
     assert "profiles" not in resolved
-    assert "model_profile" not in resolved
+    assert "agent_model_profile" not in resolved
     assert "verifier_model_profile" not in resolved
     assert "verifier_prompt_profile" not in resolved
 
 
 def test_resolve_profiled_model_config_keeps_explicit_overrides_over_profile_defaults():
     config = {
-        "model_profile": "gpt5_mini",
+        "agent_model_profile": "gpt5_mini",
         "verifier_model_profile": "gpt5_2",
         "verifier_prompt_profile": "swebench_reward",
         "model": {"model_name": "manual/actor", "model_kwargs": {"temperature": 0.2}},
@@ -223,8 +225,10 @@ def test_resolve_profiled_model_config_keeps_explicit_overrides_over_profile_def
             }
         },
         "profiles": {
-            "actor_models": {"gpt5_mini": {"model_name": "openai/gpt-5-mini", "model_kwargs": {"drop_params": True}}},
-            "verifier_models": {"gpt5_2": {"model_name": "openai/gpt-5.2", "model_kwargs": {"drop_params": True}}},
+            "model_profiles": {
+                "gpt5_mini": {"model_name": "openai/gpt-5-mini", "model_kwargs": {"drop_params": True}},
+                "gpt5_2": {"model_name": "openai/gpt-5.2", "model_kwargs": {"drop_params": True}},
+            },
             "verifier_prompts": {"swebench_reward": "swebench/reward"},
         },
     }
@@ -242,11 +246,21 @@ def test_resolve_profiled_model_config_keeps_explicit_overrides_over_profile_def
 
 def test_resolve_profiled_model_config_raises_for_unknown_profile():
     config = {
-        "model_profile": "missing_profile",
-        "profiles": {"actor_models": {"present_profile": {"model_name": "openai/gpt-5-mini"}}},
+        "agent_model_profile": "missing_profile",
+        "profiles": {"model_profiles": {"present_profile": {"model_name": "openai/gpt-5-mini"}}},
     }
-    with pytest.raises(ValueError, match="Unknown model_profile 'missing_profile'"):
+    with pytest.raises(ValueError, match="Unknown agent_model_profile 'missing_profile'"):
         _resolve_profiled_model_config(config)
+
+
+def test_resolve_profiled_model_config_supports_legacy_model_profile_alias():
+    config = {
+        "model_profile": "gpt5_mini",
+        "profiles": {"model_profiles": {"gpt5_mini": {"model_name": "openai/gpt-5-mini"}}},
+    }
+    resolved = _resolve_profiled_model_config(config)
+    assert resolved["model"]["model_name"] == "openai/gpt-5-mini"
+    assert "model_profile" not in resolved
 
 
 def test_update_preds_file_new_file(tmp_path):

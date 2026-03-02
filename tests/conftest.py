@@ -1,9 +1,16 @@
 import json
 import re
+import sys
 import threading
 from pathlib import Path
 
 import pytest
+
+# Force tests to import the local checkout under ./src instead of any globally installed package.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SRC_PATH = _REPO_ROOT / "src"
+if str(_SRC_PATH) not in sys.path:
+    sys.path.insert(0, str(_SRC_PATH))
 
 from minisweagent.models import GLOBAL_MODEL_STATS
 

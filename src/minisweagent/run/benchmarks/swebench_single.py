@@ -76,6 +76,8 @@ def main(
             "cost_limit": cost_limit or UNSET,
             "confirm_exit": False if exit_immediately else UNSET,
             "output_path": output or UNSET,
+            "show_all_candidate_actions": True,
+            "show_full_verifier_output": True,
         },
         "model": {
             "model_class": model_class or UNSET,

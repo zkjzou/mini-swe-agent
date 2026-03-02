@@ -1,5 +1,5 @@
 import re
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -97,3 +97,35 @@ def test_swebench_single_end_to_end_exit_immediately(github_test_data, tmp_path)
         # Verify model was called with correct parameters
         mock_get_model.assert_called_once()
         assert output_path.exists()
+
+
+def test_swebench_single_forces_verbose_verifier_debug_output(tmp_path):
+    instance = {"instance_id": "test__repo-1", "problem_statement": "Fix bug"}
+    mock_agent = Mock()
+    mock_agent.run = Mock()
+
+    with (
+        patch("minisweagent.run.benchmarks.swebench_single.load_dataset", return_value=[instance]),
+        patch("minisweagent.run.benchmarks.swebench_single.get_sb_environment", return_value=Mock()),
+        patch("minisweagent.run.benchmarks.swebench_single.get_model", return_value=Mock()),
+        patch("minisweagent.run.benchmarks.swebench_single.get_agent", return_value=mock_agent) as mock_get_agent,
+    ):
+        main(
+            subset="lite",
+            split="dev",
+            instance_spec="test__repo-1",
+            model_name="deterministic",
+            config_spec=[],
+            environment_class="docker",
+            exit_immediately=False,
+            output=tmp_path / "test_output.json",
+            model_class=None,
+            agent_class=None,
+            yolo=False,
+            cost_limit=None,
+        )
+
+    assert mock_get_agent.call_count == 1
+    agent_config = mock_get_agent.call_args.args[2]
+    assert agent_config["show_all_candidate_actions"] is True
+    assert agent_config["show_full_verifier_output"] is True

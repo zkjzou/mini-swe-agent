@@ -6,6 +6,7 @@ There are three modes:
 - yolo: commands issued by the LM are executed immediately without confirmation
 """
 
+import json
 import re
 from typing import Literal, NoReturn
 
@@ -33,6 +34,10 @@ class InteractiveAgentConfig(AgentConfig):
     """Never confirm actions that match these regular expressions."""
     confirm_exit: bool = True
     """If the agent wants to finish, do we ask for confirmation from user?"""
+    show_all_candidate_actions: bool = False
+    """Show all sampled candidate actions before execution."""
+    show_full_verifier_output: bool = False
+    """Print the full verifier output payload for debugging."""
 
 
 def _multiline_prompt() -> str:
@@ -64,6 +69,8 @@ class InteractiveAgent(DefaultAgent):
                     highlight=False,
                 )
                 self._print_verifier_candidate_scores(msg)
+                self._print_all_candidate_actions(msg)
+                self._print_full_verifier_output(msg)
             else:
                 console.print(f"\n[bold green]{role.capitalize()}[/bold green]:\n", end="", highlight=False)
             console.print(content, highlight=False, markup=False)
@@ -103,6 +110,62 @@ class InteractiveAgent(DefaultAgent):
             commands = self._candidate_commands(candidate)
             command_text = " ; ".join(commands) if commands else "<no parsed action>"
             console.print(f"  action: {command_text}", highlight=False, markup=False)
+
+    def _print_all_candidate_actions(self, message: dict) -> None:
+        if not self.config.show_all_candidate_actions:
+            return
+
+        verifier = self._get_verifier_metadata(message)
+        if verifier is None:
+            return
+        # If verifier score table already printed, actions are already shown there.
+        if verifier.get("enabled"):
+            return
+
+        candidates = verifier.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            return
+
+        selection_index_base = verifier.get("selection_index_base", 1)
+        verifier_type = verifier.get("type", "none")
+        console.print(f"Candidate actions (type={verifier_type}):", highlight=False, markup=False)
+        for i, candidate in enumerate(candidates):
+            if not isinstance(candidate, dict):
+                continue
+            raw_index = candidate.get("index", i)
+            index = raw_index if isinstance(raw_index, int) else i
+            display_index = index + selection_index_base if isinstance(selection_index_base, int) else index + 1
+            commands = self._candidate_commands(candidate)
+            command_text = " ; ".join(commands) if commands else "<no parsed action>"
+            console.print(f"  Candidate {display_index}: {command_text}", highlight=False, markup=False)
+
+    def _print_full_verifier_output(self, message: dict) -> None:
+        if not self.config.show_full_verifier_output:
+            return
+
+        verifier = self._get_verifier_metadata(message)
+        if verifier is None:
+            return
+
+        verifier_output = verifier.get("verifier_output")
+        verifier_enabled = bool(verifier.get("enabled"))
+        if verifier_output in (None, {}) and not verifier_enabled:
+            return
+
+        verifier_type = verifier.get("type", "unknown")
+        console.print(f"Verifier output ({verifier_type}):", highlight=False, markup=False)
+        if isinstance(verifier_output, dict):
+            formatted_output = json.dumps(verifier_output, indent=2, sort_keys=True, default=str)
+        else:
+            formatted_output = str(verifier_output)
+        console.print(formatted_output, highlight=False, markup=False)
+
+    def _get_verifier_metadata(self, message: dict) -> dict | None:
+        extra = message.get("extra", {}) or {}
+        verifier = extra.get("verifier", {}) or {}
+        if isinstance(verifier, dict):
+            return verifier
+        return None
 
     def _extract_reward_scores(self, verifier: dict) -> list[float | None]:
         verifier_output = verifier.get("verifier_output", {}) or {}

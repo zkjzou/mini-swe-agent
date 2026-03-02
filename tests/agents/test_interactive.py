@@ -1220,3 +1220,101 @@ def test_prints_llm_verifier_candidate_scores(default_config):
     assert "Verifier candidates (llm):" in printed_output
     assert "Candidate 1 | score=0.3000" in printed_output
     assert "Candidate 2 | score=0.8000" in printed_output
+
+
+def test_prints_full_verifier_output_when_enabled(default_config):
+    agent = InteractiveAgent(
+        model=DeterministicModel(outputs=[]),
+        env=LocalEnvironment(),
+        **{
+            **default_config,
+            "show_full_verifier_output": True,
+        },
+    )
+    message = {
+        "role": "assistant",
+        "content": "Selected candidate.",
+        "extra": {
+            "verifier": {
+                "enabled": True,
+                "type": "llm",
+                "selected_index": 1,
+                "selection_index_base": 1,
+                "candidates": [
+                    {"index": 0, "actions": [{"command": "echo first"}]},
+                    {"index": 1, "actions": [{"command": "echo second"}]},
+                ],
+                "verifier_output": {"scores": [0.3, 0.8], "raw_output": "SELECTED: 2"},
+            }
+        },
+    }
+
+    with patch("minisweagent.agents.interactive.console.print") as mock_print:
+        agent.add_messages(message)
+
+    printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
+    assert "Verifier output (llm):" in printed_output
+    assert '"raw_output": "SELECTED: 2"' in printed_output
+    assert '"scores": [' in printed_output
+
+
+def test_does_not_print_full_verifier_output_by_default(default_config):
+    agent = InteractiveAgent(
+        model=DeterministicModel(outputs=[]),
+        env=LocalEnvironment(),
+        **default_config,
+    )
+    message = {
+        "role": "assistant",
+        "content": "Selected candidate.",
+        "extra": {
+            "verifier": {
+                "enabled": True,
+                "type": "llm",
+                "selection_index_base": 1,
+                "candidates": [{"index": 0, "actions": [{"command": "echo first"}]}],
+                "verifier_output": {"scores": [0.7], "raw_output": "SELECTED: 1"},
+            }
+        },
+    }
+
+    with patch("minisweagent.agents.interactive.console.print") as mock_print:
+        agent.add_messages(message)
+
+    printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
+    assert "Verifier output (llm):" not in printed_output
+
+
+def test_prints_all_candidate_actions_when_enabled_without_verifier(default_config):
+    agent = InteractiveAgent(
+        model=DeterministicModel(outputs=[]),
+        env=LocalEnvironment(),
+        **{
+            **default_config,
+            "show_all_candidate_actions": True,
+        },
+    )
+    message = {
+        "role": "assistant",
+        "content": "Selected candidate.",
+        "extra": {
+            "verifier": {
+                "enabled": False,
+                "type": "none",
+                "selection_index_base": 1,
+                "candidates": [
+                    {"index": 0, "actions": [{"command": "echo first"}]},
+                    {"index": 1, "actions": [{"command": "echo second"}]},
+                ],
+                "verifier_output": {},
+            }
+        },
+    }
+
+    with patch("minisweagent.agents.interactive.console.print") as mock_print:
+        agent.add_messages(message)
+
+    printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
+    assert "Candidate actions (type=none):" in printed_output
+    assert "Candidate 1: echo first" in printed_output
+    assert "Candidate 2: echo second" in printed_output

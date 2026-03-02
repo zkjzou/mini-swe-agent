@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from minisweagent import package_dir
 from minisweagent.models.test_models import DeterministicModel, make_output
 from minisweagent.run.benchmarks.swebench import (
+    _resolve_profiled_model_config,
     filter_instances,
     get_swebench_docker_image_name,
     main,
@@ -184,6 +185,68 @@ def test_filter_instances_no_matches():
     instances = [{"instance_id": "django__test1"}, {"instance_id": "flask__test2"}]
     result = filter_instances(instances, filter_spec=r"nonexistent__.*", slice_spec="")
     assert result == []
+
+
+def test_resolve_profiled_model_config_applies_actor_verifier_and_prompt_profiles():
+    config = {
+        "model_profile": "gpt5_mini",
+        "verifier_model_profile": "gpt5_2",
+        "verifier_prompt_profile": "swebench_reward",
+        "profiles": {
+            "actor_models": {"gpt5_mini": {"model_name": "openai/gpt-5-mini", "model_kwargs": {"drop_params": True}}},
+            "verifier_models": {"gpt5_2": {"model_name": "openai/gpt-5.2", "model_kwargs": {"drop_params": True}}},
+            "verifier_prompts": {"swebench_reward": "swebench/reward"},
+        },
+    }
+
+    resolved = _resolve_profiled_model_config(config)
+
+    assert resolved["model"]["model_name"] == "openai/gpt-5-mini"
+    assert resolved["agent"]["verifier"]["model"]["model_name"] == "openai/gpt-5.2"
+    assert resolved["agent"]["verifier"]["prompt_name"] == "swebench/reward"
+    assert "profiles" not in resolved
+    assert "model_profile" not in resolved
+    assert "verifier_model_profile" not in resolved
+    assert "verifier_prompt_profile" not in resolved
+
+
+def test_resolve_profiled_model_config_keeps_explicit_overrides_over_profile_defaults():
+    config = {
+        "model_profile": "gpt5_mini",
+        "verifier_model_profile": "gpt5_2",
+        "verifier_prompt_profile": "swebench_reward",
+        "model": {"model_name": "manual/actor", "model_kwargs": {"temperature": 0.2}},
+        "agent": {
+            "verifier": {
+                "model": {"model_name": "manual/verifier", "model_kwargs": {"temperature": 0.1}},
+                "prompt_name": "manual/prompt",
+            }
+        },
+        "profiles": {
+            "actor_models": {"gpt5_mini": {"model_name": "openai/gpt-5-mini", "model_kwargs": {"drop_params": True}}},
+            "verifier_models": {"gpt5_2": {"model_name": "openai/gpt-5.2", "model_kwargs": {"drop_params": True}}},
+            "verifier_prompts": {"swebench_reward": "swebench/reward"},
+        },
+    }
+
+    resolved = _resolve_profiled_model_config(config)
+
+    assert resolved["model"]["model_name"] == "manual/actor"
+    assert resolved["model"]["model_kwargs"]["drop_params"] is True
+    assert resolved["model"]["model_kwargs"]["temperature"] == 0.2
+    assert resolved["agent"]["verifier"]["model"]["model_name"] == "manual/verifier"
+    assert resolved["agent"]["verifier"]["model"]["model_kwargs"]["drop_params"] is True
+    assert resolved["agent"]["verifier"]["model"]["model_kwargs"]["temperature"] == 0.1
+    assert resolved["agent"]["verifier"]["prompt_name"] == "manual/prompt"
+
+
+def test_resolve_profiled_model_config_raises_for_unknown_profile():
+    config = {
+        "model_profile": "missing_profile",
+        "profiles": {"actor_models": {"present_profile": {"model_name": "openai/gpt-5-mini"}}},
+    }
+    with pytest.raises(ValueError, match="Unknown model_profile 'missing_profile'"):
+        _resolve_profiled_model_config(config)
 
 
 def test_update_preds_file_new_file(tmp_path):

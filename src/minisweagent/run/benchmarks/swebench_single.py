@@ -11,6 +11,7 @@ from minisweagent.config import builtin_config_dir, get_config_from_spec
 from minisweagent.models import get_model
 from minisweagent.run.benchmarks.swebench import (
     DATASET_MAPPING,
+    _resolve_profiled_model_config,
     get_sb_environment,
 )
 from minisweagent.utils.log import logger
@@ -85,6 +86,7 @@ def main(
         },
     })
     config = recursive_merge(*configs)
+    config = _resolve_profiled_model_config(config)
 
     env = get_sb_environment(config, instance)
     agent = get_agent(

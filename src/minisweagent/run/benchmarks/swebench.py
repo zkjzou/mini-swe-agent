@@ -64,6 +64,87 @@ app = typer.Typer(rich_markup_mode="rich", add_completion=False)
 _OUTPUT_FILE_LOCK = threading.Lock()
 
 
+def _resolve_profiled_model_config(config: dict) -> dict:
+    """Resolve optional actor/verifier profile selectors in a SWE-bench config."""
+    resolved = recursive_merge(config)
+    profiles = resolved.get("profiles", {}) or {}
+    if not isinstance(profiles, dict):
+        raise ValueError("Invalid config: 'profiles' must be a mapping.")
+
+    actor_profiles = profiles.get("actor_models", {}) or {}
+    verifier_profiles = profiles.get("verifier_models", {}) or {}
+    verifier_prompt_profiles = profiles.get("verifier_prompts", {}) or {}
+
+    if not isinstance(actor_profiles, dict):
+        raise ValueError("Invalid config: 'profiles.actor_models' must be a mapping.")
+    if not isinstance(verifier_profiles, dict):
+        raise ValueError("Invalid config: 'profiles.verifier_models' must be a mapping.")
+    if not isinstance(verifier_prompt_profiles, dict):
+        raise ValueError("Invalid config: 'profiles.verifier_prompts' must be a mapping.")
+
+    model_profile = resolved.get("model_profile")
+    if model_profile:
+        if model_profile not in actor_profiles:
+            available = ", ".join(sorted(actor_profiles)) or "<none>"
+            raise ValueError(f"Unknown model_profile '{model_profile}'. Available profiles: {available}")
+        actor_profile = actor_profiles[model_profile]
+        if not isinstance(actor_profile, dict):
+            raise ValueError(f"Invalid actor profile '{model_profile}': expected a mapping.")
+        existing_model_config = resolved.get("model", {}) or {}
+        if not isinstance(existing_model_config, dict):
+            raise ValueError("Invalid config: 'model' must be a mapping.")
+        # Keep explicit model overrides from config/CLI on top of profile defaults.
+        resolved["model"] = recursive_merge(actor_profile, existing_model_config)
+
+    verifier_model_profile = resolved.get("verifier_model_profile")
+    verifier_prompt_profile = resolved.get("verifier_prompt_profile")
+    if verifier_model_profile or verifier_prompt_profile:
+        agent_config = resolved.get("agent", {}) or {}
+        if not isinstance(agent_config, dict):
+            raise ValueError("Invalid config: 'agent' must be a mapping.")
+        verifier_config = agent_config.get("verifier", {}) or {}
+        if not isinstance(verifier_config, dict):
+            raise ValueError("Invalid config: 'agent.verifier' must be a mapping.")
+
+        if verifier_model_profile:
+            if verifier_model_profile not in verifier_profiles:
+                available = ", ".join(sorted(verifier_profiles)) or "<none>"
+                raise ValueError(
+                    f"Unknown verifier_model_profile '{verifier_model_profile}'. Available profiles: {available}"
+                )
+            verifier_model = verifier_profiles[verifier_model_profile]
+            if not isinstance(verifier_model, dict):
+                raise ValueError(f"Invalid verifier model profile '{verifier_model_profile}': expected a mapping.")
+            existing_verifier_model = verifier_config.get("model", {}) or {}
+            if not isinstance(existing_verifier_model, dict):
+                raise ValueError("Invalid config: 'agent.verifier.model' must be a mapping.")
+            # Keep explicit verifier model overrides from config/CLI on top of profile defaults.
+            verifier_config["model"] = recursive_merge(verifier_model, existing_verifier_model)
+
+        if verifier_prompt_profile:
+            if verifier_prompt_profile not in verifier_prompt_profiles:
+                available = ", ".join(sorted(verifier_prompt_profiles)) or "<none>"
+                raise ValueError(
+                    f"Unknown verifier_prompt_profile '{verifier_prompt_profile}'. Available profiles: {available}"
+                )
+            prompt_name = verifier_prompt_profiles[verifier_prompt_profile]
+            if not isinstance(prompt_name, str) or not prompt_name.strip():
+                raise ValueError(
+                    f"Invalid verifier prompt profile '{verifier_prompt_profile}': expected a non-empty prompt name."
+                )
+            existing_prompt_name = verifier_config.get("prompt_name")
+            if not isinstance(existing_prompt_name, str) or not existing_prompt_name.strip():
+                verifier_config["prompt_name"] = prompt_name
+
+        agent_config["verifier"] = verifier_config
+        resolved["agent"] = agent_config
+
+    # These are config-construction helpers, not runtime model/agent config keys.
+    for helper_key in ("profiles", "model_profile", "verifier_model_profile", "verifier_prompt_profile"):
+        resolved.pop(helper_key, None)
+    return resolved
+
+
 class ProgressTrackingAgent(DefaultAgent):
     """Simple wrapper around DefaultAgent that provides progress updates."""
 
@@ -288,6 +369,7 @@ def main(
         "model": {"model_name": model or UNSET, "model_class": model_class or UNSET},
     })
     config = recursive_merge(*configs)
+    config = _resolve_profiled_model_config(config)
 
     progress_manager = RunBatchProgressManager(len(instances), output_path / f"exit_statuses_{time.time()}.yaml")
 

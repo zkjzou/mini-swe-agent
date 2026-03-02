@@ -178,91 +178,13 @@ agent:
   verifier:
     enabled: false
     verifier_type: llm
-    model:
-      model_name: ""
-      model_kwargs:
-        drop_params: true
-    system_template: |
-      You are an expert verifier for a coding agent. Your job is to choose the single best candidate action to execute next.
-      Prioritize actions that are:
-      1) Correct and directly advance the task.
-      2) Safe (non-destructive, no data loss, no irreversible commands).
-      3) Minimal and precise (smallest change/command that advances the goal).
-      4) Compliant with instructions in the task and conversation.
-      5) Likely to succeed given the current repo state and constraints.
-
-      Do NOT choose actions that are vague, multi-step beyond a single command, or that alter unrelated files.
-      If multiple candidates are equivalent, prefer the one with lower risk and fewer side effects.
-      Always follow the output format exactly.
-      Task: {{ task }}
+    prompt_name: ""
     history_steps: -1
-    selection_template: |
-      Task: {{ task }}
-
-      Recent steps (latest last):
-      {% for step in steps %}
-      {% for msg in step %}
-      {{ msg.role }}: {{ msg.content }}
-      {% endfor %}
-      {% endfor %}
-
-      Candidates:
-      {% for c in candidates %}
-      Candidate {{ c.index + selection_index_base }}:
-      {{ c.content }}
-      {% endfor %}
-
-      Choose the single best candidate action.
-      Rules:
-      - Prefer commands that are safe, minimal, and likely to succeed.
-      - Avoid destructive operations unless explicitly required.
-      - If all candidates are invalid, pick the least harmful option.
-
-      Output format:
-      REASONING: <2-5 sentences>
-      FINAL: <number>
     selection_regex: '(\d+)'
     selection_index_base: 1
-    reward_system_template: |
-      You are an expert verifier for a coding agent. Your job is to evaluate a single candidate next action given the recent agent steps, and output (1) brief reasoning and (2) a scalar score indicating how suitable the action is to execute next.
-
-      Prioritize candidate actions that are:
-      1) Correct and directly advance the task.
-      2) Safe (non-destructive, no data loss, no irreversible commands).
-      3) Minimal and precise (a single small change/command that advances the goal).
-      4) Compliant with instructions in the task and conversation.
-      5) Likely to succeed given the current repository state and constraints.
-
-      Penalize actions that are vague, multi-step beyond a single command, or that alter unrelated files.
-      If multiple reasonable next steps exist, score higher for lower risk and fewer side effects.
-      Always follow the output format exactly.
-
-      Task: {{ task }}
-    reward_prompt_template: |
-      Task: {{ task }}
-
-      Recent steps (latest last):
-      {% for step in steps %}
-      {% for msg in step %}
-      {{ msg.role }}: {{ msg.content }}
-      {% endfor %}
-      {% endfor %}
-
-      Candidate action:
-      {{ candidate.content }}
-
-      Assign a scalar score in the range **[0.0, 1.0]** reflecting how appropriate the candidate action is as the next step:
-      - **0.9-1.0**: Ideal next action; clearly correct, safe, minimal, and directly advances the task.
-      - **0.7–0.9**: Strong action; likely helpful but slightly indirect or missing a minor prerequisite.
-      - **0.4–0.6**: Plausible but suboptimal; inefficient exploration or weak connection to the immediate blocker.
-      - **0.1–0.3**: Poor choice; redundancy, unnecessary risk, or misunderstanding of observations.
-      - **0.0-0.1**: Clearly harmful, irrelevant, or very unlikely to succeed.
-
-      Output format:
-      REASONING: <2–5 sentences>
-      FINAL: <scalar value between 0.0 and 1.0>
     reward_regex: 'FINAL:\s*([01](?:\.\d+)?)'
     fallback: first_candidate
+    model: {}
 
 environment:
   cwd: "/testbed"
@@ -282,3 +204,63 @@ model:
   model_name: ""
   model_kwargs:
     drop_params: true
+
+# Optional selectors for quick model/prompt swapping.
+model_profile: actor_default
+verifier_model_profile: verifier_default
+verifier_prompt_profile: swebench_llm
+
+profiles:
+  actor_models:
+    actor_default:
+      model_name: ""
+      model_kwargs:
+        drop_params: true
+    gpt5_mini:
+      model_name: "openai/gpt-5-mini"
+      model_kwargs:
+        drop_params: true
+        reasoning_effort: "medium"
+        verbosity: "medium"
+    gpt5_2:
+      model_name: "openai/gpt-5.2"
+      model_kwargs:
+        drop_params: true
+        reasoning_effort: "medium"
+        verbosity: "medium"
+  verifier_models:
+    verifier_default:
+      model_name: ""
+      model_kwargs:
+        drop_params: true
+    gpt5_mini:
+      model_name: "openai/gpt-5-mini"
+      model_kwargs:
+        drop_params: true
+        reasoning_effort: "medium"
+        verbosity: "medium"
+    gpt5_2:
+      model_name: "openai/gpt-5.2"
+      model_kwargs:
+        drop_params: true
+        reasoning_effort: "medium"
+        verbosity: "medium"
+  verifier_prompts:
+    basic_llm: "basic/verifier"
+    swebench_llm: "swebench/verifier"
+    domain_llm: "domain/verifier"
+    domain_v2_llm: "domain_v2/verifier"
+    world_llm: "world/verifier"
+    checklist_llm: "checklist/verifier"
+    checklist_v2_llm: "checklist_v2/verifier"
+    dynamic_checklist_regenerate_llm: "dynamic_checklist_regenerate/verifier"
+    dynamic_checklist_modify_llm: "dynamic_checklist_modify/verifier"
+    basic_reward: "basic/reward"
+    swebench_reward: "swebench/reward"
+    domain_reward: "domain/reward"
+    domain_v2_reward: "domain_v2/reward"
+    world_reward: "world/reward"
+    checklist_reward: "checklist/reward"
+    checklist_v2_reward: "checklist_v2/reward"
+    dynamic_checklist_regenerate_reward: "dynamic_checklist_regenerate/reward"
+    dynamic_checklist_modify_reward: "dynamic_checklist_modify/reward"

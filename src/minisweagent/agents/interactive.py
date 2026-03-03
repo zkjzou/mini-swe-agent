@@ -25,6 +25,10 @@ _history = FileHistory(global_config_dir / "interactive_history.txt")
 _prompt_session = PromptSession(history=_history)
 _multiline_prompt_session = PromptSession(history=_history, multiline=True)
 
+_CANDIDATE_STYLE = "bold cyan"
+_VERIFIER_STYLE = "bold magenta"
+_FINAL_ACTION_STYLE = "bold green"
+
 
 class InteractiveAgentConfig(AgentConfig):
     mode: Literal["human", "confirm", "yolo"] = "confirm"
@@ -73,9 +77,13 @@ class InteractiveAgent(DefaultAgent):
                 self._print_all_candidate_actions(msg)
                 self._print_verifier_summary_output(msg)
                 self._print_full_verifier_output(msg)
+                console.print("Final action:", highlight=False, markup=False, style=_FINAL_ACTION_STYLE)
             else:
                 console.print(f"\n[bold green]{role.capitalize()}[/bold green]:\n", end="", highlight=False)
-            console.print(content, highlight=False, markup=False)
+            if role == "assistant":
+                console.print(content, highlight=False, markup=False, style=_FINAL_ACTION_STYLE)
+            else:
+                console.print(content, highlight=False, markup=False)
         return super().add_messages(*messages)
 
     def _print_verifier_candidate_scores(self, message: dict) -> None:
@@ -92,7 +100,7 @@ class InteractiveAgent(DefaultAgent):
         selected_index = verifier.get("selected_index")
         rewards = self._extract_reward_scores(verifier)
         verifier_type = verifier.get("type", "unknown")
-        console.print(f"Verifier candidates ({verifier_type}):", highlight=False, markup=False)
+        console.print(f"Candidate actions ({verifier_type}):", highlight=False, markup=False, style=_CANDIDATE_STYLE)
 
         for i, candidate in enumerate(candidates):
             if not isinstance(candidate, dict):
@@ -106,16 +114,18 @@ class InteractiveAgent(DefaultAgent):
             commands = self._candidate_commands(candidate)
             command_text = self._truncate_inline(" ; ".join(commands) if commands else "<no parsed action>")
             thought_text = self._candidate_thought(candidate) or "<none>"
-            console.print(f"{selected_prefix} Candidate {display_index}", highlight=False, markup=False)
+            console.print(f"{selected_prefix} Candidate {display_index}", highlight=False, markup=False, style=_CANDIDATE_STYLE)
             console.print(
                 f"  {command_text} ({score_text})",
                 highlight=False,
                 markup=False,
+                style=_CANDIDATE_STYLE,
             )
             console.print(
                 f"  {thought_text}",
                 highlight=False,
                 markup=False,
+                style=_CANDIDATE_STYLE,
             )
 
     def _print_all_candidate_actions(self, message: dict) -> None:
@@ -137,7 +147,7 @@ class InteractiveAgent(DefaultAgent):
         selected_index = verifier.get("selected_index")
         rewards = self._extract_reward_scores(verifier)
         verifier_type = verifier.get("type", "none")
-        console.print(f"Candidate actions (type={verifier_type}):", highlight=False, markup=False)
+        console.print(f"Candidate actions (type={verifier_type}):", highlight=False, markup=False, style=_CANDIDATE_STYLE)
         for i, candidate in enumerate(candidates):
             if not isinstance(candidate, dict):
                 continue
@@ -149,16 +159,18 @@ class InteractiveAgent(DefaultAgent):
             thought_text = self._candidate_thought(candidate) or "<none>"
             score = rewards[index] if index < len(rewards) else None
             selected_prefix = "*" if selected_index == index else " "
-            console.print(f"{selected_prefix} Candidate {display_index}", highlight=False, markup=False)
+            console.print(f"{selected_prefix} Candidate {display_index}", highlight=False, markup=False, style=_CANDIDATE_STYLE)
             console.print(
                 f"  {command_text} ({self._format_score(score)})",
                 highlight=False,
                 markup=False,
+                style=_CANDIDATE_STYLE,
             )
             console.print(
                 f"  {thought_text}",
                 highlight=False,
                 markup=False,
+                style=_CANDIDATE_STYLE,
             )
 
     def _print_verifier_summary_output(self, message: dict) -> None:
@@ -181,6 +193,7 @@ class InteractiveAgent(DefaultAgent):
             f"Verifier summary ({verifier_type}): selected=C{selected_display}",
             highlight=False,
             markup=False,
+            style=_VERIFIER_STYLE,
         )
 
         scores = self._extract_reward_scores(verifier)
@@ -189,6 +202,7 @@ class InteractiveAgent(DefaultAgent):
                 f"  scores: {self._format_candidate_scores(scores, selection_index_base)}",
                 highlight=False,
                 markup=False,
+                style=_VERIFIER_STYLE,
             )
 
         progress_scores = verifier_output.get("candidate_progress_scores")
@@ -197,12 +211,14 @@ class InteractiveAgent(DefaultAgent):
                 f"  progress: {self._format_candidate_scores(progress_scores, selection_index_base)}",
                 highlight=False,
                 markup=False,
+                style=_VERIFIER_STYLE,
             )
         elif isinstance(verifier_output.get("progress_score"), (int, float)):
             console.print(
                 f"  progress: {self._format_score(verifier_output.get('progress_score'))}",
                 highlight=False,
                 markup=False,
+                style=_VERIFIER_STYLE,
             )
 
         checklist = verifier_output.get("checklist")
@@ -214,7 +230,7 @@ class InteractiveAgent(DefaultAgent):
                 parts.append(f"dynamic={checklist.get('dynamic')}")
             if isinstance(checklist.get("update_mode"), str) and checklist.get("update_mode"):
                 parts.append(f"update_mode={checklist.get('update_mode')}")
-            console.print(f"  checklist: {', '.join(parts)}", highlight=False, markup=False)
+            console.print(f"  checklist: {', '.join(parts)}", highlight=False, markup=False, style=_VERIFIER_STYLE)
 
         checklist_item_scores = verifier_output.get("checklist_item_scores")
         if isinstance(checklist_item_scores, list) and checklist_item_scores:
@@ -222,6 +238,7 @@ class InteractiveAgent(DefaultAgent):
                 f"  checklist_scores: {self._format_item_scores(checklist_item_scores)}",
                 highlight=False,
                 markup=False,
+                style=_VERIFIER_STYLE,
             )
 
         candidate_checklist_scores = verifier_output.get("candidate_checklist_item_scores")
@@ -236,6 +253,7 @@ class InteractiveAgent(DefaultAgent):
                     f"  checklist_scores(selected): {self._format_item_scores(selected_candidate_scores)}",
                     highlight=False,
                     markup=False,
+                    style=_VERIFIER_STYLE,
                 )
 
     def _print_full_verifier_output(self, message: dict) -> None:
@@ -256,8 +274,8 @@ class InteractiveAgent(DefaultAgent):
             return
 
         verifier_type = verifier.get("type", "unknown")
-        console.print(f"Verifier output ({verifier_type}):", highlight=False, markup=False)
-        console.print(content_output, highlight=False, markup=False)
+        console.print(f"Verifier output ({verifier_type}):", highlight=False, markup=False, style=_VERIFIER_STYLE)
+        console.print(content_output, highlight=False, markup=False, style=_VERIFIER_STYLE)
 
     def _get_verifier_metadata(self, message: dict) -> dict | None:
         extra = message.get("extra", {}) or {}
@@ -356,9 +374,11 @@ class InteractiveAgent(DefaultAgent):
         if isinstance(raw_output, str):
             return raw_output
 
+        rewards = verifier_output.get("rewards")
+        reward_values = rewards if isinstance(rewards, list) else []
         raw_outputs = verifier_output.get("raw_outputs")
         if not isinstance(raw_outputs, list):
-            return ""
+            return self._format_reward_outputs_only(reward_values, verifier)
 
         selection_index_base = verifier.get("selection_index_base", 1)
         base = selection_index_base if isinstance(selection_index_base, int) else 1
@@ -367,9 +387,32 @@ class InteractiveAgent(DefaultAgent):
         for index, output in enumerate(raw_outputs):
             if not isinstance(output, str):
                 continue
-            selected_suffix = " (selected)" if isinstance(selected_index, int) and selected_index == index else ""
-            rendered_outputs.append(f"Candidate {index + base}{selected_suffix}:\n{output}")
-        return "\n\n".join(rendered_outputs)
+            header_parts: list[str] = []
+            if isinstance(selected_index, int) and selected_index == index:
+                header_parts.append("selected")
+            if reward_values:
+                reward = reward_values[index] if index < len(reward_values) else None
+                header_parts.append(f"reward={self._format_score(reward)}")
+            suffix = f" ({', '.join(header_parts)})" if header_parts else ""
+            rendered_outputs.append(f"Candidate {index + base}{suffix}:\n{output}")
+        if rendered_outputs:
+            return "\n\n".join(rendered_outputs)
+        return self._format_reward_outputs_only(reward_values, verifier)
+
+    def _format_reward_outputs_only(self, rewards: list[object], verifier: dict) -> str:
+        if not rewards:
+            return ""
+        selection_index_base = verifier.get("selection_index_base", 1)
+        base = selection_index_base if isinstance(selection_index_base, int) else 1
+        selected_index = verifier.get("selected_index")
+        lines: list[str] = []
+        for index, reward in enumerate(rewards):
+            header_parts: list[str] = []
+            if isinstance(selected_index, int) and selected_index == index:
+                header_parts.append("selected")
+            header_parts.append(f"reward={self._format_score(reward if isinstance(reward, (int, float)) else None)}")
+            lines.append(f"Candidate {index + base} ({', '.join(header_parts)})")
+        return "\n".join(lines)
 
     def query(self) -> dict:
         # Extend supermethod to handle human mode

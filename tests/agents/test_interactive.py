@@ -1187,7 +1187,7 @@ def test_prints_verifier_candidate_scores(default_config):
         agent.add_messages(message)
 
     printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
-    assert "Verifier candidates (reward_model):" in printed_output
+    assert "Candidate actions (reward_model):" in printed_output
     assert "Candidate 1" in printed_output
     assert "* Candidate 2" in printed_output
     assert "echo first (0.2000)" in printed_output
@@ -1225,7 +1225,7 @@ def test_prints_llm_verifier_candidate_scores(default_config):
         agent.add_messages(message)
 
     printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
-    assert "Verifier candidates (llm):" in printed_output
+    assert "Candidate actions (llm):" in printed_output
     assert "Candidate 1" in printed_output
     assert "* Candidate 2" in printed_output
     assert "echo first (0.3000)" in printed_output
@@ -1354,9 +1354,47 @@ def test_prints_full_verifier_output_only_content_for_reward_model(default_confi
 
     printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
     assert "Verifier output (reward_model):" in printed_output
-    assert "Candidate 1:\nSCORE: 0.1" in printed_output
-    assert "Candidate 2 (selected):\nSCORE: 0.9" in printed_output
+    assert "Candidate 1 (reward=0.1000):\nSCORE: 0.1" in printed_output
+    assert "Candidate 2 (selected, reward=0.9000):\nSCORE: 0.9" in printed_output
     assert '"rewards": [' not in printed_output
+
+
+def test_prints_reward_verifier_outputs_when_raw_content_missing(default_config):
+    agent = InteractiveAgent(
+        model=DeterministicModel(outputs=[]),
+        env=LocalEnvironment(),
+        **{
+            **default_config,
+            "show_full_verifier_output": True,
+        },
+    )
+    message = {
+        "role": "assistant",
+        "content": "Selected candidate.",
+        "extra": {
+            "verifier": {
+                "enabled": True,
+                "type": "reward_model",
+                "selected_index": 0,
+                "selection_index_base": 1,
+                "candidates": [
+                    {"index": 0, "actions": [{"command": "echo first"}]},
+                    {"index": 1, "actions": [{"command": "echo second"}]},
+                ],
+                "verifier_output": {
+                    "rewards": [0.2, 0.1],
+                },
+            }
+        },
+    }
+
+    with patch("minisweagent.agents.interactive.console.print") as mock_print:
+        agent.add_messages(message)
+
+    printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
+    assert "Verifier output (reward_model):" in printed_output
+    assert "Candidate 1 (selected, reward=0.2000)" in printed_output
+    assert "Candidate 2 (reward=0.1000)" in printed_output
 
 
 def test_does_not_print_full_verifier_output_by_default(default_config):

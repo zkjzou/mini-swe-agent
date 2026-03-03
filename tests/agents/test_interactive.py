@@ -1398,6 +1398,45 @@ def test_prints_reward_verifier_outputs_when_raw_content_missing(default_config)
     assert "Candidate 2 (reward=0.1000)" in printed_output
 
 
+def test_prints_reward_verifier_placeholder_when_raw_content_empty(default_config):
+    agent = InteractiveAgent(
+        model=DeterministicModel(outputs=[]),
+        env=LocalEnvironment(),
+        **{
+            **default_config,
+            "show_full_verifier_output": True,
+        },
+    )
+    message = {
+        "role": "assistant",
+        "content": "Selected candidate.",
+        "extra": {
+            "verifier": {
+                "enabled": True,
+                "type": "reward_model",
+                "selected_index": 1,
+                "selection_index_base": 1,
+                "candidates": [
+                    {"index": 0, "actions": [{"command": "echo first"}]},
+                    {"index": 1, "actions": [{"command": "echo second"}]},
+                ],
+                "verifier_output": {
+                    "rewards": [0.2, 0.8],
+                    "raw_outputs": ["", ""],
+                },
+            }
+        },
+    }
+
+    with patch("minisweagent.agents.interactive.console.print") as mock_print:
+        agent.add_messages(message)
+
+    printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
+    assert "Verifier output (reward_model):" in printed_output
+    assert "Candidate 1 (reward=0.2000):\n<empty output>" in printed_output
+    assert "Candidate 2 (selected, reward=0.8000):\n<empty output>" in printed_output
+
+
 def test_colors_only_section_headers(default_config):
     agent = InteractiveAgent(
         model=DeterministicModel(outputs=[]),

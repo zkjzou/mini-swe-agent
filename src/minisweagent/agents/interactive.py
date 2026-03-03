@@ -382,7 +382,8 @@ class InteractiveAgent(DefaultAgent):
                 reward = reward_values[index] if index < len(reward_values) else None
                 header_parts.append(f"reward={self._format_score(reward)}")
             suffix = f" ({', '.join(header_parts)})" if header_parts else ""
-            rendered_outputs.append(f"Candidate {index + base}{suffix}:\n{output}")
+            output_text = output if output.strip() else "<empty output>"
+            rendered_outputs.append(f"Candidate {index + base}{suffix}:\n{output_text}")
         if rendered_outputs:
             return "\n\n".join(rendered_outputs)
         return self._format_reward_outputs_only(reward_values, verifier)

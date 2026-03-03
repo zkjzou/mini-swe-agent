@@ -228,6 +228,51 @@ profiles:
         drop_params: true
         reasoning_effort: "medium"
         verbosity: "medium"
+    qwen3_5_instruct:
+      model_name: ""
+      model_kwargs:
+        drop_params: true
+        temperature: 1.0
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
+        presence_penalty: 1.5
+        repetition_penalty: 1.0
+        extra_body:
+          chat_template_kwargs:
+            enable_thinking: false
+    qwen3_5_thinking:
+      model_name: ""
+      model_kwargs:
+        drop_params: true
+        temperature: 1.0
+        top_p: 0.95
+        top_k: 20
+        min_p: 0.0
+        presence_penalty: 1.5
+        repetition_penalty: 1.0
+        include_reasoning: true
+        extra_body:
+          chat_template_kwargs:
+            enable_thinking: true
+    qwen3_coder:
+      model_name: ""
+      model_kwargs:
+        drop_params: true
+        temperature: 0.7
+        top_p: 0.8
+        top_k: 20
+        min_p: 0.0
+        repetition_penalty: 1.05
+    qwen3_coder_next:
+      model_name: ""
+      model_kwargs:
+        drop_params: true
+        temperature: 1.0
+        top_p: 0.95
+        top_k: 40
+        min_p: 0.0
+
   verifier_prompts:
     basic_verifier:
       prompt_name: "basic/verifier"

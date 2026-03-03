@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from minisweagent import package_dir
+
 _SYSTEM_MARKER = "[[[SYSTEM_TEMPLATE]]]"
 _SELECTION_MARKER = "[[[SELECTION_TEMPLATE]]]"
 _REWARD_MARKER = "[[[REWARD_PROMPT_TEMPLATE]]]"
@@ -16,9 +18,7 @@ def apply_prompt_overrides(config: Any) -> Any:
     if not prompt_name:
         return config
     prompt_dir = Path(getattr(config, "prompt_dir", "prompts/verifier"))
-    if not prompt_dir.is_absolute():
-        prompt_dir = Path.cwd() / prompt_dir
-    prompt_root = prompt_dir / prompt_name
+    prompt_root = _resolve_prompt_root(prompt_dir, prompt_name)
     system_path = prompt_root / "system.jinja"
 
     if config.verifier_type == "llm":
@@ -59,6 +59,18 @@ def apply_prompt_overrides(config: Any) -> Any:
             config.reward_system_template = system_path.read_text()
 
     return config
+
+
+def _resolve_prompt_root(prompt_dir: Path, prompt_name: str) -> Path:
+    if prompt_dir.is_absolute():
+        return prompt_dir / prompt_name
+    cwd_candidate = Path.cwd() / prompt_dir / prompt_name
+    if cwd_candidate.exists():
+        return cwd_candidate
+    repo_root_candidate = package_dir.parent.parent / prompt_dir / prompt_name
+    if repo_root_candidate.exists():
+        return repo_root_candidate
+    return cwd_candidate
 
 
 def _parse_selection_prompt_file(content: str) -> tuple[str | None, str]:

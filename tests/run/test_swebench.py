@@ -244,6 +244,27 @@ def test_resolve_profiled_model_config_keeps_explicit_overrides_over_profile_def
     assert resolved["agent"]["verifier"]["prompt_name"] == "manual/prompt"
 
 
+def test_resolve_profiled_model_config_supports_prompt_profile_mapping_with_prompt_dir():
+    config = {
+        "verifier_prompt_profile": "basic_llm",
+        "profiles": {
+            "model_profiles": {},
+            "verifier_prompts": {
+                "basic_llm": {
+                    "prompt_name": "basic/verifier",
+                    "prompt_dir": "/abs/path/to/prompts/verifier",
+                }
+            },
+        },
+        "agent": {"verifier": {}},
+    }
+
+    resolved = _resolve_profiled_model_config(config)
+
+    assert resolved["agent"]["verifier"]["prompt_name"] == "basic/verifier"
+    assert resolved["agent"]["verifier"]["prompt_dir"] == "/abs/path/to/prompts/verifier"
+
+
 def test_resolve_profiled_model_config_raises_for_unknown_profile():
     config = {
         "agent_model_profile": "missing_profile",

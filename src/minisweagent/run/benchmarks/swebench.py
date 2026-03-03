@@ -129,14 +129,35 @@ def _resolve_profiled_model_config(config: dict) -> dict:
                 raise ValueError(
                     f"Unknown verifier_prompt_profile '{verifier_prompt_profile}'. Available profiles: {available}"
                 )
-            prompt_name = verifier_prompt_profiles[verifier_prompt_profile]
+            prompt_profile = verifier_prompt_profiles[verifier_prompt_profile]
+            prompt_name = None
+            prompt_dir = None
+            if isinstance(prompt_profile, str):
+                prompt_name = prompt_profile
+            elif isinstance(prompt_profile, dict):
+                prompt_name = prompt_profile.get("prompt_name")
+                prompt_dir = prompt_profile.get("prompt_dir")
+            else:
+                raise ValueError(
+                    f"Invalid verifier prompt profile '{verifier_prompt_profile}': expected string or mapping."
+                )
             if not isinstance(prompt_name, str) or not prompt_name.strip():
                 raise ValueError(
                     f"Invalid verifier prompt profile '{verifier_prompt_profile}': expected a non-empty prompt name."
                 )
+            if prompt_dir is not None and (not isinstance(prompt_dir, str) or not prompt_dir.strip()):
+                raise ValueError(
+                    f"Invalid verifier prompt profile '{verifier_prompt_profile}': expected a non-empty prompt_dir."
+                )
+
             existing_prompt_name = verifier_config.get("prompt_name")
             if not isinstance(existing_prompt_name, str) or not existing_prompt_name.strip():
                 verifier_config["prompt_name"] = prompt_name
+
+            if isinstance(prompt_dir, str):
+                existing_prompt_dir = verifier_config.get("prompt_dir")
+                if not isinstance(existing_prompt_dir, str) or not existing_prompt_dir.strip():
+                    verifier_config["prompt_dir"] = prompt_dir
 
         agent_config["verifier"] = verifier_config
         resolved["agent"] = agent_config

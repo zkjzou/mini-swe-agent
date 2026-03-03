@@ -154,6 +154,11 @@ mini-extra swebench -c swebench.yaml -c verifier_model_profile=gpt5_2
 mini-extra swebench -c swebench.yaml -c verifier_prompt_profile=swebench_reward
 ```
 
+When verifier profiles are resolved, verifier model classes are always text-based. If a verifier profile sets
+`model_class: litellm` or `model_class: openrouter`, it is rewritten to `litellm_textbased` or
+`openrouter_textbased`. Tool-calling verifier classes like `litellm_response`, `openrouter_response`,
+`portkey`, `portkey_response`, and `requesty` are rejected.
+
 > Can I set global cost limits?
 
 Yes, you can set global cost limits with the `MSWEA_GLOBAL_CALL_LIMIT` and `MSWEA_GLOBAL_COST_LIMIT` environment variables/global config.

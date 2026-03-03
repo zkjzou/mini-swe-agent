@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -92,6 +93,100 @@ def test_llm_verifier_uses_last_index_match():
     assert verifier.get("selected_index") == 1
     assert verifier.get("verifier_output", {}).get("raw_index") == 2
     assert "echo second" in verifier["candidates"][1]["action"]
+
+
+def test_verifier_model_defaults_to_litellm_textbased_when_model_class_is_missing():
+    config = _load_default_agent_config()
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "model": {
+            "model_name": "openai/gpt-5-mini",
+            "model_kwargs": {"drop_params": True},
+        },
+    }
+
+    verifier_model = DeterministicModel(outputs=[make_output("FINAL: 1", [])])
+    with patch("minisweagent.agents.default.get_model") as mock_get_model:
+        mock_get_model.return_value = verifier_model
+        agent = DefaultAgent(
+            model=DeterministicModel(outputs=[make_output("Candidate", [{"command": "echo hi"}])]),
+            env=LocalEnvironment(),
+            **config,
+        )
+
+    called_model_config = mock_get_model.call_args.args[1]
+    assert agent.verifier.config.model["model_class"] == "litellm_textbased"
+    assert called_model_config["model_class"] == "litellm_textbased"
+    assert agent.verifier.model is verifier_model
+
+
+@pytest.mark.parametrize(
+    ("requested_model_class", "expected_model_class", "model_name"),
+    [
+        ("litellm", "litellm_textbased", "openai/gpt-5-mini"),
+        ("openrouter", "openrouter_textbased", "openrouter/openai/gpt-4o-mini"),
+    ],
+)
+def test_verifier_model_rewrites_toolcalling_aliases_to_textbased(
+    requested_model_class, expected_model_class, model_name
+):
+    config = _load_default_agent_config()
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "model": {
+            "model_class": requested_model_class,
+            "model_name": model_name,
+            "model_kwargs": {"drop_params": True},
+        },
+    }
+
+    verifier_model = DeterministicModel(outputs=[make_output("FINAL: 1", [])])
+    with patch("minisweagent.agents.default.get_model") as mock_get_model:
+        mock_get_model.return_value = verifier_model
+        agent = DefaultAgent(
+            model=DeterministicModel(outputs=[make_output("Candidate", [{"command": "echo hi"}])]),
+            env=LocalEnvironment(),
+            **config,
+        )
+
+    called_model_config = mock_get_model.call_args.args[1]
+    assert agent.verifier.config.model["model_class"] == expected_model_class
+    assert called_model_config["model_class"] == expected_model_class
+    assert agent.verifier.model is verifier_model
+
+
+def test_verifier_rejects_unsupported_toolcalling_model_classes():
+    config = _load_default_agent_config()
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "model": {
+            "model_class": "litellm_response",
+            "model_name": "openai/gpt-5-mini",
+            "model_kwargs": {"drop_params": True},
+        },
+    }
+
+    with pytest.raises(ValueError, match="Verifier model_class 'litellm_response' is not supported"):
+        DefaultAgent(
+            model=DeterministicModel(outputs=[make_output("Candidate", [{"command": "echo hi"}])]),
+            env=LocalEnvironment(),
+            **config,
+        )
+
+
+def test_verifier_fallback_rejects_non_textbased_actor_model():
+    config = _load_default_agent_config()
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+    }
+
+    actor_model = DeterministicToolcallModel(outputs=[make_toolcall_output("THOUGHTS: hi", [], [])])
+    with pytest.raises(ValueError, match="Verifier is enabled without agent.verifier.model"):
+        DefaultAgent(model=actor_model, env=LocalEnvironment(), **config)
 
 
 def test_step_limit_uses_step_count_not_model_calls():

@@ -29,6 +29,74 @@ from minisweagent.verifiers.checklist import generate_issue_checklist, resolve_c
 from minisweagent.verifiers.prompt_loader import apply_prompt_overrides
 from minisweagent.verifiers.reward_model import RewardModelVerifier
 
+_VERIFIER_MODEL_CLASS_DEFAULT = "litellm_textbased"
+_VERIFIER_MODEL_CLASS_REWRITES = {
+    "litellm": "litellm_textbased",
+    "minisweagent.models.litellm_model.LitellmModel": "litellm_textbased",
+    "openrouter": "openrouter_textbased",
+    "minisweagent.models.openrouter_model.OpenRouterModel": "openrouter_textbased",
+}
+_VERIFIER_MODEL_CLASS_ALLOWED = {
+    "litellm_textbased",
+    "openrouter_textbased",
+    "deterministic",
+    "minisweagent.models.litellm_textbased_model.LitellmTextbasedModel",
+    "minisweagent.models.openrouter_textbased_model.OpenRouterTextbasedModel",
+    "minisweagent.models.test_models.DeterministicModel",
+}
+_VERIFIER_MODEL_CLASS_REJECTED = {
+    "litellm_response",
+    "openrouter_response",
+    "portkey",
+    "portkey_response",
+    "requesty",
+    "minisweagent.models.litellm_response_model.LitellmResponseModel",
+    "minisweagent.models.openrouter_response_model.OpenRouterResponseModel",
+    "minisweagent.models.portkey_model.PortkeyModel",
+    "minisweagent.models.portkey_response_model.PortkeyResponseAPIModel",
+    "minisweagent.models.requesty_model.RequestyModel",
+}
+_VERIFIER_SAFE_FALLBACK_MODEL_TYPES = {
+    "minisweagent.models.litellm_textbased_model.LitellmTextbasedModel",
+    "minisweagent.models.openrouter_textbased_model.OpenRouterTextbasedModel",
+    "minisweagent.models.test_models.DeterministicModel",
+}
+
+
+def _normalize_verifier_model_config(model_config: dict[str, Any]) -> dict[str, Any]:
+    normalized = copy.deepcopy(model_config)
+    requested_model_class = str(normalized.get("model_class") or "").strip()
+    if not requested_model_class:
+        normalized["model_class"] = _VERIFIER_MODEL_CLASS_DEFAULT
+        return normalized
+    if rewritten_class := _VERIFIER_MODEL_CLASS_REWRITES.get(requested_model_class):
+        normalized["model_class"] = rewritten_class
+        return normalized
+    if requested_model_class in _VERIFIER_MODEL_CLASS_ALLOWED:
+        return normalized
+    allowed = ", ".join(sorted(_VERIFIER_MODEL_CLASS_ALLOWED))
+    if requested_model_class in _VERIFIER_MODEL_CLASS_REJECTED:
+        raise ValueError(
+            f"Verifier model_class '{requested_model_class}' is not supported. "
+            f"Use one of: {allowed}"
+        )
+    raise ValueError(
+        f"Unsupported verifier model_class '{requested_model_class}'. "
+        f"Verifier models must be text-based and cannot use tool-calling model classes. "
+        f"Use one of: {allowed}"
+    )
+
+
+def _assert_safe_verifier_fallback_model(model: Model) -> None:
+    model_type = f"{model.__class__.__module__}.{model.__class__.__name__}"
+    if model_type in _VERIFIER_SAFE_FALLBACK_MODEL_TYPES:
+        return
+    raise ValueError(
+        "Verifier is enabled without agent.verifier.model, which would reuse actor model "
+        f"'{model_type}'. Configure agent.verifier.model with a text-based model_class "
+        "(`litellm_textbased` or `openrouter_textbased`)."
+    )
+
 
 class CandidateSamplingConfig(BaseModel):
     num_candidates: int = 1
@@ -359,12 +427,16 @@ class DefaultAgent:
             suffix = "verifier" if verifier_config.verifier_type == "llm" else "reward"
             verifier_config.prompt_name = f"dynamic_checklist_{verifier_config.checklist_update_mode}/{suffix}"
         verifier_config = apply_prompt_overrides(verifier_config)
+        if verifier_config.model:
+            verifier_config.model = _normalize_verifier_model_config(verifier_config.model)
         self._resolved_verifier_config = verifier_config.model_copy(deep=True)
         if verifier_config.verifier_type == "first_valid":
             return FirstValidVerifier(verifier_config)
         verifier_model = self.model
         if verifier_config.model:
             verifier_model = get_model(verifier_config.model.get("model_name"), verifier_config.model)
+        else:
+            _assert_safe_verifier_fallback_model(verifier_model)
         if verifier_config.verifier_type == "llm":
             return LLMVerifier(verifier_model, verifier_config)
         if verifier_config.verifier_type == "reward_model":

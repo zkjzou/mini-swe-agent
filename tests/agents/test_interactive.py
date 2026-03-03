@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+import minisweagent.agents.interactive as interactive_module
 from minisweagent.agents.interactive import InteractiveAgent
 from minisweagent.environments.local import LocalEnvironment
 from minisweagent.models.test_models import (
@@ -1395,6 +1396,52 @@ def test_prints_reward_verifier_outputs_when_raw_content_missing(default_config)
     assert "Verifier output (reward_model):" in printed_output
     assert "Candidate 1 (selected, reward=0.2000)" in printed_output
     assert "Candidate 2 (reward=0.1000)" in printed_output
+
+
+def test_colors_only_section_headers(default_config):
+    agent = InteractiveAgent(
+        model=DeterministicModel(outputs=[]),
+        env=LocalEnvironment(),
+        **{
+            **default_config,
+            "show_full_verifier_output": True,
+        },
+    )
+    message = {
+        "role": "assistant",
+        "content": "Selected candidate.",
+        "extra": {
+            "verifier": {
+                "enabled": True,
+                "type": "llm",
+                "selected_index": 1,
+                "selection_index_base": 1,
+                "candidates": [
+                    {"index": 0, "actions": [{"command": "echo first"}], "content": "Inspect current files"},
+                    {"index": 1, "actions": [{"command": "echo second"}], "content": "Run focused tests"},
+                ],
+                "verifier_output": {"scores": [0.3, 0.8], "raw_output": "SELECTED: 2"},
+            }
+        },
+    }
+
+    with patch("minisweagent.agents.interactive.console.print") as mock_print:
+        agent.add_messages(message)
+
+    printed_calls = [(" ".join(str(arg) for arg in call.args), call.kwargs.get("style")) for call in mock_print.call_args_list]
+    style_by_text: dict[str, list[str | None]] = {}
+    for text, style in printed_calls:
+        style_by_text.setdefault(text, []).append(style)
+
+    assert interactive_module._CANDIDATE_STYLE in style_by_text.get("Candidate actions (llm):", [])
+    assert interactive_module._VERIFIER_STYLE in style_by_text.get("Verifier output (llm):", [])
+    assert interactive_module._FINAL_ACTION_STYLE in style_by_text.get("Final action:", [])
+
+    assert style_by_text.get("* Candidate 2") == [None]
+    assert style_by_text.get("  echo first (0.3000)") == [None]
+    assert style_by_text.get("  Inspect current files") == [None]
+    assert style_by_text.get("SELECTED: 2") == [None]
+    assert style_by_text.get("Selected candidate.") == [None]
 
 
 def test_does_not_print_full_verifier_output_by_default(default_config):

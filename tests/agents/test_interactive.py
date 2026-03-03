@@ -1160,6 +1160,10 @@ def test_prints_verifier_candidate_scores(default_config):
         env=LocalEnvironment(),
         **default_config,
     )
+    long_thought = (
+        "Inspect current files and map the code path before changing anything because this branch has multiple "
+        "config variants and verifier modes."
+    )
     message = {
         "role": "assistant",
         "content": "Selected candidate.",
@@ -1170,7 +1174,7 @@ def test_prints_verifier_candidate_scores(default_config):
                 "selected_index": 1,
                 "selection_index_base": 1,
                 "candidates": [
-                    {"index": 0, "actions": [{"command": "echo first"}], "content": "Inspect current files"},
+                    {"index": 0, "actions": [{"command": "echo first"}], "content": long_thought},
                     {"index": 1, "actions": [{"command": "echo second"}], "content": "Run focused tests"},
                 ],
                 "verifier_output": {"rewards": [0.2, 0.9]},
@@ -1185,7 +1189,7 @@ def test_prints_verifier_candidate_scores(default_config):
     assert "Verifier candidates (reward_model):" in printed_output
     assert "echo first (0.2000)" in printed_output
     assert "echo second (0.9000)" in printed_output
-    assert "Inspect current files" in printed_output
+    assert long_thought in printed_output
     assert "Run focused tests" in printed_output
 
 
@@ -1305,8 +1309,48 @@ def test_prints_full_verifier_output_when_enabled(default_config):
 
     printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
     assert "Verifier output (llm):" in printed_output
-    assert '"raw_output": "SELECTED: 2"' in printed_output
-    assert '"scores": [' in printed_output
+    assert "SELECTED: 2" in printed_output
+    assert '"scores": [' not in printed_output
+
+
+def test_prints_full_verifier_output_only_content_for_reward_model(default_config):
+    agent = InteractiveAgent(
+        model=DeterministicModel(outputs=[]),
+        env=LocalEnvironment(),
+        **{
+            **default_config,
+            "show_full_verifier_output": True,
+        },
+    )
+    message = {
+        "role": "assistant",
+        "content": "Selected candidate.",
+        "extra": {
+            "verifier": {
+                "enabled": True,
+                "type": "reward_model",
+                "selected_index": 1,
+                "selection_index_base": 1,
+                "candidates": [
+                    {"index": 0, "actions": [{"command": "echo first"}]},
+                    {"index": 1, "actions": [{"command": "echo second"}]},
+                ],
+                "verifier_output": {
+                    "rewards": [0.1, 0.9],
+                    "raw_outputs": ["SCORE: 0.1", "SCORE: 0.9"],
+                },
+            }
+        },
+    }
+
+    with patch("minisweagent.agents.interactive.console.print") as mock_print:
+        agent.add_messages(message)
+
+    printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
+    assert "Verifier output (reward_model):" in printed_output
+    assert "Candidate 1:\nSCORE: 0.1" in printed_output
+    assert "Candidate 2:\nSCORE: 0.9" in printed_output
+    assert '"rewards": [' not in printed_output
 
 
 def test_does_not_print_full_verifier_output_by_default(default_config):

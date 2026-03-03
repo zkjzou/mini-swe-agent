@@ -6,7 +6,6 @@ There are three modes:
 - yolo: commands issued by the LM are executed immediately without confirmation
 """
 
-import json
 import re
 from typing import Literal, NoReturn
 
@@ -105,7 +104,7 @@ class InteractiveAgent(DefaultAgent):
             selected_prefix = "*" if selected_index == index else " "
             commands = self._candidate_commands(candidate)
             command_text = self._truncate_inline(" ; ".join(commands) if commands else "<no parsed action>")
-            thought_text = self._truncate_inline(self._candidate_thought(candidate) or "<none>")
+            thought_text = self._candidate_thought(candidate) or "<none>"
             console.print(
                 f"{selected_prefix} {command_text} ({score_text})",
                 highlight=False,
@@ -144,7 +143,7 @@ class InteractiveAgent(DefaultAgent):
             index = raw_index if isinstance(raw_index, int) else i
             commands = self._candidate_commands(candidate)
             command_text = self._truncate_inline(" ; ".join(commands) if commands else "<no parsed action>")
-            thought_text = self._truncate_inline(self._candidate_thought(candidate) or "<none>")
+            thought_text = self._candidate_thought(candidate) or "<none>"
             score = rewards[index] if index < len(rewards) else None
             selected_prefix = "*" if selected_index == index else " "
             console.print(
@@ -248,13 +247,13 @@ class InteractiveAgent(DefaultAgent):
         if verifier_output in (None, {}) and not verifier_enabled:
             return
 
+        content_output = self._extract_verifier_content_output(verifier_output, verifier)
+        if not content_output:
+            return
+
         verifier_type = verifier.get("type", "unknown")
         console.print(f"Verifier output ({verifier_type}):", highlight=False, markup=False)
-        if isinstance(verifier_output, dict):
-            formatted_output = json.dumps(verifier_output, indent=2, sort_keys=True, default=str)
-        else:
-            formatted_output = str(verifier_output)
-        console.print(formatted_output, highlight=False, markup=False)
+        console.print(content_output, highlight=False, markup=False)
 
     def _get_verifier_metadata(self, message: dict) -> dict | None:
         extra = message.get("extra", {}) or {}
@@ -339,6 +338,29 @@ class InteractiveAgent(DefaultAgent):
         if max_chars <= 3:
             return single_line[:max_chars]
         return f"{single_line[: max_chars - 3]}..."
+
+    def _extract_verifier_content_output(self, verifier_output: object, verifier: dict) -> str:
+        if isinstance(verifier_output, str):
+            return verifier_output
+        if not isinstance(verifier_output, dict):
+            return ""
+
+        raw_output = verifier_output.get("raw_output")
+        if isinstance(raw_output, str):
+            return raw_output
+
+        raw_outputs = verifier_output.get("raw_outputs")
+        if not isinstance(raw_outputs, list):
+            return ""
+
+        selection_index_base = verifier.get("selection_index_base", 1)
+        base = selection_index_base if isinstance(selection_index_base, int) else 1
+        rendered_outputs: list[str] = []
+        for index, output in enumerate(raw_outputs):
+            if not isinstance(output, str):
+                continue
+            rendered_outputs.append(f"Candidate {index + base}:\n{output}")
+        return "\n\n".join(rendered_outputs)
 
     def query(self) -> dict:
         # Extend supermethod to handle human mode

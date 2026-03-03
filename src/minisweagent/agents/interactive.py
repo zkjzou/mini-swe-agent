@@ -362,11 +362,13 @@ class InteractiveAgent(DefaultAgent):
 
         selection_index_base = verifier.get("selection_index_base", 1)
         base = selection_index_base if isinstance(selection_index_base, int) else 1
+        selected_index = verifier.get("selected_index")
         rendered_outputs: list[str] = []
         for index, output in enumerate(raw_outputs):
             if not isinstance(output, str):
                 continue
-            rendered_outputs.append(f"Candidate {index + base}:\n{output}")
+            selected_suffix = " (selected)" if isinstance(selected_index, int) and selected_index == index else ""
+            rendered_outputs.append(f"Candidate {index + base}{selected_suffix}:\n{output}")
         return "\n\n".join(rendered_outputs)
 
     def query(self) -> dict:

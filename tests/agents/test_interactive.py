@@ -1355,7 +1355,7 @@ def test_prints_full_verifier_output_only_content_for_reward_model(default_confi
     printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
     assert "Verifier output (reward_model):" in printed_output
     assert "Candidate 1:\nSCORE: 0.1" in printed_output
-    assert "Candidate 2:\nSCORE: 0.9" in printed_output
+    assert "Candidate 2 (selected):\nSCORE: 0.9" in printed_output
     assert '"rewards": [' not in printed_output
 
 

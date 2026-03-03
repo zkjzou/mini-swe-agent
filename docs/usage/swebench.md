@@ -143,7 +143,7 @@ Use profile selectors in the config:
 ```yaml
 agent_model_profile: default
 verifier_model_profile: default
-verifier_prompt_profile: swebench_llm
+verifier_prompt_profile: swebench_verifier
 ```
 
 Then override selectors from CLI when launching runs:

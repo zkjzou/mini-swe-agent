@@ -246,11 +246,11 @@ def test_resolve_profiled_model_config_keeps_explicit_overrides_over_profile_def
 
 def test_resolve_profiled_model_config_supports_prompt_profile_mapping_with_prompt_dir():
     config = {
-        "verifier_prompt_profile": "basic_llm",
+        "verifier_prompt_profile": "basic_verifier",
         "profiles": {
             "model_profiles": {},
             "verifier_prompts": {
-                "basic_llm": {
+                "basic_verifier": {
                     "prompt_name": "basic/verifier",
                     "prompt_dir": "/abs/path/to/prompts/verifier",
                 }

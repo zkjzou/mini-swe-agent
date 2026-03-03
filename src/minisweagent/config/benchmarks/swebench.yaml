@@ -208,7 +208,7 @@ model:
 # Optional selectors for quick model/prompt swapping.
 agent_model_profile: default
 verifier_model_profile: default
-verifier_prompt_profile: swebench_llm
+verifier_prompt_profile: swebench_verifier
 
 profiles:
   model_profiles:
@@ -229,31 +229,31 @@ profiles:
         reasoning_effort: "medium"
         verbosity: "medium"
   verifier_prompts:
-    basic_llm:
+    basic_verifier:
       prompt_name: "basic/verifier"
       prompt_dir: "prompts/verifier"
-    swebench_llm:
+    swebench_verifier:
       prompt_name: "swebench/verifier"
       prompt_dir: "prompts/verifier"
-    domain_llm:
+    domain_verifier:
       prompt_name: "domain/verifier"
       prompt_dir: "prompts/verifier"
-    domain_v2_llm:
+    domain_v2_verifier:
       prompt_name: "domain_v2/verifier"
       prompt_dir: "prompts/verifier"
-    world_llm:
+    world_verifier:
       prompt_name: "world/verifier"
       prompt_dir: "prompts/verifier"
-    checklist_llm:
+    checklist_verifier:
       prompt_name: "checklist/verifier"
       prompt_dir: "prompts/verifier"
-    checklist_v2_llm:
+    checklist_v2_verifier:
       prompt_name: "checklist_v2/verifier"
       prompt_dir: "prompts/verifier"
-    dynamic_checklist_regenerate_llm:
+    dynamic_checklist_regenerate_verifier:
       prompt_name: "dynamic_checklist_regenerate/verifier"
       prompt_dir: "prompts/verifier"
-    dynamic_checklist_modify_llm:
+    dynamic_checklist_modify_verifier:
       prompt_name: "dynamic_checklist_modify/verifier"
       prompt_dir: "prompts/verifier"
     basic_reward:

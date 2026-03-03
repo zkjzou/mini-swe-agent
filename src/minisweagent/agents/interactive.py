@@ -309,8 +309,11 @@ class InteractiveAgent(DefaultAgent):
         normalized = content.strip()
         if not normalized:
             return None
-        if normalized.upper().startswith("THOUGHTS:"):
+        # Keep only the thought text and drop command blocks from mixed content.
+        if re.match(r"^\s*THOUGHTS?:", normalized, flags=re.IGNORECASE):
             normalized = normalized.split(":", 1)[1].strip()
+        if "```" in normalized:
+            normalized = normalized.split("```", 1)[0].strip()
         return normalized or None
 
     def _format_score(self, score: float | int | None) -> str:

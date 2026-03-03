@@ -1164,6 +1164,7 @@ def test_prints_verifier_candidate_scores(default_config):
         "Inspect current files and map the code path before changing anything because this branch has multiple "
         "config variants and verifier modes."
     )
+    thought_with_command_block = f"THOUGHT: {long_thought}\n\n```bash\necho first\n```"
     message = {
         "role": "assistant",
         "content": "Selected candidate.",
@@ -1174,7 +1175,7 @@ def test_prints_verifier_candidate_scores(default_config):
                 "selected_index": 1,
                 "selection_index_base": 1,
                 "candidates": [
-                    {"index": 0, "actions": [{"command": "echo first"}], "content": long_thought},
+                    {"index": 0, "actions": [{"command": "echo first"}], "content": thought_with_command_block},
                     {"index": 1, "actions": [{"command": "echo second"}], "content": "Run focused tests"},
                 ],
                 "verifier_output": {"rewards": [0.2, 0.9]},
@@ -1191,6 +1192,7 @@ def test_prints_verifier_candidate_scores(default_config):
     assert "echo second (0.9000)" in printed_output
     assert long_thought in printed_output
     assert "Run focused tests" in printed_output
+    assert printed_output.count("echo first") == 1
 
 
 def test_prints_llm_verifier_candidate_scores(default_config):

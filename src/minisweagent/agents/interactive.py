@@ -110,6 +110,8 @@ class InteractiveAgent(DefaultAgent):
             commands = self._candidate_commands(candidate)
             command_text = " ; ".join(commands) if commands else "<no parsed action>"
             console.print(f"  action: {command_text}", highlight=False, markup=False)
+            if thought := self._candidate_thought(candidate):
+                console.print(f"  thought: {thought}", highlight=False, markup=False)
 
     def _print_all_candidate_actions(self, message: dict) -> None:
         if not self.config.show_all_candidate_actions:
@@ -138,6 +140,8 @@ class InteractiveAgent(DefaultAgent):
             commands = self._candidate_commands(candidate)
             command_text = " ; ".join(commands) if commands else "<no parsed action>"
             console.print(f"  Candidate {display_index}: {command_text}", highlight=False, markup=False)
+            if thought := self._candidate_thought(candidate):
+                console.print(f"    thought: {thought}", highlight=False, markup=False)
 
     def _print_full_verifier_output(self, message: dict) -> None:
         if not self.config.show_full_verifier_output:
@@ -200,6 +204,23 @@ class InteractiveAgent(DefaultAgent):
         if isinstance(action, str) and action:
             return [action]
         return []
+
+    def _candidate_thought(self, candidate: dict) -> str | None:
+        paired_thought = candidate.get("paired_thought")
+        if isinstance(paired_thought, str):
+            normalized = paired_thought.strip()
+            if normalized:
+                return normalized
+
+        content = candidate.get("content")
+        if not isinstance(content, str):
+            return None
+        normalized = content.strip()
+        if not normalized:
+            return None
+        if normalized.upper().startswith("THOUGHTS:"):
+            normalized = normalized.split(":", 1)[1].strip()
+        return normalized or None
 
     def query(self) -> dict:
         # Extend supermethod to handle human mode

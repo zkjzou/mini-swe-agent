@@ -1170,8 +1170,8 @@ def test_prints_verifier_candidate_scores(default_config):
                 "selected_index": 1,
                 "selection_index_base": 1,
                 "candidates": [
-                    {"index": 0, "actions": [{"command": "echo first"}]},
-                    {"index": 1, "actions": [{"command": "echo second"}]},
+                    {"index": 0, "actions": [{"command": "echo first"}], "content": "Inspect current files"},
+                    {"index": 1, "actions": [{"command": "echo second"}], "content": "Run focused tests"},
                 ],
                 "verifier_output": {"rewards": [0.2, 0.9]},
             }
@@ -1187,6 +1187,8 @@ def test_prints_verifier_candidate_scores(default_config):
     assert "Candidate 2 | score=0.9000" in printed_output
     assert "action: echo first" in printed_output
     assert "action: echo second" in printed_output
+    assert "thought: Inspect current files" in printed_output
+    assert "thought: Run focused tests" in printed_output
 
 
 def test_prints_llm_verifier_candidate_scores(default_config):
@@ -1303,8 +1305,8 @@ def test_prints_all_candidate_actions_when_enabled_without_verifier(default_conf
                 "type": "none",
                 "selection_index_base": 1,
                 "candidates": [
-                    {"index": 0, "actions": [{"command": "echo first"}]},
-                    {"index": 1, "actions": [{"command": "echo second"}]},
+                    {"index": 0, "actions": [{"command": "echo first"}], "paired_thought": "Gather diagnostics"},
+                    {"index": 1, "actions": [{"command": "echo second"}], "paired_thought": "Apply minimal fix"},
                 ],
                 "verifier_output": {},
             }
@@ -1318,3 +1320,5 @@ def test_prints_all_candidate_actions_when_enabled_without_verifier(default_conf
     assert "Candidate actions (type=none):" in printed_output
     assert "Candidate 1: echo first" in printed_output
     assert "Candidate 2: echo second" in printed_output
+    assert "thought: Gather diagnostics" in printed_output
+    assert "thought: Apply minimal fix" in printed_output

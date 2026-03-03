@@ -1183,12 +1183,8 @@ def test_prints_verifier_candidate_scores(default_config):
 
     printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
     assert "Verifier candidates (reward_model):" in printed_output
-    assert "Candidate 1 | score=0.2000" in printed_output
-    assert "Candidate 2 | score=0.9000" in printed_output
-    assert "action: echo first" in printed_output
-    assert "action: echo second" in printed_output
-    assert "thought: Inspect current files" in printed_output
-    assert "thought: Run focused tests" in printed_output
+    assert "C1 score=0.2000 | action=echo first | thought=Inspect current files" in printed_output
+    assert "C2 score=0.9000 | action=echo second | thought=Run focused tests" in printed_output
 
 
 def test_prints_llm_verifier_candidate_scores(default_config):
@@ -1207,8 +1203,8 @@ def test_prints_llm_verifier_candidate_scores(default_config):
                 "selected_index": 1,
                 "selection_index_base": 1,
                 "candidates": [
-                    {"index": 0, "actions": [{"command": "echo first"}]},
-                    {"index": 1, "actions": [{"command": "echo second"}]},
+                    {"index": 0, "actions": [{"command": "echo first"}], "content": "Inspect current files"},
+                    {"index": 1, "actions": [{"command": "echo second"}], "content": "Run focused tests"},
                 ],
                 "verifier_output": {"scores": [0.3, 0.8]},
             }
@@ -1220,8 +1216,57 @@ def test_prints_llm_verifier_candidate_scores(default_config):
 
     printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
     assert "Verifier candidates (llm):" in printed_output
-    assert "Candidate 1 | score=0.3000" in printed_output
-    assert "Candidate 2 | score=0.8000" in printed_output
+    assert "C1 score=0.3000 | action=echo first | thought=Inspect current files" in printed_output
+    assert "C2 score=0.8000 | action=echo second | thought=Run focused tests" in printed_output
+
+
+def test_prints_verifier_summary_output_when_enabled(default_config):
+    agent = InteractiveAgent(
+        model=DeterministicModel(outputs=[]),
+        env=LocalEnvironment(),
+        **{
+            **default_config,
+            "show_verifier_summary_output": True,
+        },
+    )
+    message = {
+        "role": "assistant",
+        "content": "Selected candidate.",
+        "extra": {
+            "verifier": {
+                "enabled": True,
+                "type": "llm",
+                "selected_index": 1,
+                "selection_index_base": 1,
+                "candidates": [
+                    {"index": 0, "actions": [{"command": "echo first"}], "content": "Inspect current files"},
+                    {"index": 1, "actions": [{"command": "echo second"}], "content": "Run focused tests"},
+                ],
+                "verifier_output": {
+                    "scores": [0.3, 0.8],
+                    "progress_score": 0.7,
+                    "checklist_item_scores": [0.5, 0.9],
+                    "checklist": {
+                        "items": ["Find root cause", "Validate fix"],
+                        "dynamic": True,
+                        "update_mode": "modify",
+                    },
+                    "raw_output": "SELECTED: 2",
+                },
+            }
+        },
+    }
+
+    with patch("minisweagent.agents.interactive.console.print") as mock_print:
+        agent.add_messages(message)
+
+    printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
+    assert "Verifier summary (llm): selected=C2" in printed_output
+    assert "scores: C1=0.3000, C2=0.8000" in printed_output
+    assert "progress: 0.7000" in printed_output
+    assert "checklist: items=2, dynamic=True, update_mode=modify" in printed_output
+    assert "checklist_scores: I1=0.5000, I2=0.9000" in printed_output
+    assert "SELECTED: 2" not in printed_output
 
 
 def test_prints_full_verifier_output_when_enabled(default_config):
@@ -1318,7 +1363,5 @@ def test_prints_all_candidate_actions_when_enabled_without_verifier(default_conf
 
     printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
     assert "Candidate actions (type=none):" in printed_output
-    assert "Candidate 1: echo first" in printed_output
-    assert "Candidate 2: echo second" in printed_output
-    assert "thought: Gather diagnostics" in printed_output
-    assert "thought: Apply minimal fix" in printed_output
+    assert "C1 score=n/a | action=echo first | thought=Gather diagnostics" in printed_output
+    assert "C2 score=n/a | action=echo second | thought=Apply minimal fix" in printed_output

@@ -36,6 +36,8 @@ class InteractiveAgentConfig(AgentConfig):
     """If the agent wants to finish, do we ask for confirmation from user?"""
     show_all_candidate_actions: bool = False
     """Show all sampled candidate actions before execution."""
+    show_verifier_summary_output: bool = False
+    """Print concise verifier output summary (scores + checklist info)."""
     show_full_verifier_output: bool = False
     """Print the full verifier output payload for debugging."""
 
@@ -70,6 +72,7 @@ class InteractiveAgent(DefaultAgent):
                 )
                 self._print_verifier_candidate_scores(msg)
                 self._print_all_candidate_actions(msg)
+                self._print_verifier_summary_output(msg)
                 self._print_full_verifier_output(msg)
             else:
                 console.print(f"\n[bold green]{role.capitalize()}[/bold green]:\n", end="", highlight=False)
@@ -99,19 +102,16 @@ class InteractiveAgent(DefaultAgent):
             index = raw_index if isinstance(raw_index, int) else i
             display_index = index + selection_index_base if isinstance(selection_index_base, int) else index + 1
             score = rewards[index] if index < len(rewards) else None
-            score_text = f"{float(score):.4f}" if isinstance(score, (int, float)) else "n/a"
+            score_text = self._format_score(score)
             selected_prefix = "*" if selected_index == index else " "
+            commands = self._candidate_commands(candidate)
+            command_text = self._truncate_inline(" ; ".join(commands) if commands else "<no parsed action>")
+            thought_text = self._truncate_inline(self._candidate_thought(candidate) or "<none>")
             console.print(
-                f"{selected_prefix} Candidate {display_index} | score={score_text}",
+                f"{selected_prefix} C{display_index} score={score_text} | action={command_text} | thought={thought_text}",
                 highlight=False,
                 markup=False,
             )
-
-            commands = self._candidate_commands(candidate)
-            command_text = " ; ".join(commands) if commands else "<no parsed action>"
-            console.print(f"  action: {command_text}", highlight=False, markup=False)
-            if thought := self._candidate_thought(candidate):
-                console.print(f"  thought: {thought}", highlight=False, markup=False)
 
     def _print_all_candidate_actions(self, message: dict) -> None:
         if not self.config.show_all_candidate_actions:
@@ -129,6 +129,8 @@ class InteractiveAgent(DefaultAgent):
             return
 
         selection_index_base = verifier.get("selection_index_base", 1)
+        selected_index = verifier.get("selected_index")
+        rewards = self._extract_reward_scores(verifier)
         verifier_type = verifier.get("type", "none")
         console.print(f"Candidate actions (type={verifier_type}):", highlight=False, markup=False)
         for i, candidate in enumerate(candidates):
@@ -138,10 +140,92 @@ class InteractiveAgent(DefaultAgent):
             index = raw_index if isinstance(raw_index, int) else i
             display_index = index + selection_index_base if isinstance(selection_index_base, int) else index + 1
             commands = self._candidate_commands(candidate)
-            command_text = " ; ".join(commands) if commands else "<no parsed action>"
-            console.print(f"  Candidate {display_index}: {command_text}", highlight=False, markup=False)
-            if thought := self._candidate_thought(candidate):
-                console.print(f"    thought: {thought}", highlight=False, markup=False)
+            command_text = self._truncate_inline(" ; ".join(commands) if commands else "<no parsed action>")
+            thought_text = self._truncate_inline(self._candidate_thought(candidate) or "<none>")
+            score = rewards[index] if index < len(rewards) else None
+            selected_prefix = "*" if selected_index == index else " "
+            console.print(
+                f"{selected_prefix} C{display_index} score={self._format_score(score)} | action={command_text} | thought={thought_text}",
+                highlight=False,
+                markup=False,
+            )
+
+    def _print_verifier_summary_output(self, message: dict) -> None:
+        if not self.config.show_verifier_summary_output:
+            return
+
+        verifier = self._get_verifier_metadata(message)
+        if verifier is None or not verifier.get("enabled"):
+            return
+
+        verifier_output = verifier.get("verifier_output")
+        if not isinstance(verifier_output, dict):
+            return
+
+        selection_index_base = verifier.get("selection_index_base", 1)
+        selected_index = verifier.get("selected_index")
+        selected_display = selected_index + selection_index_base if isinstance(selected_index, int) else "n/a"
+        verifier_type = verifier.get("type", "unknown")
+        console.print(
+            f"Verifier summary ({verifier_type}): selected=C{selected_display}",
+            highlight=False,
+            markup=False,
+        )
+
+        scores = self._extract_reward_scores(verifier)
+        if scores:
+            console.print(
+                f"  scores: {self._format_candidate_scores(scores, selection_index_base)}",
+                highlight=False,
+                markup=False,
+            )
+
+        progress_scores = verifier_output.get("candidate_progress_scores")
+        if isinstance(progress_scores, list) and progress_scores:
+            console.print(
+                f"  progress: {self._format_candidate_scores(progress_scores, selection_index_base)}",
+                highlight=False,
+                markup=False,
+            )
+        elif isinstance(verifier_output.get("progress_score"), (int, float)):
+            console.print(
+                f"  progress: {self._format_score(verifier_output.get('progress_score'))}",
+                highlight=False,
+                markup=False,
+            )
+
+        checklist = verifier_output.get("checklist")
+        if isinstance(checklist, dict):
+            checklist_items = checklist.get("items")
+            checklist_count = len(checklist_items) if isinstance(checklist_items, list) else 0
+            parts = [f"items={checklist_count}"]
+            if isinstance(checklist.get("dynamic"), bool):
+                parts.append(f"dynamic={checklist.get('dynamic')}")
+            if isinstance(checklist.get("update_mode"), str) and checklist.get("update_mode"):
+                parts.append(f"update_mode={checklist.get('update_mode')}")
+            console.print(f"  checklist: {', '.join(parts)}", highlight=False, markup=False)
+
+        checklist_item_scores = verifier_output.get("checklist_item_scores")
+        if isinstance(checklist_item_scores, list) and checklist_item_scores:
+            console.print(
+                f"  checklist_scores: {self._format_item_scores(checklist_item_scores)}",
+                highlight=False,
+                markup=False,
+            )
+
+        candidate_checklist_scores = verifier_output.get("candidate_checklist_item_scores")
+        if (
+            isinstance(candidate_checklist_scores, list)
+            and isinstance(selected_index, int)
+            and 0 <= selected_index < len(candidate_checklist_scores)
+        ):
+            selected_candidate_scores = candidate_checklist_scores[selected_index]
+            if isinstance(selected_candidate_scores, list) and selected_candidate_scores:
+                console.print(
+                    f"  checklist_scores(selected): {self._format_item_scores(selected_candidate_scores)}",
+                    highlight=False,
+                    markup=False,
+                )
 
     def _print_full_verifier_output(self, message: dict) -> None:
         if not self.config.show_full_verifier_output:
@@ -221,6 +305,32 @@ class InteractiveAgent(DefaultAgent):
         if normalized.upper().startswith("THOUGHTS:"):
             normalized = normalized.split(":", 1)[1].strip()
         return normalized or None
+
+    def _format_score(self, score: float | int | None) -> str:
+        if isinstance(score, (int, float)):
+            return f"{float(score):.4f}"
+        return "n/a"
+
+    def _format_candidate_scores(self, scores: list[float | int | None], selection_index_base: int | None) -> str:
+        base = selection_index_base if isinstance(selection_index_base, int) else 1
+        parts: list[str] = []
+        for index, score in enumerate(scores):
+            parts.append(f"C{index + base}={self._format_score(score)}")
+        return ", ".join(parts)
+
+    def _format_item_scores(self, scores: list[float | int | None]) -> str:
+        parts: list[str] = []
+        for index, score in enumerate(scores):
+            parts.append(f"I{index + 1}={self._format_score(score)}")
+        return ", ".join(parts)
+
+    def _truncate_inline(self, text: str, max_chars: int = 100) -> str:
+        single_line = " ".join(text.split())
+        if len(single_line) <= max_chars:
+            return single_line
+        if max_chars <= 3:
+            return single_line[:max_chars]
+        return f"{single_line[: max_chars - 3]}..."
 
     def query(self) -> dict:
         # Extend supermethod to handle human mode

@@ -99,7 +99,7 @@ def test_swebench_single_end_to_end_exit_immediately(github_test_data, tmp_path)
         assert output_path.exists()
 
 
-def test_swebench_single_forces_verbose_verifier_debug_output(tmp_path):
+def test_swebench_single_forces_concise_verifier_output(tmp_path):
     instance = {"instance_id": "test__repo-1", "problem_statement": "Fix bug"}
     mock_agent = Mock()
     mock_agent.run = Mock()
@@ -128,4 +128,5 @@ def test_swebench_single_forces_verbose_verifier_debug_output(tmp_path):
     assert mock_get_agent.call_count == 1
     agent_config = mock_get_agent.call_args.args[2]
     assert agent_config["show_all_candidate_actions"] is True
-    assert agent_config["show_full_verifier_output"] is True
+    assert agent_config["show_verifier_summary_output"] is True
+    assert agent_config["show_full_verifier_output"] is False

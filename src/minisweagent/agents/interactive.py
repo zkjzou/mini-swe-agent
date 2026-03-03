@@ -100,7 +100,6 @@ class InteractiveAgent(DefaultAgent):
                 continue
             raw_index = candidate.get("index", i)
             index = raw_index if isinstance(raw_index, int) else i
-            display_index = index + selection_index_base if isinstance(selection_index_base, int) else index + 1
             score = rewards[index] if index < len(rewards) else None
             score_text = self._format_score(score)
             selected_prefix = "*" if selected_index == index else " "
@@ -108,7 +107,12 @@ class InteractiveAgent(DefaultAgent):
             command_text = self._truncate_inline(" ; ".join(commands) if commands else "<no parsed action>")
             thought_text = self._truncate_inline(self._candidate_thought(candidate) or "<none>")
             console.print(
-                f"{selected_prefix} C{display_index} score={score_text} | action={command_text} | thought={thought_text}",
+                f"{selected_prefix} {command_text} ({score_text})",
+                highlight=False,
+                markup=False,
+            )
+            console.print(
+                f"  {thought_text}",
                 highlight=False,
                 markup=False,
             )
@@ -138,14 +142,18 @@ class InteractiveAgent(DefaultAgent):
                 continue
             raw_index = candidate.get("index", i)
             index = raw_index if isinstance(raw_index, int) else i
-            display_index = index + selection_index_base if isinstance(selection_index_base, int) else index + 1
             commands = self._candidate_commands(candidate)
             command_text = self._truncate_inline(" ; ".join(commands) if commands else "<no parsed action>")
             thought_text = self._truncate_inline(self._candidate_thought(candidate) or "<none>")
             score = rewards[index] if index < len(rewards) else None
             selected_prefix = "*" if selected_index == index else " "
             console.print(
-                f"{selected_prefix} C{display_index} score={self._format_score(score)} | action={command_text} | thought={thought_text}",
+                f"{selected_prefix} {command_text} ({self._format_score(score)})",
+                highlight=False,
+                markup=False,
+            )
+            console.print(
+                f"  {thought_text}",
                 highlight=False,
                 markup=False,
             )

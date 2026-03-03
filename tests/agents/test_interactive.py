@@ -1183,8 +1183,10 @@ def test_prints_verifier_candidate_scores(default_config):
 
     printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
     assert "Verifier candidates (reward_model):" in printed_output
-    assert "C1 score=0.2000 | action=echo first | thought=Inspect current files" in printed_output
-    assert "C2 score=0.9000 | action=echo second | thought=Run focused tests" in printed_output
+    assert "echo first (0.2000)" in printed_output
+    assert "echo second (0.9000)" in printed_output
+    assert "Inspect current files" in printed_output
+    assert "Run focused tests" in printed_output
 
 
 def test_prints_llm_verifier_candidate_scores(default_config):
@@ -1216,8 +1218,10 @@ def test_prints_llm_verifier_candidate_scores(default_config):
 
     printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
     assert "Verifier candidates (llm):" in printed_output
-    assert "C1 score=0.3000 | action=echo first | thought=Inspect current files" in printed_output
-    assert "C2 score=0.8000 | action=echo second | thought=Run focused tests" in printed_output
+    assert "echo first (0.3000)" in printed_output
+    assert "echo second (0.8000)" in printed_output
+    assert "Inspect current files" in printed_output
+    assert "Run focused tests" in printed_output
 
 
 def test_prints_verifier_summary_output_when_enabled(default_config):
@@ -1363,5 +1367,7 @@ def test_prints_all_candidate_actions_when_enabled_without_verifier(default_conf
 
     printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
     assert "Candidate actions (type=none):" in printed_output
-    assert "C1 score=n/a | action=echo first | thought=Gather diagnostics" in printed_output
-    assert "C2 score=n/a | action=echo second | thought=Apply minimal fix" in printed_output
+    assert "echo first (n/a)" in printed_output
+    assert "echo second (n/a)" in printed_output
+    assert "Gather diagnostics" in printed_output
+    assert "Apply minimal fix" in printed_output

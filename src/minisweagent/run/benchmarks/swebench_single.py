@@ -77,8 +77,8 @@ def main(
             "confirm_exit": False if exit_immediately else UNSET,
             "output_path": output or UNSET,
             "show_all_candidate_actions": True,
-            "show_verifier_summary_output": True,
-            "show_full_verifier_output": False,
+            "show_verifier_summary_output": False,
+            "show_full_verifier_output": True,
         },
         "model": {
             "model_class": model_class or UNSET,

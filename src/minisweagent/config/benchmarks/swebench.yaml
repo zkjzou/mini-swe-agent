@@ -229,21 +229,57 @@ profiles:
         reasoning_effort: "medium"
         verbosity: "medium"
   verifier_prompts:
-    basic_llm: "basic/verifier"
-    swebench_llm: "swebench/verifier"
-    domain_llm: "domain/verifier"
-    domain_v2_llm: "domain_v2/verifier"
-    world_llm: "world/verifier"
-    checklist_llm: "checklist/verifier"
-    checklist_v2_llm: "checklist_v2/verifier"
-    dynamic_checklist_regenerate_llm: "dynamic_checklist_regenerate/verifier"
-    dynamic_checklist_modify_llm: "dynamic_checklist_modify/verifier"
-    basic_reward: "basic/reward"
-    swebench_reward: "swebench/reward"
-    domain_reward: "domain/reward"
-    domain_v2_reward: "domain_v2/reward"
-    world_reward: "world/reward"
-    checklist_reward: "checklist/reward"
-    checklist_v2_reward: "checklist_v2/reward"
-    dynamic_checklist_regenerate_reward: "dynamic_checklist_regenerate/reward"
-    dynamic_checklist_modify_reward: "dynamic_checklist_modify/reward"
+    basic_llm:
+      prompt_name: "basic/verifier"
+      prompt_dir: "prompts/verifier"
+    swebench_llm:
+      prompt_name: "swebench/verifier"
+      prompt_dir: "prompts/verifier"
+    domain_llm:
+      prompt_name: "domain/verifier"
+      prompt_dir: "prompts/verifier"
+    domain_v2_llm:
+      prompt_name: "domain_v2/verifier"
+      prompt_dir: "prompts/verifier"
+    world_llm:
+      prompt_name: "world/verifier"
+      prompt_dir: "prompts/verifier"
+    checklist_llm:
+      prompt_name: "checklist/verifier"
+      prompt_dir: "prompts/verifier"
+    checklist_v2_llm:
+      prompt_name: "checklist_v2/verifier"
+      prompt_dir: "prompts/verifier"
+    dynamic_checklist_regenerate_llm:
+      prompt_name: "dynamic_checklist_regenerate/verifier"
+      prompt_dir: "prompts/verifier"
+    dynamic_checklist_modify_llm:
+      prompt_name: "dynamic_checklist_modify/verifier"
+      prompt_dir: "prompts/verifier"
+    basic_reward:
+      prompt_name: "basic/reward"
+      prompt_dir: "prompts/verifier"
+    swebench_reward:
+      prompt_name: "swebench/reward"
+      prompt_dir: "prompts/verifier"
+    domain_reward:
+      prompt_name: "domain/reward"
+      prompt_dir: "prompts/verifier"
+    domain_v2_reward:
+      prompt_name: "domain_v2/reward"
+      prompt_dir: "prompts/verifier"
+    world_reward:
+      prompt_name: "world/reward"
+      prompt_dir: "prompts/verifier"
+    checklist_reward:
+      prompt_name: "checklist/reward"
+      prompt_dir: "prompts/verifier"
+    checklist_v2_reward:
+      prompt_name: "checklist_v2/reward"
+      prompt_dir: "prompts/verifier"
+    dynamic_checklist_regenerate_reward:
+      prompt_name: "dynamic_checklist_regenerate/reward"
+      prompt_dir: "prompts/verifier"
+    dynamic_checklist_modify_reward:
+      prompt_name: "dynamic_checklist_modify/reward"
+      prompt_dir: "prompts/verifier"

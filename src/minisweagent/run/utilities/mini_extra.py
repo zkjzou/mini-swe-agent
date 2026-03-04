@@ -16,6 +16,16 @@ subcommands = [
     ("minisweagent.run.benchmarks.swebench", ["swebench"], "Evaluate on SWE-bench (batch mode)"),
     ("minisweagent.run.benchmarks.swebench_single", ["swebench-single"], "Evaluate on SWE-bench (single instance)"),
     ("minisweagent.run.utilities.upload_docent", ["upload-docent"], "Upload trajectories to Docent"),
+    (
+        "minisweagent.run.utilities.sample_verifier_actions",
+        ["sample-verifier-actions"],
+        "Sample additional verifier action candidates from successful trajectories",
+    ),
+    (
+        "minisweagent.run.utilities.merge_verifier_actions",
+        ["merge-verifier-actions"],
+        "Merge verifier action-sampling datasets from multiple sources",
+    ),
 ]
 
 

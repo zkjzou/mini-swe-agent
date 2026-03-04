@@ -122,6 +122,8 @@ class VerifierConfig(BaseModel):
     system_template: str = "You are a verifier that selects the best candidate action for the agent to execute."
     history_steps: int = 6
     """How many recent action+observation steps to pass to the verifier. Use -1 for all steps."""
+    include_thoughts_in_history_steps: bool = True
+    """Whether assistant message content is included in verifier history context."""
     selection_template: str = (
         "Choose the best candidate action for the task. "
         "Return only the number of the chosen candidate.\n\n"
@@ -202,6 +204,8 @@ class AgentConfig(BaseModel):
     """Stop agent after exceeding (!) this cost."""
     output_path: Path | None = None
     """Save the trajectory to this path."""
+    include_thoughts_in_agent_history: bool = True
+    """Whether assistant message content is included in actor model query history."""
     add_format_error_to_conversation: bool = True
     """Whether to append format-error feedback messages to the conversation history."""
     candidate_sampling: CandidateSamplingConfig = Field(default_factory=CandidateSamplingConfig)
@@ -314,8 +318,13 @@ class DefaultAgent:
         self._check_limits()
         responses, candidate_infos = self._sample_candidates()
         configured_history_steps = self._get_verifier_history_steps()
-        all_verifier_steps = self._get_verifier_steps(history_steps=-1)
-        verifier_steps = self._get_verifier_steps(history_steps=configured_history_steps)
+        include_verifier_thoughts = self._get_verifier_include_thoughts_in_history_steps()
+        all_verifier_steps = self._get_verifier_steps(
+            history_steps=-1, include_assistant_content=include_verifier_thoughts
+        )
+        verifier_steps = self._get_verifier_steps(
+            history_steps=configured_history_steps, include_assistant_content=include_verifier_thoughts
+        )
         verifier_messages = [message for step in verifier_steps for message in step]
         all_verifier_messages = [message for step in all_verifier_steps for message in step]
         verifier_vars = {
@@ -588,7 +597,10 @@ class DefaultAgent:
         self._check_limits()
         self.n_calls += 1
         self.agent_api_calls += 1
-        message = self.model.query(self.messages, **kwargs)
+        query_messages = self._messages_for_outbound_context(
+            self.messages, include_assistant_content=self.config.include_thoughts_in_agent_history
+        )
+        message = self.model.query(query_messages, **kwargs)
         self.base_model_cost += float(message.get("extra", {}).get("cost", 0.0) or 0.0)
         self.cost = self.base_model_cost + self.verifier_cost
         return message
@@ -873,11 +885,26 @@ class DefaultAgent:
             return int(self._resolved_verifier_config.history_steps)
         return int(self.config.verifier.history_steps)
 
-    def _get_verifier_steps(self, *, history_steps: int | None = None) -> list[list[dict[str, Any]]]:
+    def _get_verifier_include_thoughts_in_history_steps(self) -> bool:
+        verifier_config = getattr(self.verifier, "config", None)
+        if isinstance(verifier_config, VerifierConfig):
+            return bool(verifier_config.include_thoughts_in_history_steps)
+        if isinstance(self._resolved_verifier_config, VerifierConfig):
+            return bool(self._resolved_verifier_config.include_thoughts_in_history_steps)
+        return bool(self.config.verifier.include_thoughts_in_history_steps)
+
+    def _get_verifier_steps(
+        self, *, history_steps: int | None = None, include_assistant_content: bool | None = None
+    ) -> list[list[dict[str, Any]]]:
+        if include_assistant_content is None:
+            include_assistant_content = self._get_verifier_include_thoughts_in_history_steps()
+        source_messages = self._messages_for_outbound_context(
+            self.messages, include_assistant_content=include_assistant_content
+        )
         steps: list[list[dict[str, Any]]] = []
         current_step: list[dict[str, Any]] = []
         started = False
-        for message in self.messages:
+        for message in source_messages:
             if self._is_assistant_message(message):
                 if current_step:
                     steps.append(current_step)
@@ -902,6 +929,67 @@ class DefaultAgent:
         if message.get("type") == "message" and message.get("role") == "assistant":
             return True
         return False
+
+    def _messages_for_outbound_context(
+        self, messages: list[dict[str, Any]], *, include_assistant_content: bool
+    ) -> list[dict[str, Any]]:
+        if include_assistant_content:
+            return messages
+        sanitized_messages: list[dict[str, Any]] = []
+        for message in messages:
+            message_copy = copy.deepcopy(message)
+            if self._is_assistant_message(message_copy):
+                message_copy = self._redact_assistant_message_content(message_copy)
+            sanitized_messages.append(message_copy)
+        return sanitized_messages
+
+    def _redact_assistant_message_content(self, message: dict[str, Any]) -> dict[str, Any]:
+        if "content" in message:
+            message["content"] = self._redact_textual_content(message.get("content"))
+        if isinstance(message.get("output_text"), str):
+            message["output_text"] = ""
+        output = message.get("output")
+        if isinstance(output, list):
+            sanitized_output: list[Any] = []
+            for item in output:
+                if not isinstance(item, dict):
+                    sanitized_output.append(item)
+                    continue
+                item_copy = copy.deepcopy(item)
+                if item_copy.get("type") == "message" and item_copy.get("role") == "assistant":
+                    if "content" in item_copy:
+                        item_copy["content"] = self._redact_textual_content(item_copy.get("content"))
+                sanitized_output.append(item_copy)
+            message["output"] = sanitized_output
+        return message
+
+    def _redact_textual_content(self, content: Any) -> Any:
+        if isinstance(content, str):
+            return ""
+        if isinstance(content, list):
+            redacted_items: list[Any] = []
+            for item in content:
+                if isinstance(item, str):
+                    redacted_items.append("")
+                    continue
+                if isinstance(item, dict):
+                    item_copy = copy.deepcopy(item)
+                    if isinstance(item_copy.get("text"), str):
+                        item_copy["text"] = ""
+                    if "content" in item_copy:
+                        item_copy["content"] = self._redact_textual_content(item_copy.get("content"))
+                    redacted_items.append(item_copy)
+                    continue
+                redacted_items.append(item)
+            return redacted_items
+        if isinstance(content, dict):
+            content_copy = copy.deepcopy(content)
+            if isinstance(content_copy.get("text"), str):
+                content_copy["text"] = ""
+            if "content" in content_copy:
+                content_copy["content"] = self._redact_textual_content(content_copy.get("content"))
+            return content_copy
+        return content
 
     def serialize(self, *extra_dicts) -> dict:
         """Serialize agent state to a json-compatible nested dictionary for saving."""

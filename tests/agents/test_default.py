@@ -1,3 +1,4 @@
+import copy
 from pathlib import Path
 
 import pytest
@@ -440,6 +441,69 @@ def test_message_history_tracking(model_factory):
     assert is_observation_message(agent.messages[3])
     # Fifth is assistant response
     assert is_assistant_message(agent.messages[4])
+
+
+@pytest.mark.parametrize("include_thoughts_in_agent_history", [True, False])
+def test_actor_history_can_optionally_exclude_assistant_content(default_config, include_thoughts_in_agent_history):
+    class _CaptureDeterministicModel(DeterministicModel):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.calls: list[list[dict]] = []
+
+        def query(self, messages: list[dict[str, str]], **kwargs) -> dict:
+            self.calls.append(copy.deepcopy(messages))
+            return super().query(messages, **kwargs)
+
+    secret_thought = "THOUGHT: super-secret-agent-thought"
+    model = _CaptureDeterministicModel(
+        outputs=[
+            make_output(secret_thought, [{"command": "echo first"}]),
+            make_output("THOUGHT: second", [{"command": "echo second"}]),
+        ]
+    )
+    config = {
+        **default_config,
+        "include_thoughts_in_agent_history": include_thoughts_in_agent_history,
+        "verifier": {"enabled": False},
+    }
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    agent.query()
+    agent.add_messages({"role": "user", "content": "observation"})
+    agent.query()
+
+    assert len(model.calls) == 2
+    second_call_messages = model.calls[1]
+    assistant_messages = [msg for msg in second_call_messages if msg.get("role") == "assistant"]
+    assert assistant_messages
+    first_assistant_content = assistant_messages[-1].get("content")
+    if include_thoughts_in_agent_history:
+        assert first_assistant_content == secret_thought
+    else:
+        assert first_assistant_content == ""
+        assert all(secret_thought not in (msg.get("content", "") or "") for msg in second_call_messages)
+
+    # Stored trajectory must remain unchanged even when query payload is redacted.
+    assert any(msg.get("role") == "assistant" and msg.get("content") == secret_thought for msg in agent.messages)
+
+
+def test_redaction_handles_response_api_assistant_message_content(default_config):
+    agent = DefaultAgent(
+        model=DeterministicModel(outputs=[make_output("candidate", [{"command": "echo hi"}])]),
+        env=LocalEnvironment(),
+        **default_config,
+    )
+    response_message = make_response_api_output(
+        "THOUGHT: keep this out of outbound context",
+        [{"command": "echo hi", "tool_call_id": "call_1"}],
+    )
+
+    redacted_messages = agent._messages_for_outbound_context(
+        [response_message], include_assistant_content=False
+    )
+    assert response_message["output"][0]["content"][0]["text"] == "THOUGHT: keep this out of outbound context"
+    assert redacted_messages[0]["output"][0]["content"][0]["text"] == ""
 
 
 def test_step_adds_messages(model_factory):

@@ -601,6 +601,63 @@ def test_prompt_templates_can_use_history_steps(history_steps, expected_visible_
     assert f"Visible steps count: {expected_visible_steps}" in prompt
 
 
+@pytest.mark.parametrize("include_thoughts_in_history_steps", [True, False])
+def test_verifier_history_can_optionally_exclude_assistant_content(include_thoughts_in_history_steps):
+    class _CaptureVerifierModel:
+        def __init__(self):
+            self.messages = None
+
+        def query(self, messages, **kwargs):
+            self.messages = messages
+            return {"role": "assistant", "content": "FINAL: 1", "extra": {"cost": 0.0}}
+
+    secret_thought = "THOUGHT: verifier-super-secret-thought"
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "history_steps": -1,
+        "include_thoughts_in_history_steps": include_thoughts_in_history_steps,
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "system_template": "Verifier system",
+        "selection_template": (
+            "Steps:\n{% for step in steps %}{% for msg in step %}{{ msg.role }}={{ msg.content }}\n{% endfor %}{% endfor %}\n"
+            "AllSteps:\n{% for step in all_steps %}{% for msg in step %}{{ msg.role }}={{ msg.content }}\n{% endfor %}{% endfor %}\n"
+            "Messages:\n{% for msg in messages %}{{ msg.role }}={{ msg.content }}\n{% endfor %}\n"
+            "AllMessages:\n{% for msg in all_messages %}{{ msg.role }}={{ msg.content }}\n{% endfor %}\n"
+            "{% for c in candidates %}Candidate {{ c.index + selection_index_base }}:\n{{ c.content }}\n{% endfor %}"
+        ),
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("FINAL: 1", [])],
+        },
+    }
+
+    model = DeterministicModel(outputs=[make_output("Candidate", [{"command": "echo hi"}])])
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    capture_model = _CaptureVerifierModel()
+    agent.verifier.model = capture_model
+    agent.add_messages(
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": secret_thought},
+        {"role": "user", "content": "obs1"},
+    )
+
+    agent.query()
+    assert capture_model.messages is not None
+    prompt = capture_model.messages[-1]["content"]
+    assert "user=obs1" in prompt
+    if include_thoughts_in_history_steps:
+        assert secret_thought in prompt
+    else:
+        assert secret_thought not in prompt
+        assert "assistant=" in prompt
+
+
 def test_pair_thoughts_with_toolcalls_builds_verifier_candidates_from_one_response():
     config = _load_default_agent_config()
     config["candidate_sampling"] = {

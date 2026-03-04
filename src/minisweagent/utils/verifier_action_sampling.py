@@ -220,6 +220,18 @@ def extract_replay_steps(messages: list[dict[str, Any]]) -> list[dict[str, Any]]
     return steps
 
 
+def trajectory_contains_parallel_tool_calls(messages: list[dict[str, Any]]) -> bool:
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if message.get("role") != "assistant":
+            continue
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list) and len(tool_calls) > 1:
+            return True
+    return False
+
+
 def _extract_usage(response_message: dict[str, Any]) -> dict[str, Any]:
     usage: dict[str, Any] = {"api_calls": 1}
     extra = response_message.get("extra")
@@ -373,6 +385,7 @@ def generate_verifier_sampling_dataset(
     max_workers: int = 8,
     limit_runs: int | None = None,
     limit_steps_per_run: int | None = None,
+    exclude_parallel_tool_call_trajectories: bool = True,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     if num_samples < 1:
@@ -404,6 +417,7 @@ def generate_verifier_sampling_dataset(
         "successful_runs_found": len([entry for entry in output_payload if _is_resolved_run(entry)]),
         "runs_processed": 0,
         "runs_skipped": 0,
+        "runs_skipped_parallel_tool_calls": 0,
         "steps_processed": 0,
         "gold_candidates": 0,
         "sample_candidates": 0,
@@ -440,6 +454,9 @@ def generate_verifier_sampling_dataset(
                     messages = transcript.get("messages") if isinstance(transcript, dict) else None
                     if not isinstance(messages, list):
                         counts["runs_skipped"] += 1
+                        continue
+                    if exclude_parallel_tool_call_trajectories and trajectory_contains_parallel_tool_calls(messages):
+                        counts["runs_skipped_parallel_tool_calls"] += 1
                         continue
 
                     replay_steps = extract_replay_steps(messages)
@@ -533,6 +550,7 @@ def generate_verifier_sampling_dataset(
             "max_workers": max_workers,
             "limit_runs": limit_runs,
             "limit_steps_per_run": limit_steps_per_run,
+            "exclude_parallel_tool_call_trajectories": exclude_parallel_tool_call_trajectories,
             "sampler_models": [
                 {
                     "id": spec.id,

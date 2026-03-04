@@ -25,6 +25,11 @@ def main(
     limit_steps_per_run: int | None = typer.Option(
         None, "--limit-steps-per-run", min=1, help="Optional cap on replayed action steps per run"
     ),
+    exclude_parallel_tool_calls: bool = typer.Option(
+        True,
+        "--exclude-parallel-tool-calls/--allow-parallel-tool-calls",
+        help="Skip trajectories containing assistant messages with multiple tool calls",
+    ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output files if they already exist"),
 ) -> None:
     try:
@@ -37,6 +42,7 @@ def main(
             max_workers=max_workers,
             limit_runs=limit_runs,
             limit_steps_per_run=limit_steps_per_run,
+            exclude_parallel_tool_call_trajectories=exclude_parallel_tool_calls,
             overwrite=overwrite,
         )
     except Exception as exc:  # noqa: BLE001

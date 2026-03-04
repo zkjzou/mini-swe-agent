@@ -26,6 +26,11 @@ subcommands = [
         ["merge-verifier-actions"],
         "Merge verifier action-sampling datasets from multiple sources",
     ),
+    (
+        "minisweagent.run.utilities.evaluate_verifier_actions",
+        ["evaluate-verifier-actions", "eval-verifier-actions"],
+        "Evaluate verifier gold-action selection on merged candidate rows",
+    ),
 ]
 
 

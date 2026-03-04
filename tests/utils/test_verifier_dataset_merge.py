@@ -73,9 +73,14 @@ def test_grouped_merge_builds_one_row_per_run_step_and_labeled_actions(tmp_path)
     labels = [action["label"] for action in row["actions"]]
     assert labels[0] == "gold"
     assert set(labels) == {"gold", "sampler-a", "sampler-b"}
+    assert row["actions"][0]["command"] == "ls"
     assert "gold" in row["candidates_by_source"]
     assert "sampler-a" in row["candidates_by_source"]
     assert "sampler-b" in row["candidates_by_source"]
+    # per-source payload should stay compact
+    assert "prompt_messages" not in row["candidates_by_source"]["gold"]
+    assert "candidate_message" not in row["candidates_by_source"]["gold"]
+    assert row["candidates_by_source"]["gold"]["has_actions"] is True
 
     assert summary["counts"]["rows_kept"] == 1
     assert summary["counts"]["groups_kept"] == 1
@@ -156,7 +161,7 @@ def test_grouped_merge_keep_last_for_conflicts(tmp_path):
     assert len(rows) == 1
     action = _find_action(rows[0]["actions"], "sampler-a")
     assert action is not None
-    assert action["action"]["command"] == "echo last"
+    assert action["command"] == "echo last"
     assert summary["counts"]["conflicts"] == 1
 
 
@@ -229,7 +234,7 @@ def test_grouped_merge_uses_sample_index_zero_only(tmp_path):
     assert len(merged_rows) == 1
     action = _find_action(merged_rows[0]["actions"], "sampler-a")
     assert action is not None
-    assert action["action"]["command"] == "echo s0"
+    assert action["command"] == "echo s0"
     assert summary["counts"]["nonzero_sample_rows_ignored"] == 1
 
 

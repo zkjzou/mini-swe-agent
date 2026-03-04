@@ -160,6 +160,56 @@ def _record_to_public_row(record: Record) -> dict[str, Any]:
     return copy.deepcopy(record[0])
 
 
+def _minimal_error(error_payload: Any) -> dict[str, str] | None:
+    if not isinstance(error_payload, dict):
+        return None
+    error_type = error_payload.get("type")
+    error_message = error_payload.get("message")
+    if not isinstance(error_type, str) and not isinstance(error_message, str):
+        return None
+    result: dict[str, str] = {}
+    if isinstance(error_type, str):
+        result["type"] = error_type
+    if isinstance(error_message, str):
+        result["message"] = error_message
+    return result or None
+
+
+def _minimal_candidate_info(row: dict[str, Any], *, has_valid_action: bool) -> dict[str, Any]:
+    return {
+        "candidate_source": row.get("candidate_source"),
+        "sampler_model_id": row.get("sampler_model_id"),
+        "sampler_model_name": row.get("sampler_model_name"),
+        "sample_index": row.get("sample_index"),
+        "is_gold": row.get("is_gold") is True,
+        "has_actions": has_valid_action,
+        "error": _minimal_error(row.get("error")),
+    }
+
+
+def _build_minimal_action_entry(
+    *,
+    label: str,
+    candidate_source: str,
+    sampler_model_id: str,
+    sample_index: int | None,
+    action: dict[str, Any],
+    is_gold: bool,
+) -> dict[str, Any]:
+    entry = {
+        "label": label,
+        "candidate_source": candidate_source,
+        "sampler_model_id": sampler_model_id,
+        "sample_index": sample_index,
+        "is_gold": is_gold,
+        "command": action["command"],
+    }
+    tool_call_id = action.get("tool_call_id")
+    if isinstance(tool_call_id, str):
+        entry["tool_call_id"] = tool_call_id
+    return entry
+
+
 def merge_verifier_sampling_datasets(
     *,
     input_paths: list[Path],
@@ -349,19 +399,20 @@ def merge_verifier_sampling_datasets(
 
         if gold_record is not None:
             gold_row = _record_to_public_row(gold_record)
-            candidates_by_source["gold"] = gold_row
             gold_action = _first_valid_action(gold_row.get("actions"))
+            candidates_by_source["gold"] = _minimal_candidate_info(
+                gold_row, has_valid_action=gold_action is not None
+            )
             if gold_action is not None:
                 actions.append(
-                    {
-                        "label": "gold",
-                        "candidate_source": "gold",
-                        "sampler_model_id": "gold",
-                        "sampler_model_name": None,
-                        "sample_index": None,
-                        "action": gold_action,
-                        "has_actions": True,
-                    }
+                    _build_minimal_action_entry(
+                        label="gold",
+                        candidate_source="gold",
+                        sampler_model_id="gold",
+                        sample_index=None,
+                        action=gold_action,
+                        is_gold=True,
+                    )
                 )
                 counts["actions_kept_total"] += 1
                 counts["actions_kept_gold"] += 1
@@ -376,22 +427,23 @@ def merge_verifier_sampling_datasets(
                 continue
 
             sampled_row = _record_to_public_row(sampled_record)
-            candidates_by_source[model_id] = sampled_row
             sampled_action = _first_valid_action(sampled_row.get("actions"))
+            candidates_by_source[model_id] = _minimal_candidate_info(
+                sampled_row, has_valid_action=sampled_action is not None
+            )
             if sampled_action is None:
                 missing_model_sources.append(model_id)
                 continue
 
             actions.append(
-                {
-                    "label": model_id,
-                    "candidate_source": "sampled",
-                    "sampler_model_id": model_id,
-                    "sampler_model_name": sampled_row.get("sampler_model_name"),
-                    "sample_index": sampled_row.get("sample_index"),
-                    "action": sampled_action,
-                    "has_actions": True,
-                }
+                _build_minimal_action_entry(
+                    label=model_id,
+                    candidate_source="sampled",
+                    sampler_model_id=model_id,
+                    sample_index=sampled_row.get("sample_index"),
+                    action=sampled_action,
+                    is_gold=False,
+                )
             )
             counts["actions_kept_total"] += 1
             counts["actions_kept_sampled"] += 1

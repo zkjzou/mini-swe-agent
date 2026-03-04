@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable
 
 
 DEFAULT_ROOT = "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM"
+_TOKEN_KEYS = ("prompt_tokens", "completion_tokens", "total_tokens")
 
 
 def _is_number(value: Any) -> bool:
@@ -74,33 +75,139 @@ def _iter_usage_dicts(message: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
                 yield usage
 
 
-def _sum_usage_from_messages(messages: Any) -> Dict[str, Any]:
-    totals = {
+def _empty_usage_totals() -> Dict[str, Any]:
+    return {
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
         "cost": 0.0,
         "count": 0,
     }
+
+
+def _usage_to_tokens(usage: Dict[str, Any]) -> Dict[str, int]:
+    prompt_tokens = _to_int(usage.get("prompt_tokens", 0))
+    completion_tokens = _to_int(usage.get("completion_tokens", 0))
+    total_tokens = _to_int(usage.get("total_tokens", 0))
+    if total_tokens == 0:
+        total_tokens = prompt_tokens + completion_tokens
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def _add_usage_dict(totals: Dict[str, Any], usage: Dict[str, Any]) -> None:
+    totals["count"] += 1
+    usage_tokens = _usage_to_tokens(usage)
+    totals["prompt_tokens"] += usage_tokens["prompt_tokens"]
+    totals["completion_tokens"] += usage_tokens["completion_tokens"]
+    totals["total_tokens"] += usage_tokens["total_tokens"]
+    totals["cost"] += _to_float(usage.get("cost", 0.0))
+
+
+def _merge_usage_totals(target: Dict[str, Any], source: Dict[str, Any]) -> None:
+    target["prompt_tokens"] += _to_int(source.get("prompt_tokens", 0))
+    target["completion_tokens"] += _to_int(source.get("completion_tokens", 0))
+    target["total_tokens"] += _to_int(source.get("total_tokens", 0))
+    target["cost"] += _to_float(source.get("cost", 0.0))
+    target["count"] += _to_int(source.get("count", 0))
+
+
+def _sum_usage_from_message(message: Any) -> Dict[str, Any]:
+    totals = _empty_usage_totals()
+    if not isinstance(message, dict):
+        return totals
+    for usage in _iter_usage_dicts(message):
+        _add_usage_dict(totals, usage)
+    return totals
+
+
+def _sum_usage_from_messages(messages: Any) -> Dict[str, Any]:
+    totals = _empty_usage_totals()
     if not isinstance(messages, list):
         return totals
 
     for message in messages:
-        if not isinstance(message, dict):
-            continue
-        for usage in _iter_usage_dicts(message):
-            totals["count"] += 1
-            prompt_tokens = _to_int(usage.get("prompt_tokens", 0))
-            completion_tokens = _to_int(usage.get("completion_tokens", 0))
-            total_tokens = _to_int(usage.get("total_tokens", 0))
-            if total_tokens == 0:
-                total_tokens = prompt_tokens + completion_tokens
-            totals["prompt_tokens"] += prompt_tokens
-            totals["completion_tokens"] += completion_tokens
-            totals["total_tokens"] += total_tokens
-            totals["cost"] += _to_float(usage.get("cost", 0.0))
+        _merge_usage_totals(totals, _sum_usage_from_message(message))
 
     return totals
+
+
+def _iter_verifier_response_messages(message: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
+    extra = message.get("extra")
+    if not isinstance(extra, dict):
+        return
+
+    verifier = extra.get("verifier")
+    if not isinstance(verifier, dict):
+        return
+
+    verifier_output = verifier.get("verifier_output")
+    if not isinstance(verifier_output, dict):
+        return
+
+    response = verifier_output.get("response")
+    if isinstance(response, dict):
+        yield response
+
+    responses = verifier_output.get("responses")
+    if isinstance(responses, list):
+        for item in responses:
+            if isinstance(item, dict):
+                yield item
+
+    checklist = verifier_output.get("checklist")
+    if isinstance(checklist, dict):
+        checklist_response = checklist.get("response")
+        if isinstance(checklist_response, dict):
+            yield checklist_response
+
+
+def _sum_verifier_usage_from_messages(messages: Any) -> Dict[str, Any]:
+    totals = _empty_usage_totals()
+    if not isinstance(messages, list):
+        return totals
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        for verifier_message in _iter_verifier_response_messages(message):
+            _merge_usage_totals(totals, _sum_usage_from_message(verifier_message))
+    return totals
+
+
+def _reconcile_token_split(
+    *,
+    aggregate_tokens: Dict[str, int],
+    agent_usage: Dict[str, Any],
+    verifier_usage: Dict[str, Any],
+) -> Dict[str, int]:
+    split_tokens: Dict[str, int] = {}
+    for token_key in _TOKEN_KEYS:
+        target_total = max(0, _to_int(aggregate_tokens.get(token_key, 0)))
+        agent_value = max(0, _to_int(agent_usage.get(token_key, 0)))
+        verifier_value = max(0, _to_int(verifier_usage.get(token_key, 0)))
+        raw_total = agent_value + verifier_value
+
+        if raw_total == target_total:
+            reconciled_agent = agent_value
+            reconciled_verifier = verifier_value
+        elif target_total == 0:
+            reconciled_agent = 0
+            reconciled_verifier = 0
+        elif raw_total == 0:
+            reconciled_agent = target_total
+            reconciled_verifier = 0
+        else:
+            verifier_share = verifier_value / raw_total
+            reconciled_verifier = int(round(target_total * verifier_share))
+            reconciled_verifier = max(0, min(reconciled_verifier, target_total))
+            reconciled_agent = target_total - reconciled_verifier
+
+        split_tokens[f"agent_{token_key}"] = reconciled_agent
+        split_tokens[f"verifier_{token_key}"] = reconciled_verifier
+    return split_tokens
 
 
 def _extract_model_stats(obj: Dict[str, Any]) -> Dict[str, Any]:
@@ -235,6 +342,12 @@ def _empty_metrics() -> Dict[str, Any]:
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
+        "agent_prompt_tokens": 0,
+        "agent_completion_tokens": 0,
+        "agent_total_tokens": 0,
+        "verifier_prompt_tokens": 0,
+        "verifier_completion_tokens": 0,
+        "verifier_total_tokens": 0,
         "actions": 0,
         "api_calls": 0,
     }
@@ -245,6 +358,12 @@ def _merge_metrics(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     target["prompt_tokens"] += source.get("prompt_tokens", 0)
     target["completion_tokens"] += source.get("completion_tokens", 0)
     target["total_tokens"] += source.get("total_tokens", 0)
+    target["agent_prompt_tokens"] += source.get("agent_prompt_tokens", 0)
+    target["agent_completion_tokens"] += source.get("agent_completion_tokens", 0)
+    target["agent_total_tokens"] += source.get("agent_total_tokens", 0)
+    target["verifier_prompt_tokens"] += source.get("verifier_prompt_tokens", 0)
+    target["verifier_completion_tokens"] += source.get("verifier_completion_tokens", 0)
+    target["verifier_total_tokens"] += source.get("verifier_total_tokens", 0)
     target["actions"] += source.get("actions", 0)
     target["api_calls"] += source.get("api_calls", 0)
 
@@ -258,7 +377,11 @@ def _display_path(root: Path, path: Path) -> str:
 
 def _analyze_payload(obj: Dict[str, Any], path: Path, *, root: Path) -> Dict[str, Any]:
     messages = obj.get("messages", [])
-    usage_totals = _sum_usage_from_messages(messages)
+    agent_usage_totals = _sum_usage_from_messages(messages)
+    verifier_usage_totals = _sum_verifier_usage_from_messages(messages)
+    usage_totals = _empty_usage_totals()
+    _merge_usage_totals(usage_totals, agent_usage_totals)
+    _merge_usage_totals(usage_totals, verifier_usage_totals)
 
     assistant_count = _count_role(messages, "assistant")
     tool_count = _count_role(messages, "tool")
@@ -278,6 +401,11 @@ def _analyze_payload(obj: Dict[str, Any], path: Path, *, root: Path) -> Dict[str
     )
     tokens = _extract_tokens(obj, usage_totals)
     cost = _extract_cost(obj, usage_totals["cost"])
+    split_tokens = _reconcile_token_split(
+        aggregate_tokens=tokens,
+        agent_usage=agent_usage_totals,
+        verifier_usage=verifier_usage_totals,
+    )
 
     return {
         "path": _display_path(root, path),
@@ -286,6 +414,12 @@ def _analyze_payload(obj: Dict[str, Any], path: Path, *, root: Path) -> Dict[str
         "prompt_tokens": tokens["prompt_tokens"],
         "completion_tokens": tokens["completion_tokens"],
         "total_tokens": tokens["total_tokens"],
+        "agent_prompt_tokens": split_tokens["agent_prompt_tokens"],
+        "agent_completion_tokens": split_tokens["agent_completion_tokens"],
+        "agent_total_tokens": split_tokens["agent_total_tokens"],
+        "verifier_prompt_tokens": split_tokens["verifier_prompt_tokens"],
+        "verifier_completion_tokens": split_tokens["verifier_completion_tokens"],
+        "verifier_total_tokens": split_tokens["verifier_total_tokens"],
         "actions": actions,
         "api_calls": api_calls,
     }

@@ -8,11 +8,16 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
 from minisweagent.models import get_model
+
+try:
+    from tqdm.auto import tqdm as _tqdm
+except Exception:  # pragma: no cover - tqdm may be unavailable in some environments
+    _tqdm = None
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +30,16 @@ class SamplerModelSpec:
     model_name: str
     model_config: dict[str, Any]
     sampling_kwargs: dict[str, Any]
+
+
+@dataclass
+class PreparedRun:
+    instance_id: str
+    run_id: str | None
+    problem_id: str | None
+    trajectory_relpath: str
+    messages: list[dict[str, Any]]
+    replay_steps: list[dict[str, Any]]
 
 
 def load_sampler_model_specs(path: Path) -> list[SamplerModelSpec]:
@@ -375,6 +390,77 @@ def _sample_candidate(
         }
 
 
+def _prepare_runs(
+    *,
+    successful_runs: list[dict[str, Any]],
+    transcripts_dir: Path,
+    limit_steps_per_run: int | None,
+    exclude_parallel_tool_call_trajectories: bool,
+    counts: dict[str, int],
+) -> list[PreparedRun]:
+    prepared_runs: list[PreparedRun] = []
+    for run_entry in successful_runs:
+        try:
+            if not isinstance(run_entry, dict):
+                counts["runs_skipped"] += 1
+                continue
+            metadata = run_entry.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+
+            transcript_refs = run_entry.get("transcripts")
+            if not isinstance(transcript_refs, list) or not transcript_refs:
+                counts["runs_skipped"] += 1
+                continue
+            transcript_ref = transcript_refs[0]
+            if not isinstance(transcript_ref, str):
+                counts["runs_skipped"] += 1
+                continue
+
+            transcript_path = _resolve_transcript_path(transcripts_dir, transcript_ref)
+            transcript_obj = json.loads(transcript_path.read_text())
+            transcript_obj_dict = transcript_obj if isinstance(transcript_obj, dict) else {}
+            transcript = transcript_obj.get("transcript", transcript_obj) if isinstance(transcript_obj, dict) else {}
+            messages = transcript.get("messages") if isinstance(transcript, dict) else None
+            if not isinstance(messages, list):
+                counts["runs_skipped"] += 1
+                continue
+            if exclude_parallel_tool_call_trajectories and trajectory_contains_parallel_tool_calls(messages):
+                counts["runs_skipped_parallel_tool_calls"] += 1
+                continue
+
+            replay_steps = extract_replay_steps(messages)
+            if limit_steps_per_run is not None:
+                replay_steps = replay_steps[: max(0, limit_steps_per_run)]
+
+            instance_id = str(metadata.get("instance_id") or transcript_obj_dict.get("problem_id") or "")
+            if not instance_id:
+                instance_id = transcript_path.stem
+            run_id_value = run_entry.get("id")
+            run_id = str(run_id_value) if run_id_value is not None else None
+            problem_id_value = transcript_obj_dict.get("problem_id")
+            problem_id = str(problem_id_value) if problem_id_value is not None else None
+            try:
+                trajectory_relpath = str(transcript_path.relative_to(transcripts_dir))
+            except ValueError:
+                trajectory_relpath = str(transcript_path)
+
+            prepared_runs.append(
+                PreparedRun(
+                    instance_id=instance_id,
+                    run_id=run_id,
+                    problem_id=problem_id,
+                    trajectory_relpath=trajectory_relpath,
+                    messages=messages,
+                    replay_steps=replay_steps,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Skipping run due to unexpected error during pre-scan.")
+            counts["runs_skipped"] += 1
+    return prepared_runs
+
+
 def generate_verifier_sampling_dataset(
     *,
     output_json_path: Path,
@@ -386,6 +472,8 @@ def generate_verifier_sampling_dataset(
     limit_runs: int | None = None,
     limit_steps_per_run: int | None = None,
     exclude_parallel_tool_call_trajectories: bool = True,
+    show_progress: bool = True,
+    print_fct: Callable[[str], None] | None = print,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     if num_samples < 1:
@@ -418,6 +506,9 @@ def generate_verifier_sampling_dataset(
         "runs_processed": 0,
         "runs_skipped": 0,
         "runs_skipped_parallel_tool_calls": 0,
+        "planned_runs": 0,
+        "planned_steps": 0,
+        "planned_sample_calls": 0,
         "steps_processed": 0,
         "gold_candidates": 0,
         "sample_candidates": 0,
@@ -426,67 +517,49 @@ def generate_verifier_sampling_dataset(
     failures_by_model: dict[str, int] = {spec.id: 0 for spec in sampler_specs}
     failures_by_type: dict[str, int] = {}
 
+    prepared_runs = _prepare_runs(
+        successful_runs=successful_runs,
+        transcripts_dir=transcripts_dir,
+        limit_steps_per_run=limit_steps_per_run,
+        exclude_parallel_tool_call_trajectories=exclude_parallel_tool_call_trajectories,
+        counts=counts,
+    )
+    counts["planned_runs"] = len(prepared_runs)
+    counts["planned_steps"] = sum(len(run.replay_steps) for run in prepared_runs)
+    counts["planned_sample_calls"] = counts["planned_steps"] * len(sampler_specs) * num_samples
+    if print_fct is not None:
+        print_fct(
+            "Sampling plan: "
+            f"runs={counts['planned_runs']} "
+            f"steps={counts['planned_steps']} "
+            f"models={len(sampler_specs)} "
+            f"num_samples={num_samples} "
+            f"total_model_calls={counts['planned_sample_calls']}"
+        )
+
+    run_progress = None
+    step_progress = None
+    if show_progress and _tqdm is not None:
+        run_progress = _tqdm(total=counts["planned_runs"], desc="Runs", unit="run", leave=True)
+        step_progress = _tqdm(total=counts["planned_steps"], desc="Steps", unit="step", leave=True)
+
     started_at = time.time()
     with output_jsonl.open("w", encoding="utf-8") as output_file:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for run_entry in successful_runs:
+            for prepared_run in prepared_runs:
                 try:
-                    if not isinstance(run_entry, dict):
-                        counts["runs_skipped"] += 1
-                        continue
-                    metadata = run_entry.get("metadata") or {}
-                    if not isinstance(metadata, dict):
-                        metadata = {}
-
-                    transcript_refs = run_entry.get("transcripts")
-                    if not isinstance(transcript_refs, list) or not transcript_refs:
-                        counts["runs_skipped"] += 1
-                        continue
-                    transcript_ref = transcript_refs[0]
-                    if not isinstance(transcript_ref, str):
-                        counts["runs_skipped"] += 1
-                        continue
-
-                    transcript_path = _resolve_transcript_path(transcripts_dir, transcript_ref)
-                    transcript_obj = json.loads(transcript_path.read_text())
-                    transcript_obj_dict = transcript_obj if isinstance(transcript_obj, dict) else {}
-                    transcript = transcript_obj.get("transcript", transcript_obj) if isinstance(transcript_obj, dict) else {}
-                    messages = transcript.get("messages") if isinstance(transcript, dict) else None
-                    if not isinstance(messages, list):
-                        counts["runs_skipped"] += 1
-                        continue
-                    if exclude_parallel_tool_call_trajectories and trajectory_contains_parallel_tool_calls(messages):
-                        counts["runs_skipped_parallel_tool_calls"] += 1
-                        continue
-
-                    replay_steps = extract_replay_steps(messages)
-                    if limit_steps_per_run is not None:
-                        replay_steps = replay_steps[: max(0, limit_steps_per_run)]
-
-                    instance_id = str(metadata.get("instance_id") or transcript_obj_dict.get("problem_id") or "")
-                    if not instance_id:
-                        instance_id = transcript_path.stem
-                    run_id_value = run_entry.get("id")
-                    run_id = str(run_id_value) if run_id_value is not None else None
-                    problem_id_value = transcript_obj_dict.get("problem_id")
-                    problem_id = str(problem_id_value) if problem_id_value is not None else None
-                    try:
-                        trajectory_relpath = str(transcript_path.relative_to(transcripts_dir))
-                    except ValueError:
-                        trajectory_relpath = str(transcript_path)
-
-                    for step in replay_steps:
+                    for step in prepared_run.replay_steps:
                         step_index = int(step["step_index"])
                         message_index = int(step["message_index"])
                         assistant_message = step["assistant_message"]
                         gold_actions = step["gold_actions"]
-                        prompt_messages = normalize_docent_messages_for_model(messages[:message_index])
+                        prompt_messages = normalize_docent_messages_for_model(prepared_run.messages[:message_index])
 
                         gold_row = _build_gold_candidate_row(
-                            instance_id=instance_id,
-                            run_id=run_id,
-                            problem_id=problem_id,
-                            trajectory_relpath=trajectory_relpath,
+                            instance_id=prepared_run.instance_id,
+                            run_id=prepared_run.run_id,
+                            problem_id=prepared_run.problem_id,
+                            trajectory_relpath=prepared_run.trajectory_relpath,
                             step_index=step_index,
                             message_index=message_index,
                             prompt_messages=prompt_messages,
@@ -513,10 +586,10 @@ def generate_verifier_sampling_dataset(
                             sampler_spec, sample_index = futures[future]
                             response_message, error_payload = future.result()
                             row = _build_sampled_candidate_row(
-                                instance_id=instance_id,
-                                run_id=run_id,
-                                problem_id=problem_id,
-                                trajectory_relpath=trajectory_relpath,
+                                instance_id=prepared_run.instance_id,
+                                run_id=prepared_run.run_id,
+                                problem_id=prepared_run.problem_id,
+                                trajectory_relpath=prepared_run.trajectory_relpath,
                                 step_index=step_index,
                                 message_index=message_index,
                                 prompt_messages=prompt_messages,
@@ -532,10 +605,20 @@ def generate_verifier_sampling_dataset(
                                 failures_by_model[sampler_spec.id] = failures_by_model.get(sampler_spec.id, 0) + 1
                                 error_type = error_payload.get("type", "UnknownError")
                                 failures_by_type[error_type] = failures_by_type.get(error_type, 0) + 1
+                        if step_progress is not None:
+                            step_progress.update(1)
                     counts["runs_processed"] += 1
                 except Exception:  # noqa: BLE001
                     logger.exception("Skipping run due to unexpected error during sampling.")
                     counts["runs_skipped"] += 1
+                finally:
+                    if run_progress is not None:
+                        run_progress.update(1)
+
+    if run_progress is not None:
+        run_progress.close()
+    if step_progress is not None:
+        step_progress.close()
 
     duration_seconds = time.time() - started_at
     summary = {
@@ -551,6 +634,7 @@ def generate_verifier_sampling_dataset(
             "limit_runs": limit_runs,
             "limit_steps_per_run": limit_steps_per_run,
             "exclude_parallel_tool_call_trajectories": exclude_parallel_tool_call_trajectories,
+            "show_progress": show_progress,
             "sampler_models": [
                 {
                     "id": spec.id,

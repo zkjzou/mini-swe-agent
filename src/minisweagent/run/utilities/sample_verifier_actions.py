@@ -30,6 +30,11 @@ def main(
         "--exclude-parallel-tool-calls/--allow-parallel-tool-calls",
         help="Skip trajectories containing assistant messages with multiple tool calls",
     ),
+    show_progress: bool = typer.Option(
+        True,
+        "--show-progress/--no-show-progress",
+        help="Display tqdm progress bars while sampling",
+    ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output files if they already exist"),
 ) -> None:
     try:
@@ -43,6 +48,8 @@ def main(
             limit_runs=limit_runs,
             limit_steps_per_run=limit_steps_per_run,
             exclude_parallel_tool_call_trajectories=exclude_parallel_tool_calls,
+            show_progress=show_progress,
+            print_fct=console.print,
             overwrite=overwrite,
         )
     except Exception as exc:  # noqa: BLE001

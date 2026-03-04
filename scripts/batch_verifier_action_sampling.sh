@@ -17,6 +17,7 @@ MAX_WORKERS=8
 LIMIT_RUNS=""             # e.g. 50 (leave empty for all)
 LIMIT_STEPS_PER_RUN=""    # e.g. 30 (leave empty for all)
 EXCLUDE_PARALLEL_TOOL_CALLS=true
+SHOW_PROGRESS=true
 
 mkdir -p "${SAMPLE_OUTPUT_DIR}"
 SAMPLER_CONFIG="${SAMPLE_OUTPUT_DIR}/sampler_models.yaml"
@@ -42,9 +43,19 @@ sample_cmd=(
   --output-dir "${SAMPLE_OUTPUT_DIR}"
   --num-samples "${NUM_SAMPLES}"
   --max-workers "${MAX_WORKERS}"
-  "$( [[ "${EXCLUDE_PARALLEL_TOOL_CALLS}" == "true" ]] && echo --exclude-parallel-tool-calls || echo --allow-parallel-tool-calls )"
   --overwrite
 )
+
+if [[ "${EXCLUDE_PARALLEL_TOOL_CALLS}" == "true" ]]; then
+  sample_cmd+=(--exclude-parallel-tool-calls)
+else
+  sample_cmd+=(--allow-parallel-tool-calls)
+fi
+if [[ "${SHOW_PROGRESS}" == "true" ]]; then
+  sample_cmd+=(--show-progress)
+else
+  sample_cmd+=(--no-show-progress)
+fi
 
 if [[ -n "${LIMIT_RUNS}" ]]; then
   sample_cmd+=(--limit-runs "${LIMIT_RUNS}")

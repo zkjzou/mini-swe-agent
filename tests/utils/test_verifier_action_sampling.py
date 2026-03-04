@@ -169,7 +169,10 @@ def test_generate_verifier_sampling_dataset(tmp_path, monkeypatch):
     )
 
     assert summary["counts"]["runs_processed"] == 1
+    assert summary["counts"]["planned_runs"] == 1
     assert summary["counts"]["steps_processed"] == 2
+    assert summary["counts"]["planned_steps"] == 2
+    assert summary["counts"]["planned_sample_calls"] == 4
     assert summary["counts"]["gold_candidates"] == 2
     assert summary["counts"]["sample_candidates"] == 4
 

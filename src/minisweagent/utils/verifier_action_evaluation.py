@@ -687,7 +687,12 @@ def evaluate_verifier_action_selection(
 
     progress = None
     if show_progress and _tqdm is not None:
-        progress = _tqdm(total=task_count, desc="Evaluating verifier tasks", unit="task")
+        progress = _tqdm(
+            total=task_count,
+            desc="Evaluating verifier tasks",
+            unit="task",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+        )
 
     shared_sessions: dict[str, _VerifierSession] | None = None
     thread_local = threading.local()

@@ -37,6 +37,11 @@ def main(
         "--strict-five-actions/--no-strict-five-actions",
         help="Require exactly five candidate actions per merged row",
     ),
+    show_progress: bool = typer.Option(
+        True,
+        "--show-progress/--no-show-progress",
+        help="Display a progress bar while evaluating rows",
+    ),
     limit_rows: int | None = typer.Option(None, "--limit-rows", min=1, help="Optional cap on parsed rows to evaluate"),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output files if they already exist"),
 ) -> None:
@@ -49,6 +54,7 @@ def main(
             verifier_types=verifier_types,
             strict_five_actions=strict_five_actions,
             limit_rows=limit_rows,
+            show_progress=show_progress,
             overwrite=overwrite,
         )
     except Exception as exc:  # noqa: BLE001

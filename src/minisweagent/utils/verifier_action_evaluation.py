@@ -22,6 +22,11 @@ from minisweagent.verifiers.llm import LLMVerifier
 from minisweagent.verifiers.prompt_loader import apply_prompt_overrides
 from minisweagent.verifiers.reward_model import RewardModelVerifier
 
+try:
+    from tqdm.auto import tqdm as _tqdm
+except Exception:  # pragma: no cover - tqdm may be unavailable in some environments
+    _tqdm = None
+
 VerifierType = Literal["llm", "reward_model"]
 
 
@@ -595,6 +600,7 @@ def evaluate_verifier_action_selection(
     verifier_types: list[str] | None = None,
     strict_five_actions: bool = True,
     limit_rows: int | None = None,
+    show_progress: bool = True,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     if output_summary is None:
@@ -622,60 +628,72 @@ def evaluate_verifier_action_selection(
     skip_counters = {verifier_type: Counter() for verifier_type in resolved_verifier_types}
     failure_counters = {verifier_type: Counter() for verifier_type in resolved_verifier_types}
 
+    progress = None
+    if show_progress and _tqdm is not None:
+        progress = _tqdm(total=limit_rows, desc="Evaluating merged rows", unit="row")
+
     output_jsonl.parent.mkdir(parents=True, exist_ok=True)
-    with input_jsonl.open("r", encoding="utf-8") as input_handle, output_jsonl.open("w", encoding="utf-8") as output_handle:
-        for line_no, raw_line in enumerate(input_handle, start=1):
-            line = raw_line.strip()
-            if not line:
-                continue
-            counts["input_rows"] += 1
+    try:
+        with input_jsonl.open("r", encoding="utf-8") as input_handle, output_jsonl.open(
+            "w", encoding="utf-8"
+        ) as output_handle:
+            for line_no, raw_line in enumerate(input_handle, start=1):
+                line = raw_line.strip()
+                if not line:
+                    continue
+                counts["input_rows"] += 1
 
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                counts["invalid_rows"] += 1
-                continue
-            if not isinstance(row, dict):
-                counts["invalid_rows"] += 1
-                continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    counts["invalid_rows"] += 1
+                    continue
+                if not isinstance(row, dict):
+                    counts["invalid_rows"] += 1
+                    continue
 
-            counts["parsed_rows"] += 1
-            if limit_rows is not None and counts["rows_considered"] >= limit_rows:
-                break
-            counts["rows_considered"] += 1
+                counts["parsed_rows"] += 1
+                if limit_rows is not None and counts["rows_considered"] >= limit_rows:
+                    break
+                counts["rows_considered"] += 1
+                if progress is not None:
+                    progress.update(1)
 
-            for verifier_type in resolved_verifier_types:
-                metric = metrics[verifier_type]
-                metric["rows_total"] += 1
+                for verifier_type in resolved_verifier_types:
+                    metric = metrics[verifier_type]
+                    metric["rows_total"] += 1
 
-                row_result = _evaluate_row(
-                    row=row,
-                    row_index=counts["rows_considered"] - 1,
-                    line_no=line_no,
-                    session=sessions[verifier_type],
-                    strict_five_actions=strict_five_actions,
-                )
-                output_handle.write(json.dumps(row_result, ensure_ascii=False, default=str))
-                output_handle.write("\n")
-                counts["rows_written"] += 1
+                    row_result = _evaluate_row(
+                        row=row,
+                        row_index=counts["rows_considered"] - 1,
+                        line_no=line_no,
+                        session=sessions[verifier_type],
+                        strict_five_actions=strict_five_actions,
+                    )
+                    output_handle.write(json.dumps(row_result, ensure_ascii=False, default=str))
+                    output_handle.write("\n")
+                    counts["rows_written"] += 1
 
-                status = row_result.get("status")
-                if status == "evaluated":
-                    metric["rows_evaluated"] += 1
-                    if row_result.get("selected_is_gold") is True:
-                        metric["gold_pick_count"] += 1
-                    metric["total_cost"] += _safe_float(row_result.get("row_cost"))
-                    metric["total_api_calls"] += _safe_int(row_result.get("row_api_calls"))
-                elif status == "skipped":
-                    metric["rows_skipped"] += 1
-                    skip_counters[verifier_type][str(row_result.get("skip_reason") or "unknown")] += 1
-                else:
-                    metric["rows_failed"] += 1
-                    error_type = "unknown"
-                    error = row_result.get("error")
-                    if isinstance(error, dict) and isinstance(error.get("type"), str):
-                        error_type = error["type"]
-                    failure_counters[verifier_type][error_type] += 1
+                    status = row_result.get("status")
+                    if status == "evaluated":
+                        metric["rows_evaluated"] += 1
+                        if row_result.get("selected_is_gold") is True:
+                            metric["gold_pick_count"] += 1
+                        metric["total_cost"] += _safe_float(row_result.get("row_cost"))
+                        metric["total_api_calls"] += _safe_int(row_result.get("row_api_calls"))
+                    elif status == "skipped":
+                        metric["rows_skipped"] += 1
+                        skip_counters[verifier_type][str(row_result.get("skip_reason") or "unknown")] += 1
+                    else:
+                        metric["rows_failed"] += 1
+                        error_type = "unknown"
+                        error = row_result.get("error")
+                        if isinstance(error, dict) and isinstance(error.get("type"), str):
+                            error_type = error["type"]
+                        failure_counters[verifier_type][error_type] += 1
+    finally:
+        if progress is not None:
+            progress.close()
 
     for verifier_type in resolved_verifier_types:
         metric = metrics[verifier_type]
@@ -693,6 +711,7 @@ def evaluate_verifier_action_selection(
         "verifier_types": resolved_verifier_types,
         "strict_five_actions": strict_five_actions,
         "limit_rows": limit_rows,
+        "show_progress": show_progress,
         "counts": counts,
         "per_verifier": metrics,
     }

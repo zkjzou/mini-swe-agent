@@ -115,6 +115,7 @@ def test_evaluate_verifier_action_selection_runs_llm_and_reward_model(tmp_path, 
         ],
         verifier_types=["llm", "reward_model"],
         strict_five_actions=True,
+        show_progress=False,
         overwrite=True,
     )
 
@@ -156,6 +157,7 @@ def test_evaluate_verifier_action_selection_skips_rows_when_not_five_actions(tmp
         ],
         verifier_types=["llm"],
         strict_five_actions=True,
+        show_progress=False,
         overwrite=True,
     )
 
@@ -190,6 +192,7 @@ def test_evaluate_verifier_action_selection_redacts_assistant_history_when_disab
         ],
         verifier_types=["llm"],
         strict_five_actions=True,
+        show_progress=False,
         overwrite=True,
     )
     redacted_prompt_text = "\n".join(model.prompts)
@@ -207,6 +210,7 @@ def test_evaluate_verifier_action_selection_redacts_assistant_history_when_disab
         ],
         verifier_types=["llm"],
         strict_five_actions=True,
+        show_progress=False,
         overwrite=True,
     )
     unredacted_prompt_text = "\n".join(model.prompts)

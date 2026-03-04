@@ -45,6 +45,7 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
             "--verifier-type",
             "reward_model",
             "--no-strict-five-actions",
+            "--no-show-progress",
             "--limit-rows",
             "5",
             "--overwrite",
@@ -58,6 +59,7 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
     assert called["config_specs"] == ["swebench.yaml", 'agent.verifier.model.model_name="fake/verifier"']
     assert called["verifier_types"] == ["llm", "reward_model"]
     assert called["strict_five_actions"] is False
+    assert called["show_progress"] is False
     assert called["limit_rows"] == 5
     assert called["overwrite"] is True
 

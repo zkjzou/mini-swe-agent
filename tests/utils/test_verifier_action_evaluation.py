@@ -95,7 +95,11 @@ def test_evaluate_verifier_action_selection_runs_llm_and_reward_model(tmp_path, 
     input_jsonl = tmp_path / "merged.jsonl"
     output_jsonl = tmp_path / "eval_rows.jsonl"
     output_summary = tmp_path / "eval_summary.json"
-    _write_jsonl(input_jsonl, [_make_row()])
+    row_1 = _make_row()
+    row_2 = _make_row()
+    row_2["run_id"] = "run-2"
+    row_2["trajectory_relpath"] = "repo__issue-1-run-2.json"
+    _write_jsonl(input_jsonl, [row_1, row_2])
 
     monkeypatch.setattr(
         "minisweagent.utils.verifier_action_evaluation.get_model",
@@ -116,19 +120,21 @@ def test_evaluate_verifier_action_selection_runs_llm_and_reward_model(tmp_path, 
         verifier_types=["llm", "reward_model"],
         strict_five_actions=True,
         show_progress=False,
+        max_workers=4,
         overwrite=True,
     )
 
-    assert summary["counts"]["rows_considered"] == 1
-    assert summary["per_verifier"]["llm"]["rows_evaluated"] == 1
-    assert summary["per_verifier"]["reward_model"]["rows_evaluated"] == 1
-    assert summary["per_verifier"]["llm"]["gold_pick_count"] == 1
-    assert summary["per_verifier"]["reward_model"]["gold_pick_count"] == 1
+    assert summary["counts"]["rows_considered"] == 2
+    assert summary["per_verifier"]["llm"]["rows_evaluated"] == 2
+    assert summary["per_verifier"]["reward_model"]["rows_evaluated"] == 2
+    assert summary["per_verifier"]["llm"]["gold_pick_count"] == 2
+    assert summary["per_verifier"]["reward_model"]["gold_pick_count"] == 2
     assert summary["per_verifier"]["llm"]["accuracy"] == 1.0
     assert summary["per_verifier"]["reward_model"]["accuracy"] == 1.0
+    assert summary["effective_max_workers"] > 1
 
     rows = [json.loads(line) for line in output_jsonl.read_text().splitlines()]
-    assert len(rows) == 2
+    assert len(rows) == 4
     assert {row["verifier_type"] for row in rows} == {"llm", "reward_model"}
     assert all(row["status"] == "evaluated" for row in rows)
     assert all(row["selected_is_gold"] is True for row in rows)
@@ -158,6 +164,7 @@ def test_evaluate_verifier_action_selection_skips_rows_when_not_five_actions(tmp
         verifier_types=["llm"],
         strict_five_actions=True,
         show_progress=False,
+        max_workers=1,
         overwrite=True,
     )
 
@@ -193,6 +200,7 @@ def test_evaluate_verifier_action_selection_redacts_assistant_history_when_disab
         verifier_types=["llm"],
         strict_five_actions=True,
         show_progress=False,
+        max_workers=1,
         overwrite=True,
     )
     redacted_prompt_text = "\n".join(model.prompts)
@@ -211,6 +219,7 @@ def test_evaluate_verifier_action_selection_redacts_assistant_history_when_disab
         verifier_types=["llm"],
         strict_five_actions=True,
         show_progress=False,
+        max_workers=1,
         overwrite=True,
     )
     unredacted_prompt_text = "\n".join(model.prompts)

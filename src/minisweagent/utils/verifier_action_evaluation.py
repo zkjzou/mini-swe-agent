@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import copy
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -591,6 +593,31 @@ def _init_metric_bucket() -> dict[str, Any]:
     }
 
 
+def _build_failed_task_result(
+    *,
+    row: dict[str, Any],
+    row_index: int,
+    line_no: int,
+    verifier_type: str,
+    exc: Exception,
+) -> dict[str, Any]:
+    return {
+        "row_index": row_index,
+        "line_no": line_no,
+        "verifier_type": verifier_type,
+        "instance_id": row.get("instance_id"),
+        "run_id": row.get("run_id"),
+        "trajectory_relpath": row.get("trajectory_relpath"),
+        "step_index": row.get("step_index"),
+        "message_index": row.get("message_index"),
+        "status": "failed",
+        "error": {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        },
+    }
+
+
 def evaluate_verifier_action_selection(
     *,
     input_jsonl: Path,
@@ -601,6 +628,7 @@ def evaluate_verifier_action_selection(
     strict_five_actions: bool = True,
     limit_rows: int | None = None,
     show_progress: bool = True,
+    max_workers: int = 8,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     if output_summary is None:
@@ -612,10 +640,7 @@ def evaluate_verifier_action_selection(
 
     resolved_verifier_types = _normalize_verifier_types(verifier_types)
     resolved_config, resolved_specs = _load_resolved_config(config_specs)
-    sessions = {
-        verifier_type: _build_verifier_session(resolved_config, verifier_type)
-        for verifier_type in resolved_verifier_types
-    }
+    requested_max_workers = max(1, int(max_workers))
 
     counts = {
         "input_rows": 0,
@@ -628,72 +653,137 @@ def evaluate_verifier_action_selection(
     skip_counters = {verifier_type: Counter() for verifier_type in resolved_verifier_types}
     failure_counters = {verifier_type: Counter() for verifier_type in resolved_verifier_types}
 
+    rows_to_evaluate: list[tuple[int, int, dict[str, Any]]] = []
+    with input_jsonl.open("r", encoding="utf-8") as input_handle:
+        for line_no, raw_line in enumerate(input_handle, start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            counts["input_rows"] += 1
+
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                counts["invalid_rows"] += 1
+                continue
+            if not isinstance(row, dict):
+                counts["invalid_rows"] += 1
+                continue
+
+            counts["parsed_rows"] += 1
+            if limit_rows is not None and len(rows_to_evaluate) >= limit_rows:
+                break
+            rows_to_evaluate.append((line_no, len(rows_to_evaluate), row))
+
+    counts["rows_considered"] = len(rows_to_evaluate)
+    verifier_type_order = {verifier_type: idx for idx, verifier_type in enumerate(resolved_verifier_types)}
+    tasks = [
+        (line_no, row_index, row, verifier_type)
+        for line_no, row_index, row in rows_to_evaluate
+        for verifier_type in resolved_verifier_types
+    ]
+    task_count = len(tasks)
+    effective_max_workers = min(requested_max_workers, task_count) if task_count > 0 else 1
+
     progress = None
     if show_progress and _tqdm is not None:
-        progress = _tqdm(total=limit_rows, desc="Evaluating merged rows", unit="row")
+        progress = _tqdm(total=task_count, desc="Evaluating verifier tasks", unit="task")
 
-    output_jsonl.parent.mkdir(parents=True, exist_ok=True)
+    shared_sessions: dict[str, _VerifierSession] | None = None
+    thread_local = threading.local()
+
+    def _evaluate_task(task: tuple[int, int, dict[str, Any], str]) -> dict[str, Any]:
+        line_no, row_index, row, verifier_type = task
+        try:
+            if effective_max_workers <= 1:
+                if shared_sessions is None:  # pragma: no cover - guarded by outer initialization
+                    raise RuntimeError("shared verifier sessions are not initialized")
+                session = shared_sessions[verifier_type]
+            else:
+                thread_sessions = getattr(thread_local, "sessions", None)
+                if thread_sessions is None:
+                    thread_sessions = {
+                        v_type: _build_verifier_session(resolved_config, v_type) for v_type in resolved_verifier_types
+                    }
+                    thread_local.sessions = thread_sessions
+                session = thread_sessions[verifier_type]
+
+            return _evaluate_row(
+                row=row,
+                row_index=row_index,
+                line_no=line_no,
+                session=session,
+                strict_five_actions=strict_five_actions,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _build_failed_task_result(
+                row=row,
+                row_index=row_index,
+                line_no=line_no,
+                verifier_type=verifier_type,
+                exc=exc,
+            )
+
+    results: list[dict[str, Any]] = []
     try:
-        with input_jsonl.open("r", encoding="utf-8") as input_handle, output_jsonl.open(
-            "w", encoding="utf-8"
-        ) as output_handle:
-            for line_no, raw_line in enumerate(input_handle, start=1):
-                line = raw_line.strip()
-                if not line:
-                    continue
-                counts["input_rows"] += 1
-
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    counts["invalid_rows"] += 1
-                    continue
-                if not isinstance(row, dict):
-                    counts["invalid_rows"] += 1
-                    continue
-
-                counts["parsed_rows"] += 1
-                if limit_rows is not None and counts["rows_considered"] >= limit_rows:
-                    break
-                counts["rows_considered"] += 1
+        if effective_max_workers <= 1:
+            shared_sessions = {
+                verifier_type: _build_verifier_session(resolved_config, verifier_type)
+                for verifier_type in resolved_verifier_types
+            }
+            for task in tasks:
+                results.append(_evaluate_task(task))
                 if progress is not None:
                     progress.update(1)
-
-                for verifier_type in resolved_verifier_types:
-                    metric = metrics[verifier_type]
-                    metric["rows_total"] += 1
-
-                    row_result = _evaluate_row(
-                        row=row,
-                        row_index=counts["rows_considered"] - 1,
-                        line_no=line_no,
-                        session=sessions[verifier_type],
-                        strict_five_actions=strict_five_actions,
-                    )
-                    output_handle.write(json.dumps(row_result, ensure_ascii=False, default=str))
-                    output_handle.write("\n")
-                    counts["rows_written"] += 1
-
-                    status = row_result.get("status")
-                    if status == "evaluated":
-                        metric["rows_evaluated"] += 1
-                        if row_result.get("selected_is_gold") is True:
-                            metric["gold_pick_count"] += 1
-                        metric["total_cost"] += _safe_float(row_result.get("row_cost"))
-                        metric["total_api_calls"] += _safe_int(row_result.get("row_api_calls"))
-                    elif status == "skipped":
-                        metric["rows_skipped"] += 1
-                        skip_counters[verifier_type][str(row_result.get("skip_reason") or "unknown")] += 1
-                    else:
-                        metric["rows_failed"] += 1
-                        error_type = "unknown"
-                        error = row_result.get("error")
-                        if isinstance(error, dict) and isinstance(error.get("type"), str):
-                            error_type = error["type"]
-                        failure_counters[verifier_type][error_type] += 1
+        else:
+            with ThreadPoolExecutor(max_workers=effective_max_workers) as executor:
+                futures = [executor.submit(_evaluate_task, task) for task in tasks]
+                for future in as_completed(futures):
+                    results.append(future.result())
+                    if progress is not None:
+                        progress.update(1)
     finally:
         if progress is not None:
             progress.close()
+
+    results.sort(
+        key=lambda row_result: (
+            _safe_int(row_result.get("row_index")),
+            verifier_type_order.get(str(row_result.get("verifier_type") or ""), 999),
+            _safe_int(row_result.get("line_no")),
+        )
+    )
+
+    output_jsonl.parent.mkdir(parents=True, exist_ok=True)
+    with output_jsonl.open("w", encoding="utf-8") as output_handle:
+        for row_result in results:
+            output_handle.write(json.dumps(row_result, ensure_ascii=False, default=str))
+            output_handle.write("\n")
+            counts["rows_written"] += 1
+
+            verifier_type = str(row_result.get("verifier_type") or "")
+            if verifier_type not in metrics:
+                continue
+            metric = metrics[verifier_type]
+            metric["rows_total"] += 1
+
+            status = row_result.get("status")
+            if status == "evaluated":
+                metric["rows_evaluated"] += 1
+                if row_result.get("selected_is_gold") is True:
+                    metric["gold_pick_count"] += 1
+                metric["total_cost"] += _safe_float(row_result.get("row_cost"))
+                metric["total_api_calls"] += _safe_int(row_result.get("row_api_calls"))
+            elif status == "skipped":
+                metric["rows_skipped"] += 1
+                skip_counters[verifier_type][str(row_result.get("skip_reason") or "unknown")] += 1
+            else:
+                metric["rows_failed"] += 1
+                error_type = "unknown"
+                error = row_result.get("error")
+                if isinstance(error, dict) and isinstance(error.get("type"), str):
+                    error_type = error["type"]
+                failure_counters[verifier_type][error_type] += 1
 
     for verifier_type in resolved_verifier_types:
         metric = metrics[verifier_type]
@@ -712,6 +802,8 @@ def evaluate_verifier_action_selection(
         "strict_five_actions": strict_five_actions,
         "limit_rows": limit_rows,
         "show_progress": show_progress,
+        "max_workers": requested_max_workers,
+        "effective_max_workers": effective_max_workers,
         "counts": counts,
         "per_verifier": metrics,
     }

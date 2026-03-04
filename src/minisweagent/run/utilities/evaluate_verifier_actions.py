@@ -42,6 +42,7 @@ def main(
         "--show-progress/--no-show-progress",
         help="Display a progress bar while evaluating rows",
     ),
+    max_workers: int = typer.Option(8, "--max-workers", min=1, help="Max concurrent verifier-evaluation workers"),
     limit_rows: int | None = typer.Option(None, "--limit-rows", min=1, help="Optional cap on parsed rows to evaluate"),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output files if they already exist"),
 ) -> None:
@@ -55,6 +56,7 @@ def main(
             strict_five_actions=strict_five_actions,
             limit_rows=limit_rows,
             show_progress=show_progress,
+            max_workers=max_workers,
             overwrite=overwrite,
         )
     except Exception as exc:  # noqa: BLE001

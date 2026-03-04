@@ -24,6 +24,11 @@ def _base_row(**kwargs):
         "sample_index": 0,
         "candidate_source": "sampled",
         "is_gold": False,
+        "prompt_messages": [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "task prompt"},
+        ],
+        "candidate_message": {"role": "assistant", "content": "sampled response", "tool_calls": []},
         "actions": [{"command": "echo hi"}],
     }
     row.update(kwargs)
@@ -47,6 +52,7 @@ def test_grouped_merge_builds_one_row_per_run_step_and_labeled_actions(tmp_path)
         sampler_model_id="gold",
         sample_index=None,
         is_gold=True,
+        candidate_message={"role": "assistant", "content": "gold response", "tool_calls": []},
         actions=[{"command": "ls"}],
     )
     row_a = _base_row(sampler_model_id="sampler-a", actions=[{"command": "echo A"}])
@@ -70,10 +76,16 @@ def test_grouped_merge_builds_one_row_per_run_step_and_labeled_actions(tmp_path)
     assert row["run_id"] == "run-1"
     assert row["step_index"] == 0
     assert row["n_actions"] == 3
+    assert len(row["history_trajectory"]) == 2
+    assert row["history_trajectory"][0]["role"] == "system"
     labels = [action["label"] for action in row["actions"]]
     assert labels[0] == "gold"
     assert set(labels) == {"gold", "sampler-a", "sampler-b"}
     assert row["actions"][0]["command"] == "ls"
+    assert row["actions"][0]["model_response"]["content"] == "gold response"
+    sampled_action = _find_action(row["actions"], "sampler-a")
+    assert sampled_action is not None
+    assert sampled_action["model_response"]["content"] == "sampled response"
     assert "gold" in row["candidates_by_source"]
     assert "sampler-a" in row["candidates_by_source"]
     assert "sampler-b" in row["candidates_by_source"]

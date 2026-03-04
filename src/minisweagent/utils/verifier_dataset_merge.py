@@ -194,6 +194,7 @@ def _build_minimal_action_entry(
     sampler_model_id: str,
     sample_index: int | None,
     action: dict[str, Any],
+    model_response: dict[str, Any] | None,
     is_gold: bool,
 ) -> dict[str, Any]:
     entry = {
@@ -207,7 +208,34 @@ def _build_minimal_action_entry(
     tool_call_id = action.get("tool_call_id")
     if isinstance(tool_call_id, str):
         entry["tool_call_id"] = tool_call_id
+    entry["model_response"] = model_response
     return entry
+
+
+def _minimal_message(message: Any) -> dict[str, Any] | None:
+    if not isinstance(message, dict):
+        return None
+    normalized: dict[str, Any] = {}
+    for key in ("role", "content", "name", "tool_call_id", "tool_calls", "object", "type", "output"):
+        if key in message:
+            normalized[key] = copy.deepcopy(message[key])
+    return normalized if normalized else None
+
+
+def _minimal_model_response(row: dict[str, Any]) -> dict[str, Any] | None:
+    return _minimal_message(row.get("candidate_message"))
+
+
+def _minimal_history_trajectory(row: dict[str, Any]) -> list[dict[str, Any]]:
+    prompt_messages = row.get("prompt_messages")
+    if not isinstance(prompt_messages, list):
+        return []
+    trajectory: list[dict[str, Any]] = []
+    for message in prompt_messages:
+        normalized = _minimal_message(message)
+        if normalized is not None:
+            trajectory.append(normalized)
+    return trajectory
 
 
 def merge_verifier_sampling_datasets(
@@ -396,6 +424,7 @@ def merge_verifier_sampling_datasets(
 
         candidates_by_source: dict[str, dict[str, Any]] = {}
         actions: list[dict[str, Any]] = []
+        history_trajectory: list[dict[str, Any]] = []
 
         if gold_record is not None:
             gold_row = _record_to_public_row(gold_record)
@@ -403,6 +432,7 @@ def merge_verifier_sampling_datasets(
             candidates_by_source["gold"] = _minimal_candidate_info(
                 gold_row, has_valid_action=gold_action is not None
             )
+            history_trajectory = _minimal_history_trajectory(gold_row)
             if gold_action is not None:
                 actions.append(
                     _build_minimal_action_entry(
@@ -411,6 +441,7 @@ def merge_verifier_sampling_datasets(
                         sampler_model_id="gold",
                         sample_index=None,
                         action=gold_action,
+                        model_response=_minimal_model_response(gold_row),
                         is_gold=True,
                     )
                 )
@@ -431,6 +462,8 @@ def merge_verifier_sampling_datasets(
             candidates_by_source[model_id] = _minimal_candidate_info(
                 sampled_row, has_valid_action=sampled_action is not None
             )
+            if not history_trajectory:
+                history_trajectory = _minimal_history_trajectory(sampled_row)
             if sampled_action is None:
                 missing_model_sources.append(model_id)
                 continue
@@ -442,6 +475,7 @@ def merge_verifier_sampling_datasets(
                     sampler_model_id=model_id,
                     sample_index=sampled_row.get("sample_index"),
                     action=sampled_action,
+                    model_response=_minimal_model_response(sampled_row),
                     is_gold=False,
                 )
             )
@@ -456,6 +490,7 @@ def merge_verifier_sampling_datasets(
             "step_index": group["step_index"],
             "message_index": group["message_index"],
             "problem_id": group["problem_id"],
+            "history_trajectory": history_trajectory,
             "actions": actions,
             "n_actions": len(actions),
             "expected_actions": len(sampled_model_ids) + 1,

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-"""Merge verifier action-sampling datasets from multiple models/runs into one canonical JSONL."""
+"""Merge verifier action-sampling datasets into one row per run+step with labeled actions."""
 
 from pathlib import Path
 
@@ -28,7 +28,7 @@ def main(
     sort_rows: bool = typer.Option(
         True,
         "--sort-rows/--no-sort-rows",
-        help="Sort merged rows by instance/step/model/sample for deterministic output",
+        help="Sort merged rows by instance/run/step/message for deterministic output",
     ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output files if they already exist"),
 ) -> None:

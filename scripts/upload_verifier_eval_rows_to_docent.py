@@ -10,6 +10,8 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import requests
+
 try:
     from docent import Docent
     from docent.data_models import AgentRun, Transcript
@@ -40,15 +42,37 @@ def parse_args() -> argparse.Namespace:
         help="Name for a new collection. Defaults to <input_stem>_<UTC timestamp>.",
     )
     parser.add_argument("--api-key", help="Docent API key. Defaults to DOCENT_API_KEY.")
+    parser.add_argument("--domain", help="Optional Docent domain, e.g. docent.transluce.org.")
     parser.add_argument("--server-url", help="Optional Docent server URL.")
     parser.add_argument("--web-url", help="Optional Docent web URL.")
     parser.add_argument("--batch-size", type=int, default=100, help="Runs per upload batch.")
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=30.0,
+        help="Default timeout for Docent HTTP requests.",
+    )
+    parser.add_argument(
+        "--disable-proxy-env",
+        action="store_true",
+        help="Unset HTTP(S)_PROXY and ALL_PROXY before connecting.",
+    )
     return parser.parse_args()
 
 
 def disable_proxy_env() -> None:
     for key in _PROXY_ENV_VARS:
         os.environ.pop(key, None)
+
+
+def install_default_request_timeout(timeout_seconds: float) -> None:
+    original_request = requests.sessions.Session.request
+
+    def request_with_timeout(self, method, url, **kwargs):
+        kwargs.setdefault("timeout", timeout_seconds)
+        return original_request(self, method, url, **kwargs)
+
+    requests.sessions.Session.request = request_with_timeout
 
 
 def default_collection_name(path: Path) -> str:
@@ -99,14 +123,36 @@ def iter_agent_runs(path: Path) -> list[AgentRun]:
 
 def main() -> None:
     args = parse_args()
-    disable_proxy_env()
 
     if not args.input_jsonl.is_file():
         raise SystemExit(f"Input file not found: {args.input_jsonl}")
     if args.batch_size < 1:
         raise SystemExit("--batch-size must be at least 1")
+    if args.timeout_seconds <= 0:
+        raise SystemExit("--timeout-seconds must be greater than 0")
 
-    client = Docent(api_key=args.api_key, server_url=args.server_url, web_url=args.web_url)
+    if args.disable_proxy_env:
+        disable_proxy_env()
+
+    install_default_request_timeout(args.timeout_seconds)
+
+    client_kwargs = {
+        "api_key": args.api_key,
+        "domain": args.domain,
+        "server_url": args.server_url,
+        "web_url": args.web_url,
+    }
+
+    print("Connecting to Docent...", flush=True)
+    try:
+        client = Docent(**client_kwargs)
+    except requests.exceptions.RequestException as exc:
+        raise SystemExit(
+            "Failed to connect to Docent. "
+            f"Try --timeout-seconds 10 to fail faster, or --disable-proxy-env if proxy settings are broken. "
+            f"Original error: {exc}"
+        ) from exc
+
     collection_id = args.collection_id
     if collection_id is None:
         collection_name = args.collection_name or default_collection_name(args.input_jsonl)

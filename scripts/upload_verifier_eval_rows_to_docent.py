@@ -8,13 +8,13 @@ import argparse
 import copy
 import json
 import os
+import re
 from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import requests
-from jinja2 import StrictUndefined, Template
 
 try:
     from docent import Docent
@@ -26,12 +26,7 @@ except ImportError as exc:  # pragma: no cover - runtime dependency check
 from minisweagent.agents.default import VerifierConfig
 from minisweagent.utils.verifier_action_evaluation import (
     _align_prompt_name,
-    _build_candidate,
-    _extract_task,
     _load_resolved_config,
-    _messages_for_outbound_context,
-    _messages_to_steps,
-    _slice_steps,
 )
 from minisweagent.verifiers.prompt_loader import apply_prompt_overrides
 
@@ -293,85 +288,31 @@ def build_candidate_actions_content(source_row: dict[str, Any] | None) -> str | 
     return "\n".join(lines)
 
 
+def strip_recent_steps_block(selection_template: str) -> str:
+    pattern = re.compile(
+        r"\nRecent steps.*?\n(?:\{%.*?\n)*Candidates:\n",
+        re.DOTALL,
+    )
+    stripped = pattern.sub("\nCandidates:\n", selection_template, count=1)
+    return stripped.strip()
+
+
 def build_verifier_prompt_messages(
     row: dict[str, Any],
     source_row: dict[str, Any] | None,
     *,
     config_specs: tuple[str, ...],
 ) -> list[Any]:
-    if not isinstance(source_row, dict):
-        return []
-
     verifier_type = str(row.get("verifier_type") or "llm")
     verifier_config = get_verifier_config(config_specs, verifier_type)
 
-    actions_raw = source_row.get("actions")
-    if not isinstance(actions_raw, list):
-        return []
-    candidates = [_build_candidate(action_entry, idx) for idx, action_entry in enumerate(actions_raw) if isinstance(action_entry, dict)]
-    if not candidates:
-        return []
-
-    history_trajectory = source_row.get("history_trajectory")
-    if not isinstance(history_trajectory, list):
-        history_trajectory = []
-
-    outbound_messages = _messages_for_outbound_context(
-        [message for message in history_trajectory if isinstance(message, dict)],
-        include_assistant_content=bool(verifier_config.include_thoughts_in_history_steps),
-    )
-    all_steps = _messages_to_steps(outbound_messages)
-    steps = _slice_steps(all_steps, int(verifier_config.history_steps))
-    messages = [message for step in steps for message in step]
-    all_messages = [message for step in all_steps for message in step]
-    task = _extract_task(outbound_messages, source_row)
-
-    template_vars: dict[str, Any] = {
-        "task": task,
-        "messages": messages,
-        "all_messages": all_messages,
-        "steps": steps,
-        "all_steps": all_steps,
-        "history_steps": int(verifier_config.history_steps),
-    }
-
-    checklist = row.get("verifier_output")
-    if isinstance(checklist, dict):
-        checklist = checklist.get("checklist")
-    if isinstance(checklist, dict):
-        checklist_items = [item for item in checklist.get("items", []) if isinstance(item, str)]
-        checklist_rubric = [item for item in checklist.get("rubric_items", []) if isinstance(item, dict)]
-        template_vars.update(
-            {
-                "checklist_items": checklist_items,
-                "checklist_text": "\n".join(f"{idx + 1}. {item}" for idx, item in enumerate(checklist_items)),
-                "checklist_count": len(checklist_items),
-                "checklist_rubric": checklist_rubric,
-            }
-        )
-
     prompt_messages: list[Any] = []
     if verifier_type == "reward_model":
-        selected_index = int_or_default(row.get("selected_index"), 0)
-        candidate = candidates[min(max(selected_index, 0), len(candidates) - 1)]
-        render_vars = {
-            **template_vars,
-            "task": task,
-            "messages": messages,
-            "steps": steps,
-            "candidates": candidates,
-            "candidate": candidate,
-        }
-        system_prompt = Template(verifier_config.reward_system_template, undefined=StrictUndefined).render(**render_vars)
-        user_prompt = Template(verifier_config.reward_prompt_template, undefined=StrictUndefined).render(**render_vars)
+        system_prompt = verifier_config.reward_system_template.strip()
+        user_prompt = verifier_config.reward_prompt_template.strip()
     else:
-        render_vars = {
-            **template_vars,
-            "candidates": candidates,
-            "selection_index_base": verifier_config.selection_index_base,
-        }
-        system_prompt = Template(verifier_config.system_template, undefined=StrictUndefined).render(**render_vars)
-        user_prompt = Template(verifier_config.selection_template, undefined=StrictUndefined).render(**render_vars)
+        system_prompt = verifier_config.system_template.strip()
+        user_prompt = strip_recent_steps_block(verifier_config.selection_template)
 
     prompt_messages.append(parse_chat_message({"role": "system", "content": system_prompt}))
     prompt_messages.append(parse_chat_message({"role": "user", "content": user_prompt}))

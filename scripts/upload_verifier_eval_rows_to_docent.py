@@ -9,13 +9,14 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import requests
 
 try:
     from docent import Docent
     from docent.data_models import AgentRun, Transcript
-    from docent.data_models.chat import parse_chat_message
+    from docent.data_models.chat import ToolCall, parse_chat_message
 except ImportError as exc:  # pragma: no cover - runtime dependency check
     raise SystemExit("Install docent-python first: pip install docent-python") from exc
 
@@ -45,6 +46,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--domain", help="Optional Docent domain, e.g. docent.transluce.org.")
     parser.add_argument("--server-url", help="Optional Docent server URL.")
     parser.add_argument("--web-url", help="Optional Docent web URL.")
+    parser.add_argument(
+        "--source-jsonl",
+        type=Path,
+        help="Optional merged verifier-action JSONL used to recover the previous message.",
+    )
     parser.add_argument("--batch-size", type=int, default=100, help="Runs per upload batch.")
     parser.add_argument(
         "--timeout-seconds",
@@ -80,8 +86,57 @@ def default_collection_name(path: Path) -> str:
     return f"{path.stem}_{timestamp}"
 
 
-def build_metadata(row: dict) -> dict:
+def default_source_jsonl(path: Path) -> Path | None:
+    candidate = path.parent / "merged_grouped_latest.jsonl"
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def int_or_default(value: Any, default: int) -> int:
+    if value is None:
+        return default
+    return int(value)
+
+
+def row_lookup_key(row: dict[str, Any]) -> tuple[str, str, str, int, int]:
+    return (
+        str(row.get("instance_id") or ""),
+        str(row.get("run_id") or ""),
+        str(row.get("trajectory_relpath") or ""),
+        int_or_default(row.get("step_index"), -1),
+        int_or_default(row.get("message_index"), -1),
+    )
+
+
+def load_source_lookup(path: Path) -> dict[tuple[str, str, str, int, int], dict[str, Any]]:
+    lookup: dict[tuple[str, str, str, int, int], dict[str, Any]] = {}
+    with path.open("r", encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                row = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Invalid JSON in source rows on line {line_no}: {exc}") from exc
+            if not isinstance(row, dict):
+                raise ValueError(f"Expected source row {line_no} to be a JSON object.")
+            lookup[row_lookup_key(row)] = row
+    return lookup
+
+
+def augmented_instance_id(row: dict[str, Any]) -> str:
+    original = str(row.get("instance_id") or "unknown")
+    step_index = int_or_default(row.get("step_index"), -1)
+    selected_is_gold = bool(row.get("selected_is_gold"))
+    return f"{original}__step_{step_index}__selected_gold_{int(selected_is_gold)}"
+
+
+def build_metadata(row: dict[str, Any]) -> dict[str, Any]:
     metadata = dict(row)
+    metadata["original_instance_id"] = row.get("instance_id")
+    metadata["instance_id"] = augmented_instance_id(row)
     verifier_output = metadata.get("verifier_output")
     if isinstance(verifier_output, dict):
         verifier_output = dict(verifier_output)
@@ -90,7 +145,65 @@ def build_metadata(row: dict) -> dict:
     return metadata
 
 
-def row_to_agent_run(row: dict, line_no: int) -> AgentRun:
+def normalize_message(msg: dict[str, Any]) -> dict[str, Any]:
+    role = msg.get("role")
+    message_data: dict[str, Any] = {
+        "role": role,
+        "content": msg.get("content", ""),
+    }
+
+    tool_call_id = msg.get("tool_call_id")
+    if tool_call_id is not None:
+        message_data["tool_call_id"] = tool_call_id
+
+    if role == "tool":
+        name = msg.get("name") or msg.get("tool_name")
+        if name is not None:
+            message_data["name"] = name
+
+    raw_tool_calls = msg.get("tool_calls")
+    if role == "assistant" and raw_tool_calls:
+        parsed_tool_calls: list[Any] = []
+        for tc in raw_tool_calls:
+            if isinstance(tc, ToolCall):
+                parsed_tool_calls.append(tc)
+                continue
+            if not isinstance(tc, dict):
+                raise ValueError("Unexpected tool call format")
+            function = tc.get("function", {}) or {}
+            arguments = function.get("arguments", {})
+            parsed_tool_calls.append(
+                ToolCall(
+                    id=tc.get("id"),
+                    function=function.get("name"),
+                    arguments=arguments,
+                    type=tc.get("type", "function"),
+                    parse_error=tc.get("parse_error"),
+                )
+            )
+        message_data["tool_calls"] = parsed_tool_calls
+
+    return message_data
+
+
+def previous_message_from_source(source_row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(source_row, dict):
+        return None
+    history = source_row.get("history_trajectory")
+    if not isinstance(history, list):
+        return None
+    for message in reversed(history):
+        if isinstance(message, dict) and isinstance(message.get("role"), str):
+            return message
+    return None
+
+
+def build_transcript_messages(row: dict[str, Any], source_row: dict[str, Any] | None) -> list[Any]:
+    messages: list[Any] = []
+    previous_message = previous_message_from_source(source_row)
+    if previous_message is not None:
+        messages.append(parse_chat_message(normalize_message(previous_message)))
+
     metadata = build_metadata(row)
     verifier_output = metadata.get("verifier_output") or {}
     if isinstance(verifier_output, dict):
@@ -98,13 +211,22 @@ def row_to_agent_run(row: dict, line_no: int) -> AgentRun:
     else:
         content = json.dumps(verifier_output, ensure_ascii=False)
 
-    message = parse_chat_message({"role": "assistant", "content": content})
-    name = f"{row.get('instance_id', 'unknown')}:{row.get('row_index', line_no - 1)}"
-    transcript = Transcript(messages=[message], metadata=metadata)
+    messages.append(parse_chat_message({"role": "assistant", "content": content}))
+    return messages
+
+
+def row_to_agent_run(row: dict[str, Any], line_no: int, source_row: dict[str, Any] | None) -> AgentRun:
+    metadata = build_metadata(row)
+    messages = build_transcript_messages(row, source_row)
+    name = f"{metadata['instance_id']}:{row.get('row_index', line_no - 1)}"
+    transcript = Transcript(messages=messages, metadata=metadata)
     return AgentRun(name=name, transcripts=[transcript], metadata=metadata)
 
 
-def iter_agent_runs(path: Path) -> list[AgentRun]:
+def iter_agent_runs(
+    path: Path,
+    source_lookup: dict[tuple[str, str, str, int, int], dict[str, Any]] | None = None,
+) -> list[AgentRun]:
     runs: list[AgentRun] = []
     with path.open("r", encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, start=1):
@@ -117,7 +239,8 @@ def iter_agent_runs(path: Path) -> list[AgentRun]:
                 raise ValueError(f"Invalid JSON on line {line_no}: {exc}") from exc
             if not isinstance(row, dict):
                 raise ValueError(f"Expected a JSON object on line {line_no}.")
-            runs.append(row_to_agent_run(row, line_no))
+            source_row = None if source_lookup is None else source_lookup.get(row_lookup_key(row))
+            runs.append(row_to_agent_run(row, line_no, source_row))
     return runs
 
 
@@ -169,6 +292,16 @@ def main() -> None:
 
     install_default_request_timeout(args.timeout_seconds)
 
+    source_jsonl = args.source_jsonl or default_source_jsonl(args.input_jsonl)
+    source_lookup = None
+    if source_jsonl is not None:
+        if not source_jsonl.is_file():
+            raise SystemExit(f"Source JSONL not found: {source_jsonl}")
+        source_lookup = load_source_lookup(source_jsonl)
+        print(f"Using source rows: {source_jsonl}", flush=True)
+    else:
+        print("No source rows provided; uploaded transcripts will not include the previous message.", flush=True)
+
     client_kwargs = {
         "api_key": args.api_key,
         "domain": args.domain,
@@ -198,7 +331,7 @@ def main() -> None:
         collection_id = resolve_collection_id(client, collection_id)
         print(f"Using collection: {collection_id}", flush=True)
 
-    runs = iter_agent_runs(args.input_jsonl)
+    runs = iter_agent_runs(args.input_jsonl, source_lookup=source_lookup)
     print(f"Prepared {len(runs)} runs from {args.input_jsonl}", flush=True)
 
     uploaded = 0

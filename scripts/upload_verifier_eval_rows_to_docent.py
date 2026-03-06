@@ -5,13 +5,16 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
+from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import requests
+from jinja2 import StrictUndefined, Template
 
 try:
     from docent import Docent
@@ -19,6 +22,18 @@ try:
     from docent.data_models.chat import ToolCall, parse_chat_message
 except ImportError as exc:  # pragma: no cover - runtime dependency check
     raise SystemExit("Install docent-python first: pip install docent-python") from exc
+
+from minisweagent.agents.default import VerifierConfig
+from minisweagent.utils.verifier_action_evaluation import (
+    _align_prompt_name,
+    _build_candidate,
+    _extract_task,
+    _load_resolved_config,
+    _messages_for_outbound_context,
+    _messages_to_steps,
+    _slice_steps,
+)
+from minisweagent.verifiers.prompt_loader import apply_prompt_overrides
 
 
 _PROXY_ENV_VARS = (
@@ -46,6 +61,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--domain", help="Optional Docent domain, e.g. docent.transluce.org.")
     parser.add_argument("--server-url", help="Optional Docent server URL.")
     parser.add_argument("--web-url", help="Optional Docent web URL.")
+    parser.add_argument(
+        "-c",
+        "--config",
+        action="append",
+        dest="config_specs",
+        help="Optional config spec(s) used to render verifier prompts. Defaults to the SWE-bench benchmark config.",
+    )
     parser.add_argument(
         "--source-jsonl",
         type=Path,
@@ -153,6 +175,23 @@ def trajectory_name(row: dict[str, Any]) -> str:
     return f"{original}__step_{step_index}"
 
 
+@lru_cache(maxsize=None)
+def get_verifier_config(config_specs: tuple[str, ...], verifier_type: str) -> VerifierConfig:
+    resolved_config, _ = _load_resolved_config(list(config_specs) or None)
+    agent_config = resolved_config.get("agent") or {}
+    if not isinstance(agent_config, dict):
+        raise ValueError("Invalid config: 'agent' must be a mapping.")
+    verifier_payload = copy.deepcopy(agent_config.get("verifier") or {})
+    if not isinstance(verifier_payload, dict):
+        raise ValueError("Invalid config: 'agent.verifier' must be a mapping.")
+
+    verifier_payload["enabled"] = True
+    verifier_payload["verifier_type"] = verifier_type
+    verifier_config = VerifierConfig(**verifier_payload)
+    verifier_config.prompt_name = _align_prompt_name(verifier_config.prompt_name, verifier_type)  # type: ignore[arg-type]
+    return apply_prompt_overrides(verifier_config)
+
+
 def build_metadata(row: dict[str, Any]) -> dict[str, Any]:
     metadata: dict[str, Any] = {
         "instance_id": augmented_instance_id(row),
@@ -254,7 +293,97 @@ def build_candidate_actions_content(source_row: dict[str, Any] | None) -> str | 
     return "\n".join(lines)
 
 
-def build_transcript_messages(row: dict[str, Any], source_row: dict[str, Any] | None) -> list[Any]:
+def build_verifier_prompt_messages(
+    row: dict[str, Any],
+    source_row: dict[str, Any] | None,
+    *,
+    config_specs: tuple[str, ...],
+) -> list[Any]:
+    if not isinstance(source_row, dict):
+        return []
+
+    verifier_type = str(row.get("verifier_type") or "llm")
+    verifier_config = get_verifier_config(config_specs, verifier_type)
+
+    actions_raw = source_row.get("actions")
+    if not isinstance(actions_raw, list):
+        return []
+    candidates = [_build_candidate(action_entry, idx) for idx, action_entry in enumerate(actions_raw) if isinstance(action_entry, dict)]
+    if not candidates:
+        return []
+
+    history_trajectory = source_row.get("history_trajectory")
+    if not isinstance(history_trajectory, list):
+        history_trajectory = []
+
+    outbound_messages = _messages_for_outbound_context(
+        [message for message in history_trajectory if isinstance(message, dict)],
+        include_assistant_content=bool(verifier_config.include_thoughts_in_history_steps),
+    )
+    all_steps = _messages_to_steps(outbound_messages)
+    steps = _slice_steps(all_steps, int(verifier_config.history_steps))
+    messages = [message for step in steps for message in step]
+    all_messages = [message for step in all_steps for message in step]
+    task = _extract_task(outbound_messages, source_row)
+
+    template_vars: dict[str, Any] = {
+        "task": task,
+        "messages": messages,
+        "all_messages": all_messages,
+        "steps": steps,
+        "all_steps": all_steps,
+        "history_steps": int(verifier_config.history_steps),
+    }
+
+    checklist = row.get("verifier_output")
+    if isinstance(checklist, dict):
+        checklist = checklist.get("checklist")
+    if isinstance(checklist, dict):
+        checklist_items = [item for item in checklist.get("items", []) if isinstance(item, str)]
+        checklist_rubric = [item for item in checklist.get("rubric_items", []) if isinstance(item, dict)]
+        template_vars.update(
+            {
+                "checklist_items": checklist_items,
+                "checklist_text": "\n".join(f"{idx + 1}. {item}" for idx, item in enumerate(checklist_items)),
+                "checklist_count": len(checklist_items),
+                "checklist_rubric": checklist_rubric,
+            }
+        )
+
+    prompt_messages: list[Any] = []
+    if verifier_type == "reward_model":
+        selected_index = int_or_default(row.get("selected_index"), 0)
+        candidate = candidates[min(max(selected_index, 0), len(candidates) - 1)]
+        render_vars = {
+            **template_vars,
+            "task": task,
+            "messages": messages,
+            "steps": steps,
+            "candidates": candidates,
+            "candidate": candidate,
+        }
+        system_prompt = Template(verifier_config.reward_system_template, undefined=StrictUndefined).render(**render_vars)
+        user_prompt = Template(verifier_config.reward_prompt_template, undefined=StrictUndefined).render(**render_vars)
+    else:
+        render_vars = {
+            **template_vars,
+            "candidates": candidates,
+            "selection_index_base": verifier_config.selection_index_base,
+        }
+        system_prompt = Template(verifier_config.system_template, undefined=StrictUndefined).render(**render_vars)
+        user_prompt = Template(verifier_config.selection_template, undefined=StrictUndefined).render(**render_vars)
+
+    prompt_messages.append(parse_chat_message({"role": "system", "content": system_prompt}))
+    prompt_messages.append(parse_chat_message({"role": "user", "content": user_prompt}))
+    return prompt_messages
+
+
+def build_transcript_messages(
+    row: dict[str, Any],
+    source_row: dict[str, Any] | None,
+    *,
+    config_specs: tuple[str, ...],
+) -> list[Any]:
     messages: list[Any] = []
     for message in source_history_messages(source_row):
         messages.append(parse_chat_message(normalize_message(message)))
@@ -262,6 +391,8 @@ def build_transcript_messages(row: dict[str, Any], source_row: dict[str, Any] | 
     candidate_actions_content = build_candidate_actions_content(source_row)
     if candidate_actions_content is not None:
         messages.append(parse_chat_message({"role": "user", "content": candidate_actions_content}))
+
+    messages.extend(build_verifier_prompt_messages(row, source_row, config_specs=config_specs))
 
     verifier_output = row.get("verifier_output") or {}
     if isinstance(verifier_output, dict):
@@ -273,9 +404,15 @@ def build_transcript_messages(row: dict[str, Any], source_row: dict[str, Any] | 
     return messages
 
 
-def row_to_agent_run(row: dict[str, Any], line_no: int, source_row: dict[str, Any] | None) -> AgentRun:
+def row_to_agent_run(
+    row: dict[str, Any],
+    line_no: int,
+    source_row: dict[str, Any] | None,
+    *,
+    config_specs: tuple[str, ...],
+) -> AgentRun:
     metadata = build_metadata(row)
-    messages = build_transcript_messages(row, source_row)
+    messages = build_transcript_messages(row, source_row, config_specs=config_specs)
     name = trajectory_name(row)
     transcript = Transcript(name=name, messages=messages, metadata=metadata)
     return AgentRun(name=name, transcripts=[transcript], metadata=metadata)
@@ -284,6 +421,8 @@ def row_to_agent_run(row: dict[str, Any], line_no: int, source_row: dict[str, An
 def iter_agent_runs(
     path: Path,
     source_lookup: dict[tuple[str, str, str, int, int], dict[str, Any]] | None = None,
+    *,
+    config_specs: tuple[str, ...],
 ) -> list[AgentRun]:
     runs: list[AgentRun] = []
     with path.open("r", encoding="utf-8") as handle:
@@ -298,7 +437,7 @@ def iter_agent_runs(
             if not isinstance(row, dict):
                 raise ValueError(f"Expected a JSON object on line {line_no}.")
             source_row = None if source_lookup is None else source_lookup.get(row_lookup_key(row))
-            runs.append(row_to_agent_run(row, line_no, source_row))
+            runs.append(row_to_agent_run(row, line_no, source_row, config_specs=config_specs))
     return runs
 
 
@@ -431,7 +570,8 @@ def main() -> None:
         collection_id = resolve_collection_id(client, collection_id)
         print(f"Using collection: {collection_id}", flush=True)
 
-    runs = iter_agent_runs(args.input_jsonl, source_lookup=source_lookup)
+    config_specs = tuple(args.config_specs or [])
+    runs = iter_agent_runs(args.input_jsonl, source_lookup=source_lookup, config_specs=config_specs)
     print(f"Prepared {len(runs)} runs from {args.input_jsonl}", flush=True)
 
     uploaded = 0

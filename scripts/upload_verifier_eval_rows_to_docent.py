@@ -300,7 +300,7 @@ def inject_candidate_actions_into_template(template: str, source_row: dict[str, 
 
     loop_pattern = re.compile(r"\{% for c in candidates %\}.*?\{% endfor %\}", re.DOTALL)
     if loop_pattern.search(template):
-        return loop_pattern.sub(candidate_block, template, count=1).strip()
+        return loop_pattern.sub(lambda _: candidate_block, template, count=1).strip()
 
     if "Candidates:" in template:
         return template.replace("Candidates:", f"Candidates:\n{candidate_block}", 1).strip()

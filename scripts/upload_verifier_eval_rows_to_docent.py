@@ -59,6 +59,20 @@ def parse_args() -> argparse.Namespace:
         help="Default timeout for Docent HTTP requests.",
     )
     parser.add_argument(
+        "--wait",
+        action=argparse.BooleanOptionalAction,
+        dest="wait",
+        default=True,
+        help="Wait for Docent server-side processing after each upload batch.",
+    )
+    parser.add_argument(
+        "--retry-split-on-failure",
+        action=argparse.BooleanOptionalAction,
+        dest="retry_split_on_failure",
+        default=True,
+        help="If a batch is canceled server-side, retry by splitting into smaller batches.",
+    )
+    parser.add_argument(
         "--disable-proxy-env",
         action="store_true",
         help="Unset HTTP(S)_PROXY and ALL_PROXY before connecting.",
@@ -289,6 +303,48 @@ def resolve_collection_id(client: Docent, collection_ref: str) -> str:
     )
 
 
+def upload_batch(
+    client: Docent,
+    collection_id: str,
+    batch: list[AgentRun],
+    *,
+    wait: bool,
+    retry_split_on_failure: bool,
+) -> tuple[int, list[str]]:
+    try:
+        result = client.add_agent_runs(collection_id, batch, wait=wait)
+        return len(batch), list(result.get("job_ids") or [])
+    except RuntimeError as exc:
+        if not retry_split_on_failure or len(batch) <= 1:
+            failed_names = [run.name or "<unnamed>" for run in batch]
+            raise RuntimeError(
+                f"Failed to upload batch with {len(batch)} run(s): {failed_names}. Original error: {exc}"
+            ) from exc
+
+        midpoint = len(batch) // 2
+        left = batch[:midpoint]
+        right = batch[midpoint:]
+        print(
+            f"Batch of {len(batch)} runs failed server-side; retrying as {len(left)} + {len(right)}",
+            flush=True,
+        )
+        left_uploaded, left_job_ids = upload_batch(
+            client,
+            collection_id,
+            left,
+            wait=wait,
+            retry_split_on_failure=retry_split_on_failure,
+        )
+        right_uploaded, right_job_ids = upload_batch(
+            client,
+            collection_id,
+            right,
+            wait=wait,
+            retry_split_on_failure=retry_split_on_failure,
+        )
+        return left_uploaded + right_uploaded, left_job_ids + right_job_ids
+
+
 def main() -> None:
     args = parse_args()
 
@@ -347,11 +403,22 @@ def main() -> None:
     print(f"Prepared {len(runs)} runs from {args.input_jsonl}", flush=True)
 
     uploaded = 0
+    job_ids: list[str] = []
     for start in range(0, len(runs), args.batch_size):
         batch = runs[start : start + args.batch_size]
-        client.add_agent_runs(collection_id, batch)
-        uploaded += len(batch)
+        batch_uploaded, batch_job_ids = upload_batch(
+            client,
+            collection_id,
+            batch,
+            wait=args.wait,
+            retry_split_on_failure=args.retry_split_on_failure,
+        )
+        uploaded += batch_uploaded
+        job_ids.extend(batch_job_ids)
         print(f"Uploaded {uploaded}/{len(runs)}", flush=True)
+
+    if not args.wait and job_ids:
+        print(f"Enqueued job_ids={','.join(job_ids)}", flush=True)
 
     print(f"Done. collection_id={collection_id} uploaded_runs={uploaded}", flush=True)
 

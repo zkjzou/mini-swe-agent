@@ -175,6 +175,22 @@ def build_metadata(row: dict[str, Any]) -> dict[str, Any]:
     return metadata
 
 
+def normalize_tool_arguments(arguments: Any) -> dict[str, Any]:
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments)
+        except json.JSONDecodeError:
+            return {"raw": arguments}
+        if isinstance(parsed, dict):
+            return parsed
+        return {"value": parsed}
+    if arguments is None:
+        return {}
+    return {"value": arguments}
+
+
 def normalize_message(msg: dict[str, Any]) -> dict[str, Any]:
     role = msg.get("role")
     message_data: dict[str, Any] = {
@@ -201,7 +217,7 @@ def normalize_message(msg: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(tc, dict):
                 raise ValueError("Unexpected tool call format")
             function = tc.get("function", {}) or {}
-            arguments = function.get("arguments", {})
+            arguments = normalize_tool_arguments(function.get("arguments", {}))
             parsed_tool_calls.append(
                 ToolCall(
                     id=tc.get("id"),

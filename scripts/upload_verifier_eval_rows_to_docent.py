@@ -288,6 +288,26 @@ def build_candidate_actions_content(source_row: dict[str, Any] | None) -> str | 
     return "\n".join(lines)
 
 
+def inject_candidate_actions_into_template(template: str, source_row: dict[str, Any] | None) -> str:
+    candidate_actions_content = build_candidate_actions_content(source_row)
+    if candidate_actions_content is None:
+        return template.strip()
+
+    candidate_lines = candidate_actions_content.splitlines()
+    if candidate_lines and candidate_lines[0] == "Candidate actions:":
+        candidate_lines = candidate_lines[1:]
+    candidate_block = "\n".join(candidate_lines).strip()
+
+    loop_pattern = re.compile(r"\{% for c in candidates %\}.*?\{% endfor %\}", re.DOTALL)
+    if loop_pattern.search(template):
+        return loop_pattern.sub(candidate_block, template, count=1).strip()
+
+    if "Candidates:" in template:
+        return template.replace("Candidates:", f"Candidates:\n{candidate_block}", 1).strip()
+
+    return f"{template.strip()}\n\nCandidates:\n{candidate_block}"
+
+
 def strip_recent_steps_block(selection_template: str) -> str:
     pattern = re.compile(
         r"\nRecent steps.*?\n(?:\{%.*?\n)*Candidates:\n",
@@ -312,7 +332,10 @@ def build_verifier_prompt_messages(
         user_prompt = verifier_config.reward_prompt_template.strip()
     else:
         system_prompt = verifier_config.system_template.strip()
-        user_prompt = strip_recent_steps_block(verifier_config.selection_template)
+        user_prompt = inject_candidate_actions_into_template(
+            strip_recent_steps_block(verifier_config.selection_template),
+            source_row,
+        )
 
     prompt_messages.append(parse_chat_message({"role": "system", "content": system_prompt}))
     prompt_messages.append(parse_chat_message({"role": "user", "content": user_prompt}))
@@ -328,10 +351,6 @@ def build_transcript_messages(
     messages: list[Any] = []
     for message in source_history_messages(source_row):
         messages.append(parse_chat_message(normalize_message(message)))
-
-    candidate_actions_content = build_candidate_actions_content(source_row)
-    if candidate_actions_content is not None:
-        messages.append(parse_chat_message({"role": "user", "content": candidate_actions_content}))
 
     messages.extend(build_verifier_prompt_messages(row, source_row, config_specs=config_specs))
 

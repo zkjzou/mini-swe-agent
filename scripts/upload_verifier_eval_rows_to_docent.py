@@ -154,24 +154,11 @@ def trajectory_name(row: dict[str, Any]) -> str:
 
 
 def build_metadata(row: dict[str, Any]) -> dict[str, Any]:
-    selected_is_gold = bool(row.get("selected_is_gold"))
     metadata: dict[str, Any] = {
         "instance_id": augmented_instance_id(row),
-        "original_instance_id": row.get("instance_id"),
-        "is_selected": selected_is_gold,
-        "selected_is_gold": selected_is_gold,
-        "step_index": int_or_default(row.get("step_index"), -1),
-        "message_index": int_or_default(row.get("message_index"), -1),
+        "gold_index": row.get("gold_index"),
+        "selected_label": row.get("selected_label"),
     }
-    for key, value in row.items():
-        if key in metadata or key == "instance_id":
-            continue
-        metadata[key] = value
-    verifier_output = metadata.get("verifier_output")
-    if isinstance(verifier_output, dict):
-        verifier_output = dict(verifier_output)
-        verifier_output.pop("response", None)
-        metadata["verifier_output"] = verifier_output
     return metadata
 
 

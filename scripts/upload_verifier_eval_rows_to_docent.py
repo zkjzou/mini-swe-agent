@@ -228,10 +228,40 @@ def source_history_messages(source_row: dict[str, Any] | None) -> list[dict[str,
     return [message for message in history if isinstance(message, dict) and isinstance(message.get("role"), str)]
 
 
+def build_candidate_actions_content(source_row: dict[str, Any] | None) -> str | None:
+    if not isinstance(source_row, dict):
+        return None
+
+    actions = source_row.get("actions")
+    if not isinstance(actions, list) or not actions:
+        return None
+
+    lines = ["Candidate actions:"]
+    for idx, action in enumerate(actions, start=1):
+        if not isinstance(action, dict):
+            continue
+        label = str(action.get("label") or f"candidate_{idx}")
+        command = str(action.get("command") or "").strip()
+        is_gold = bool(action.get("is_gold"))
+        suffix = " [gold]" if is_gold else ""
+        if command:
+            lines.append(f"{idx}. {label}{suffix}: {command}")
+        else:
+            lines.append(f"{idx}. {label}{suffix}")
+
+    if len(lines) == 1:
+        return None
+    return "\n".join(lines)
+
+
 def build_transcript_messages(row: dict[str, Any], source_row: dict[str, Any] | None) -> list[Any]:
     messages: list[Any] = []
     for message in source_history_messages(source_row):
         messages.append(parse_chat_message(normalize_message(message)))
+
+    candidate_actions_content = build_candidate_actions_content(source_row)
+    if candidate_actions_content is not None:
+        messages.append(parse_chat_message({"role": "user", "content": candidate_actions_content}))
 
     verifier_output = row.get("verifier_output") or {}
     if isinstance(verifier_output, dict):

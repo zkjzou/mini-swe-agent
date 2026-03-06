@@ -233,8 +233,7 @@ def build_transcript_messages(row: dict[str, Any], source_row: dict[str, Any] | 
     for message in source_history_messages(source_row):
         messages.append(parse_chat_message(normalize_message(message)))
 
-    metadata = build_metadata(row)
-    verifier_output = metadata.get("verifier_output") or {}
+    verifier_output = row.get("verifier_output") or {}
     if isinstance(verifier_output, dict):
         content = verifier_output.get("raw_output") or json.dumps(verifier_output, ensure_ascii=False)
     else:

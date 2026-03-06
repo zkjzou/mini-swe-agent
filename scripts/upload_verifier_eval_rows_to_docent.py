@@ -133,10 +133,26 @@ def augmented_instance_id(row: dict[str, Any]) -> str:
     return f"{original}__step_{step_index}__selected_gold_{int(selected_is_gold)}"
 
 
+def trajectory_name(row: dict[str, Any]) -> str:
+    original = str(row.get("instance_id") or "unknown")
+    step_index = int_or_default(row.get("step_index"), -1)
+    return f"{original}__step_{step_index}"
+
+
 def build_metadata(row: dict[str, Any]) -> dict[str, Any]:
-    metadata = dict(row)
-    metadata["original_instance_id"] = row.get("instance_id")
-    metadata["instance_id"] = augmented_instance_id(row)
+    selected_is_gold = bool(row.get("selected_is_gold"))
+    metadata: dict[str, Any] = {
+        "instance_id": augmented_instance_id(row),
+        "original_instance_id": row.get("instance_id"),
+        "is_selected": selected_is_gold,
+        "selected_is_gold": selected_is_gold,
+        "step_index": int_or_default(row.get("step_index"), -1),
+        "message_index": int_or_default(row.get("message_index"), -1),
+    }
+    for key, value in row.items():
+        if key in metadata or key == "instance_id":
+            continue
+        metadata[key] = value
     verifier_output = metadata.get("verifier_output")
     if isinstance(verifier_output, dict):
         verifier_output = dict(verifier_output)
@@ -186,23 +202,19 @@ def normalize_message(msg: dict[str, Any]) -> dict[str, Any]:
     return message_data
 
 
-def previous_message_from_source(source_row: dict[str, Any] | None) -> dict[str, Any] | None:
+def source_history_messages(source_row: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not isinstance(source_row, dict):
-        return None
+        return []
     history = source_row.get("history_trajectory")
     if not isinstance(history, list):
-        return None
-    for message in reversed(history):
-        if isinstance(message, dict) and isinstance(message.get("role"), str):
-            return message
-    return None
+        return []
+    return [message for message in history if isinstance(message, dict) and isinstance(message.get("role"), str)]
 
 
 def build_transcript_messages(row: dict[str, Any], source_row: dict[str, Any] | None) -> list[Any]:
     messages: list[Any] = []
-    previous_message = previous_message_from_source(source_row)
-    if previous_message is not None:
-        messages.append(parse_chat_message(normalize_message(previous_message)))
+    for message in source_history_messages(source_row):
+        messages.append(parse_chat_message(normalize_message(message)))
 
     metadata = build_metadata(row)
     verifier_output = metadata.get("verifier_output") or {}
@@ -218,8 +230,8 @@ def build_transcript_messages(row: dict[str, Any], source_row: dict[str, Any] | 
 def row_to_agent_run(row: dict[str, Any], line_no: int, source_row: dict[str, Any] | None) -> AgentRun:
     metadata = build_metadata(row)
     messages = build_transcript_messages(row, source_row)
-    name = f"{metadata['instance_id']}:{row.get('row_index', line_no - 1)}"
-    transcript = Transcript(messages=messages, metadata=metadata)
+    name = trajectory_name(row)
+    transcript = Transcript(name=name, messages=messages, metadata=metadata)
     return AgentRun(name=name, transcripts=[transcript], metadata=metadata)
 
 

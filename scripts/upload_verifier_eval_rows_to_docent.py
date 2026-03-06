@@ -121,6 +121,39 @@ def iter_agent_runs(path: Path) -> list[AgentRun]:
     return runs
 
 
+def resolve_collection_id(client: Docent, collection_ref: str) -> str:
+    if client.collection_exists(collection_ref):
+        return collection_ref
+
+    matches: list[tuple[str, str]] = []
+    for collection in client.list_collections():
+        if not isinstance(collection, dict):
+            continue
+
+        resolved_id = collection.get("collection_id") or collection.get("id")
+        resolved_name = collection.get("name") or collection.get("display_name") or collection.get("title")
+        if not isinstance(resolved_id, str) or not isinstance(resolved_name, str):
+            continue
+
+        if collection_ref == resolved_name:
+            matches.append((resolved_id, resolved_name))
+
+    if len(matches) == 1:
+        resolved_id, resolved_name = matches[0]
+        print(f"Resolved collection name '{resolved_name}' to id '{resolved_id}'", flush=True)
+        return resolved_id
+
+    if len(matches) > 1:
+        raise SystemExit(
+            f"Multiple collections are named '{collection_ref}'. Pass the real collection ID instead."
+        )
+
+    raise SystemExit(
+        f"Collection '{collection_ref}' was not found as an ID or name. "
+        "Pass a real collection ID, or omit --collection-id to create a new collection."
+    )
+
+
 def main() -> None:
     args = parse_args()
 
@@ -162,6 +195,7 @@ def main() -> None:
         )
         print(f"Created collection: {collection_id} ({collection_name})", flush=True)
     else:
+        collection_id = resolve_collection_id(client, collection_id)
         print(f"Using collection: {collection_id}", flush=True)
 
     runs = iter_agent_runs(args.input_jsonl)

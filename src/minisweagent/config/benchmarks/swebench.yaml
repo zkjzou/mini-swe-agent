@@ -184,7 +184,7 @@ agent:
     {% if previous_verifier_feedback.critique -%}
     Critique: {{ previous_verifier_feedback.critique }}
     {% endif -%}
-    Use this feedback to inform your next action and avoid repeating the same mistake.
+    This feedback may be incomplete or incorrect. Do not blindly follow it; use your own judgment and the actual repository state when deciding the next action.
   candidate_sampling:
     num_candidates: 1
     use_n: true

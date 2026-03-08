@@ -900,42 +900,67 @@ class DefaultAgent:
         return response
 
     def _build_verifier_feedback_message(self) -> dict[str, Any] | None:
-        if not self.config.enable_verbal_feedback:
-            return None
-        if not self._previous_verifier_feedback:
-            return None
-        template = self.config.verifier_feedback_template
-        if not template.strip():
-            return None
-        content = self._render_template(template).strip()
+        content = self._render_verifier_feedback_content()
         if not content:
             return None
         return self.model.format_message(role=self.config.verifier_feedback_role, content=content)
 
     def _update_previous_verifier_feedback(self, candidate_info: dict[str, Any], verifier_metadata: dict[str, Any]) -> None:
+        self._previous_verifier_feedback = self._make_verifier_feedback_payload(candidate_info, verifier_metadata)
+
+    def _make_verifier_feedback_payload(
+        self,
+        candidate_info: dict[str, Any],
+        verifier_metadata: dict[str, Any],
+    ) -> dict[str, Any] | None:
         if not verifier_metadata.get("enabled"):
-            self._previous_verifier_feedback = None
-            return
+            return None
 
         verifier_output = verifier_metadata.get("verifier_output", {})
         if not isinstance(verifier_output, dict):
-            self._previous_verifier_feedback = None
-            return
+            return None
 
         selected_reward = verifier_output.get("selected_reward")
         selected_feedback = verifier_output.get("selected_feedback")
         if selected_reward is None and not selected_feedback:
-            self._previous_verifier_feedback = None
-            return
+            return None
 
-        self._previous_verifier_feedback = {
-            "action": candidate_info.get("action"),
+        action = candidate_info.get("action")
+        if not action:
+            actions = candidate_info.get("actions")
+            if isinstance(actions, list) and actions:
+                first_action = actions[0]
+                if isinstance(first_action, dict):
+                    maybe_command = first_action.get("command")
+                    if isinstance(maybe_command, str) and maybe_command:
+                        action = maybe_command
+
+        return {
+            "action": action,
             "score": selected_reward,
             "critique": selected_feedback,
             "verifier_type": verifier_metadata.get("type"),
             "selected_index": verifier_metadata.get("selected_index"),
             "step_index": self.step_count,
         }
+
+    def _render_verifier_feedback_content(self, feedback_payload: dict[str, Any] | None = None) -> str | None:
+        if not self.config.enable_verbal_feedback:
+            return None
+        payload = feedback_payload if feedback_payload is not None else self._previous_verifier_feedback
+        if not payload:
+            return None
+        template = self.config.verifier_feedback_template
+        if not template.strip():
+            return None
+        content = Template(template, undefined=StrictUndefined).render(
+            **self.get_template_vars(
+                previous_verifier_feedback=payload,
+                has_previous_verifier_feedback=True,
+            )
+        )
+        normalized = content.strip()
+        return normalized or None
 
     def _get_verifier_history_steps(self) -> int:
         verifier_config = getattr(self.verifier, "config", None)

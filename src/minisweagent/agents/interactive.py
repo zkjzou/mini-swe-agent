@@ -77,6 +77,7 @@ class InteractiveAgent(DefaultAgent):
                 self._print_all_candidate_actions(msg)
                 self._print_verifier_summary_output(msg)
                 self._print_full_verifier_output(msg)
+                self._print_verbal_feedback_message(msg)
                 console.print("Final action:", highlight=False, markup=False, style=_FINAL_ACTION_STYLE)
             else:
                 console.print(f"\n[bold green]{role.capitalize()}[/bold green]:\n", end="", highlight=False)
@@ -264,6 +265,30 @@ class InteractiveAgent(DefaultAgent):
         verifier_type = verifier.get("type", "unknown")
         console.print(f"Verifier output ({verifier_type}):", highlight=False, markup=False, style=_VERIFIER_STYLE)
         console.print(content_output, highlight=False, markup=False)
+
+    def _print_verbal_feedback_message(self, message: dict) -> None:
+        verifier = self._get_verifier_metadata(message)
+        if verifier is None or not verifier.get("enabled"):
+            return
+
+        candidates = verifier.get("candidates")
+        selected_index = verifier.get("selected_index")
+        if not isinstance(candidates, list) or not isinstance(selected_index, int):
+            return
+        if selected_index < 0 or selected_index >= len(candidates):
+            return
+
+        selected_candidate = candidates[selected_index]
+        if not isinstance(selected_candidate, dict):
+            return
+
+        feedback_payload = self._make_verifier_feedback_payload(selected_candidate, verifier)
+        feedback_content = self._render_verifier_feedback_content(feedback_payload)
+        if not feedback_content:
+            return
+
+        console.print("Feedback message:", highlight=False, markup=False, style=_VERIFIER_STYLE)
+        console.print(feedback_content, highlight=False, markup=False)
 
     def _get_verifier_metadata(self, message: dict) -> dict | None:
         extra = message.get("extra", {}) or {}

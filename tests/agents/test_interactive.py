@@ -1437,6 +1437,52 @@ def test_prints_reward_verifier_placeholder_when_raw_content_empty(default_confi
     assert "Candidate 2 (selected, reward=0.8000):\n<empty output>" in printed_output
 
 
+def test_prints_verbal_feedback_message_when_enabled(default_config):
+    agent = InteractiveAgent(
+        model=DeterministicModel(outputs=[]),
+        env=LocalEnvironment(),
+        **{
+            **default_config,
+            "enable_verbal_feedback": True,
+            "verifier_feedback_template": (
+                "Executed action: {{ previous_verifier_feedback.action }}\n"
+                "Verifier score: {{ '%.2f'|format(previous_verifier_feedback.score) }}\n"
+                "Critique: {{ previous_verifier_feedback.critique }}"
+            ),
+        },
+    )
+    message = {
+        "role": "assistant",
+        "content": "Selected candidate.",
+        "extra": {
+            "verifier": {
+                "enabled": True,
+                "type": "reward_model",
+                "selected_index": 1,
+                "selection_index_base": 1,
+                "candidates": [
+                    {"index": 0, "actions": [{"command": "echo first"}]},
+                    {"index": 1, "actions": [{"command": "pytest -q tests/unit/test_demo.py"}]},
+                ],
+                "verifier_output": {
+                    "rewards": [0.2, 0.8],
+                    "selected_reward": 0.8,
+                    "selected_feedback": "Narrow the test scope before running the suite.",
+                },
+            }
+        },
+    }
+
+    with patch("minisweagent.agents.interactive.console.print") as mock_print:
+        agent.add_messages(message)
+
+    printed_output = "\n".join(" ".join(str(arg) for arg in call.args) for call in mock_print.call_args_list)
+    assert "Feedback message:" in printed_output
+    assert "Executed action: pytest -q tests/unit/test_demo.py" in printed_output
+    assert "Verifier score: 0.80" in printed_output
+    assert "Critique: Narrow the test scope before running the suite." in printed_output
+
+
 def test_colors_only_section_headers(default_config):
     agent = InteractiveAgent(
         model=DeterministicModel(outputs=[]),

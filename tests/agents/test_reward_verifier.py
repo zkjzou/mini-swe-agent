@@ -7,6 +7,20 @@ from minisweagent.agents.default import DefaultAgent
 from minisweagent.environments.local import LocalEnvironment
 from minisweagent.models.test_models import DeterministicModel, make_output
 
+_VERIFIER_FEEDBACK_TEMPLATE = (
+    "Verifier feedback from the previous step:\n"
+    "{% if previous_verifier_feedback.action %}"
+    "Executed action: {{ previous_verifier_feedback.action }}\n"
+    "{% endif %}"
+    "{% if previous_verifier_feedback.score is not none %}"
+    "Verifier score: {{ '%.3f'|format(previous_verifier_feedback.score) }}\n"
+    "{% endif %}"
+    "{% if previous_verifier_feedback.critique %}"
+    "Critique: {{ previous_verifier_feedback.critique }}\n"
+    "{% endif %}"
+    "Use this feedback to inform your next action and avoid repeating the same mistake."
+)
+
 
 class _StaticRewardModel:
     def query(self, messages, **kwargs):
@@ -24,6 +38,7 @@ def _load_default_agent_config() -> dict:
 def test_reward_model_selects_highest_reward():
     config = _load_default_agent_config()
     config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["verifier_feedback_template"] = _VERIFIER_FEEDBACK_TEMPLATE
     config["verifier"] = {
         "enabled": True,
         "verifier_type": "reward_model",
@@ -92,6 +107,7 @@ def test_reward_model_checklist_mode_attaches_progress_metadata():
 
     config = _load_default_agent_config()
     config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["verifier_feedback_template"] = _VERIFIER_FEEDBACK_TEMPLATE
     config["verifier"] = {
         "enabled": True,
         "verifier_type": "reward_model",
@@ -240,6 +256,7 @@ def test_reward_model_feedback_is_injected_into_next_actor_query():
 
     config = _load_default_agent_config()
     config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["verifier_feedback_template"] = _VERIFIER_FEEDBACK_TEMPLATE
     config["verifier"] = {
         "enabled": True,
         "verifier_type": "reward_model",

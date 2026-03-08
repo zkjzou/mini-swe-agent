@@ -210,19 +210,7 @@ class AgentConfig(BaseModel):
     """Save the trajectory to this path."""
     verifier_feedback_role: Literal["user", "system"] = "user"
     """Role used for the outbound actor feedback prompt message."""
-    verifier_feedback_template: str = (
-        "Verifier feedback from the previous step:\n"
-        "{% if previous_verifier_feedback.action %}"
-        "Executed action: {{ previous_verifier_feedback.action }}\n"
-        "{% endif %}"
-        "{% if previous_verifier_feedback.score is not none %}"
-        "Verifier score: {{ '%.3f'|format(previous_verifier_feedback.score) }}\n"
-        "{% endif %}"
-        "{% if previous_verifier_feedback.critique %}"
-        "Critique: {{ previous_verifier_feedback.critique }}\n"
-        "{% endif %}"
-        "Use this feedback to inform your next action and avoid repeating the same mistake."
-    )
+    verifier_feedback_template: str = ""
     """Template rendered into the next actor query when prior-step verifier feedback exists."""
     include_thoughts_in_agent_history: bool = True
     """Whether assistant message content is included in actor model query history."""

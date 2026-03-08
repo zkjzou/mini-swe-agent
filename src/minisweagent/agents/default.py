@@ -418,9 +418,15 @@ class DefaultAgent:
                 "candidates": candidate_infos,
                 "verifier_output": verifier_output,
             }
+        selected_candidate_info = candidate_infos[selected_index]
+        feedback_payload = self._make_verifier_feedback_payload(selected_candidate_info, verifier_metadata)
+        feedback_content = self._render_verifier_feedback_content(feedback_payload)
+        if feedback_content:
+            verifier_metadata = dict(verifier_metadata)
+            verifier_metadata["feedback_message"] = feedback_content
         message = copy.deepcopy(responses[selected_index])
         message = self._attach_verifier_metadata(message, verifier_metadata)
-        self._update_previous_verifier_feedback(candidate_infos[selected_index], verifier_metadata)
+        self._update_previous_verifier_feedback(selected_candidate_info, verifier_metadata)
         self.add_messages(message)
         return message
 

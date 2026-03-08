@@ -103,6 +103,19 @@ agent:
     ```
   step_limit: 0
   cost_limit: 0.
+  verifier_feedback_role: user
+  verifier_feedback_template: |
+    Verifier feedback from the previous step:
+    {% if previous_verifier_feedback.action -%}
+    Executed action: {{ previous_verifier_feedback.action }}
+    {% endif -%}
+    {% if previous_verifier_feedback.score is not none -%}
+    Verifier score: {{ "%.3f"|format(previous_verifier_feedback.score) }}
+    {% endif -%}
+    {% if previous_verifier_feedback.critique -%}
+    Critique: {{ previous_verifier_feedback.critique }}
+    {% endif -%}
+    Use this feedback to inform your next action and avoid repeating the same mistake.
   add_format_error_to_conversation: true
 environment:
   env:

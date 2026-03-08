@@ -138,12 +138,16 @@ class VerifierConfig(BaseModel):
     reward_system_template: str = "You are a reward model that scores candidate actions for a coding agent."
     reward_prompt_template: str = (
         "Score the candidate action for how well it advances the task safely and correctly. "
-        "Return a single line: REWARD: <number>.\n\n"
+        "Return lines for FEEDBACK and REWARD.\n\n"
         "Task: {{ task }}\n"
         "Candidate:\n"
         "{{ candidate.content }}\n"
+        "Output format:\n"
+        "FEEDBACK: <one-line critique for the coding model>\n"
+        "REWARD: <number>\n"
     )
     reward_regex: str = r"REWARD:\s*([+-]?\d+(?:\.\d+)?)"
+    feedback_regex: str = r"FEEDBACK:\s*(.+)"
     fallback: Literal["first_candidate", "first_valid"] = "first_candidate"
     checklist_mode: Literal["off", "issue_progress"] = "off"
     """Whether to generate and use an issue-derived verifier checklist."""
@@ -204,6 +208,22 @@ class AgentConfig(BaseModel):
     """Stop agent after exceeding (!) this cost."""
     output_path: Path | None = None
     """Save the trajectory to this path."""
+    verifier_feedback_role: Literal["user", "system"] = "user"
+    """Role used for the outbound actor feedback prompt message."""
+    verifier_feedback_template: str = (
+        "Verifier feedback from the previous step:\n"
+        "{% if previous_verifier_feedback.action %}"
+        "Executed action: {{ previous_verifier_feedback.action }}\n"
+        "{% endif %}"
+        "{% if previous_verifier_feedback.score is not none %}"
+        "Verifier score: {{ '%.3f'|format(previous_verifier_feedback.score) }}\n"
+        "{% endif %}"
+        "{% if previous_verifier_feedback.critique %}"
+        "Critique: {{ previous_verifier_feedback.critique }}\n"
+        "{% endif %}"
+        "Use this feedback to inform your next action and avoid repeating the same mistake."
+    )
+    """Template rendered into the next actor query when prior-step verifier feedback exists."""
     include_thoughts_in_agent_history: bool = True
     """Whether assistant message content is included in actor model query history."""
     add_format_error_to_conversation: bool = True
@@ -233,6 +253,7 @@ class DefaultAgent:
         self.verifier = self._build_verifier()
         self._similarity_rng = random.Random(self.config.verifier.action_similarity_seed)
         self._verifier_checklist_cache: dict[str, Any] | None = None
+        self._previous_verifier_feedback: dict[str, Any] | None = None
 
     def get_template_vars(self, **kwargs) -> dict:
         return recursive_merge(
@@ -246,6 +267,8 @@ class DefaultAgent:
                 "base_model_cost": self.base_model_cost,
                 "verifier_model_cost": self.verifier_cost,
                 "step_count": self.step_count,
+                "previous_verifier_feedback": self._previous_verifier_feedback or {},
+                "has_previous_verifier_feedback": self._previous_verifier_feedback is not None,
             },
             self.extra_template_vars,
             kwargs,
@@ -286,6 +309,7 @@ class DefaultAgent:
         self.verifier_api_calls = 0
         self.checklist_api_calls = 0
         self._verifier_checklist_cache = None
+        self._previous_verifier_feedback = None
         self.add_messages(
             self.model.format_message(role="system", content=self._render_template(self.config.system_template)),
             self.model.format_message(role="user", content=self._render_template(self.config.instance_template)),
@@ -404,6 +428,7 @@ class DefaultAgent:
             }
         message = copy.deepcopy(responses[selected_index])
         message = self._attach_verifier_metadata(message, verifier_metadata)
+        self._update_previous_verifier_feedback(candidate_infos[selected_index], verifier_metadata)
         self.add_messages(message)
         return message
 
@@ -597,9 +622,14 @@ class DefaultAgent:
         self._check_limits()
         self.n_calls += 1
         self.agent_api_calls += 1
-        query_messages = self._messages_for_outbound_context(
-            self.messages, include_assistant_content=self.config.include_thoughts_in_agent_history
+        query_messages = list(
+            self._messages_for_outbound_context(
+                self.messages, include_assistant_content=self.config.include_thoughts_in_agent_history
+            )
         )
+        feedback_message = self._build_verifier_feedback_message()
+        if feedback_message is not None:
+            query_messages.append(feedback_message)
         message = self.model.query(query_messages, **kwargs)
         self.base_model_cost += float(message.get("extra", {}).get("cost", 0.0) or 0.0)
         self.cost = self.base_model_cost + self.verifier_cost
@@ -876,6 +906,42 @@ class DefaultAgent:
         extra["verifier"] = metadata
         response["extra"] = extra
         return response
+
+    def _build_verifier_feedback_message(self) -> dict[str, Any] | None:
+        if not self._previous_verifier_feedback:
+            return None
+        template = self.config.verifier_feedback_template
+        if not template.strip():
+            return None
+        content = self._render_template(template).strip()
+        if not content:
+            return None
+        return self.model.format_message(role=self.config.verifier_feedback_role, content=content)
+
+    def _update_previous_verifier_feedback(self, candidate_info: dict[str, Any], verifier_metadata: dict[str, Any]) -> None:
+        if not verifier_metadata.get("enabled"):
+            self._previous_verifier_feedback = None
+            return
+
+        verifier_output = verifier_metadata.get("verifier_output", {})
+        if not isinstance(verifier_output, dict):
+            self._previous_verifier_feedback = None
+            return
+
+        selected_reward = verifier_output.get("selected_reward")
+        selected_feedback = verifier_output.get("selected_feedback")
+        if selected_reward is None and not selected_feedback:
+            self._previous_verifier_feedback = None
+            return
+
+        self._previous_verifier_feedback = {
+            "action": candidate_info.get("action"),
+            "score": selected_reward,
+            "critique": selected_feedback,
+            "verifier_type": verifier_metadata.get("type"),
+            "selected_index": verifier_metadata.get("selected_index"),
+            "step_index": self.step_count,
+        }
 
     def _get_verifier_history_steps(self) -> int:
         verifier_config = getattr(self.verifier, "config", None)

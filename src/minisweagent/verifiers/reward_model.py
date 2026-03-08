@@ -37,7 +37,7 @@ class RewardModelVerifier:
 
         def _score_candidate(
             candidate: dict[str, Any],
-        ) -> tuple[float | None, float | None, list[float | None], str, dict[str, Any], float, int]:
+        ) -> tuple[float | None, float | None, list[float | None], str | None, str, dict[str, Any], float, int]:
             system_prompt = self._render(
                 self.config.reward_system_template,
                 candidates=candidates,
@@ -65,7 +65,17 @@ class RewardModelVerifier:
                     reward = self._parse_reward(content)
                     progress_score = self._parse_progress_score(content)
                     checklist_item_scores = self._parse_checklist_item_scores(content, n_checklist_items)
-                    return reward, progress_score, checklist_item_scores, content, response, response_cost, api_calls
+                    feedback = self._parse_feedback(content)
+                    return (
+                        reward,
+                        progress_score,
+                        checklist_item_scores,
+                        feedback,
+                        content,
+                        response,
+                        response_cost,
+                        api_calls,
+                    )
                 except Exception as exc:
                     last_exc = exc
                     if attempt < 2:
@@ -77,6 +87,7 @@ class RewardModelVerifier:
         responses: list[dict[str, Any]] = [{} for _ in candidates]
         response_costs: list[float] = [0.0] * len(candidates)
         progress_scores: list[float | None] = [None] * len(candidates)
+        feedback_by_candidate: list[str | None] = [None] * len(candidates)
         checklist_item_scores_by_candidate: list[list[float | None]] = [[] for _ in candidates]
         candidate_api_calls: list[int] = [0] * len(candidates)
         with ThreadPoolExecutor(max_workers=min(len(candidates), 8)) as executor:
@@ -85,11 +96,12 @@ class RewardModelVerifier:
             }
             for future in as_completed(futures):
                 idx = futures[future]
-                reward, progress_score, checklist_item_scores, content, response, response_cost, api_calls = (
+                reward, progress_score, checklist_item_scores, feedback, content, response, response_cost, api_calls = (
                     future.result()
                 )
                 rewards[idx] = reward
                 progress_scores[idx] = progress_score
+                feedback_by_candidate[idx] = feedback
                 checklist_item_scores_by_candidate[idx] = checklist_item_scores
                 raw_outputs[idx] = content
                 responses[idx] = response
@@ -100,11 +112,14 @@ class RewardModelVerifier:
             "verifier_type": "reward_model",
             "rewards": rewards,
             "candidate_progress_scores": progress_scores,
+            "candidate_feedback": feedback_by_candidate,
             "candidate_checklist_item_scores": checklist_item_scores_by_candidate,
             "raw_outputs": raw_outputs,
             "responses": responses,
             "response_costs": response_costs,
             "candidate_api_calls": candidate_api_calls,
+            "selected_feedback": feedback_by_candidate[selected_index] if feedback_by_candidate else None,
+            "selected_reward": rewards[selected_index] if rewards else None,
             "api_calls": sum(candidate_api_calls),
         }
         return selected_index, metadata
@@ -190,6 +205,29 @@ class RewardModelVerifier:
             if 0 <= idx < len(scores):
                 scores[idx] = score
         return scores
+
+    def _parse_feedback(self, content: str) -> str | None:
+        patterns: list[str] = []
+        configured_pattern = getattr(self.config, "feedback_regex", None)
+        if isinstance(configured_pattern, str) and configured_pattern.strip():
+            patterns.append(configured_pattern)
+        for fallback_pattern in (r"FEEDBACK:\s*(.+)", r"CRITIQUE:\s*(.+)"):
+            if fallback_pattern not in patterns:
+                patterns.append(fallback_pattern)
+
+        for pattern in patterns:
+            matches = re.findall(pattern, content, re.MULTILINE)
+            if not matches:
+                continue
+            raw = matches[-1]
+            if isinstance(raw, tuple):
+                raw = raw[0]
+            if not isinstance(raw, str):
+                continue
+            feedback = raw.strip()
+            if feedback:
+                return feedback
+        return None
 
     def _count_checklist_items(self, template_vars: dict[str, Any]) -> int:
         checklist_items = template_vars.get("checklist_items")

@@ -15,6 +15,11 @@ subcommands = [
     ("minisweagent.run.utilities.inspector", ["inspect", "i", "inspector"], "Run inspector (browse trajectories)"),
     ("minisweagent.run.benchmarks.swebench", ["swebench"], "Evaluate on SWE-bench (batch mode)"),
     ("minisweagent.run.benchmarks.swebench_single", ["swebench-single"], "Evaluate on SWE-bench (single instance)"),
+    (
+        "minisweagent.run.extra.monte_carlo",
+        ["monte-carlo-rollout", "monte-carlo", "mc-rollout"],
+        "Replay merged verifier rows and branch-roll out each candidate action",
+    ),
     ("minisweagent.run.utilities.upload_docent", ["upload-docent"], "Upload trajectories to Docent"),
     (
         "minisweagent.run.utilities.sample_verifier_actions",

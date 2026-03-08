@@ -1,4 +1,4 @@
-# Monte Carlo Rollouts from Saved Trajectories
+# Monte Carlo Rollouts from Merged Verifier Rows
 
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
@@ -6,143 +6,147 @@ This repository includes `.agent/PLANS.md`, which defines mandatory ExecPlan req
 
 ## Purpose / Big Picture
 
-The goal is to let a user take an existing saved trajectory, reproduce the execution environment up to a chosen step, and then sample multiple alternative rollouts from that exact state. After this change, a user can point to a `.traj.json` file, select a step index, choose whether to include the assistant’s “thought” text from the trajectory in the rollout prompt, and run Monte Carlo rollouts that each execute a candidate action (or a small sequence of actions) while recording rich metadata such as model identity, sampling parameters, outcome, and steps taken. The user can see it working by running a new `mini-extra` subcommand that produces a directory of rollout trajectory files and a summarized metadata file. The rollout logic is structured around a pluggable action-selection layer so that later, if trajectories include both expert and rejected actions, selecting the rejected action for rollouts is a small, localized change.
+The goal is to let a user take a merged verifier-action dataset row from `merged_grouped_latest.jsonl`, rebuild the SWE-bench environment state by replaying the exact logged tool-call prefix, and then branch on every candidate action at that step. After this change, a user can run a new `mini-extra monte-carlo-rollout` command that samples `n` full continuations per candidate action, saves a rollout trajectory for each sample, and emits machine-readable summary files for later PRM analysis. The visible proof is a directory of rollout trajectory files plus `results.jsonl` and `summary.json`.
 
 ## Progress
 
-- [x] (2026-01-24 00:00Z) ExecPlan drafted with repository context, design decisions, and acceptance criteria.
-- [ ] Implement trajectory loading, step segmentation, message-history filtering (include/exclude thoughts), and replay-to-step logic.
-- [ ] Implement Monte Carlo rollout runner and CLI integration.
-- [ ] Add tests and update docs for the new command.
-- [ ] Validate end-to-end with sample trajectories and parallel rollouts.
+- [x] (2026-03-08 17:45Z) Reworked the ExecPlan from saved `.traj.json` replay to merged-row branching based on `history_trajectory` and `actions` from `merged_grouped_latest.jsonl`.
+- [x] (2026-03-08 18:05Z) Implemented replay helpers in `src/minisweagent/run/extra/utils/trajectory_replay.py` for task extraction, live prefix replay, and forced candidate assistant message synthesis.
+- [x] (2026-03-08 18:15Z) Implemented the `mini-extra monte-carlo-rollout` command in `src/minisweagent/run/extra/monte_carlo.py` and wired it into `src/minisweagent/run/utilities/mini_extra.py`.
+- [x] (2026-03-08 18:25Z) Added targeted tests in `tests/run/test_monte_carlo_rollout.py` covering replay, branch message construction, end-to-end rollout generation, CLI invocation, and dispatcher wiring.
+- [ ] (2026-03-08 18:25Z) Documentation page for the new command remains to be written if user-facing docs are desired.
 
 ## Surprises & Discoveries
 
-No surprises recorded yet.
+- Observation: The merged verifier rows already contain the exact replay prefix in `history_trajectory`, so no transcript lookup is needed for v1.
+  Evidence: Sample rows show `system`, `user`, `assistant`, and `tool` messages directly in `history_trajectory`.
+
+- Observation: The logged history uses tool-calling message format (`assistant` with `tool_calls`, `tool` for observations), which matches current tool-calling model runtime behavior.
+  Evidence: `src/minisweagent/models/utils/actions_toolcall.py` emits `tool` role observations when `tool_call_id` is present.
+
+- Observation: The observed merged dataset shape uses at most one tool call per assistant step, which allows the first implementation to reject parallel replay safely instead of supporting it partially.
+  Evidence: A scan over sampled rows found `max_tool_calls == 1` in `history_trajectory` assistant messages.
 
 ## Decision Log
 
-- Decision: Define “step” as one assistant action plus its subsequent user observation, using the same step grouping logic as the Textual UI.
-  Rationale: This is already the mental model used by the project’s inspector UI, and aligns with how trajectories are displayed to humans.
-  Date/Author: 2026-01-24 / Codex
+- Decision: Use `merged_grouped_latest.jsonl` rows, not saved `.traj.json` files, as the primary Monte Carlo source.
+  Rationale: The user explicitly wants branching over verifier candidates, and those candidates already live in merged rows with `actions` and `history_trajectory`.
+  Date/Author: 2026-03-08 / Codex
 
-- Decision: Create a new `mini-extra` subcommand rather than modify the default `mini` command.
-  Rationale: Monte Carlo rollouts are an advanced workflow and fit the existing “extra” command suite.
-  Date/Author: 2026-01-24 / Codex
+- Decision: Rebuild the live seeded history by replaying recorded commands and appending fresh observation messages, instead of trusting recorded tool outputs.
+  Rationale: The user requirement is exact command replay even if the new tool output differs. Using live observations keeps the resumed conversation aligned with the actual environment state.
+  Date/Author: 2026-03-08 / Codex
 
-- Decision: Store rollout metadata inside each saved rollout trajectory under `info.rollout` and also emit a summary JSONL file.
-  Rationale: Embedding metadata keeps each trajectory self-describing; a separate summary supports fast analysis across many rollouts.
-  Date/Author: 2026-01-24 / Codex
+- Decision: Resume continuation with the normal agent loop from the resolved SWE-bench config after forcing the branch action.
+  Rationale: This preserves the exact downstream actor/verifier policy under study and isolates the intervention to the chosen branch point.
+  Date/Author: 2026-03-08 / Codex
 
-- Decision: Add a rollout option to include or exclude assistant “thought” content from the replayed message history.
-  Rationale: Users may want to avoid exposing chain-of-thought text while still reproducing the environment and continuing from the same state.
-  Date/Author: 2026-01-24 / Codex
+- Decision: Implement the reusable replay logic under `src/minisweagent/run/extra/utils/trajectory_replay.py` and expose the user command from `src/minisweagent/run/extra/monte_carlo.py`.
+  Rationale: The user asked for implementation under `run/extra`, but the existing `mini-extra` dispatcher can import subcommands from any module path.
+  Date/Author: 2026-03-08 / Codex
 
-- Decision: Introduce a small action-selection abstraction that can choose which assistant action to replay or roll out.
-  Rationale: This isolates future support for trajectories that include both expert and rejected actions without redesigning the runner.
-  Date/Author: 2026-01-24 / Codex
-
-- Decision: Add a fixed-action rollout provider to allow explicit actions and ease future rejected-action rollouts.
-  Rationale: This keeps the rollout loop modular and makes it straightforward to plug in alternative action sources later.
-  Date/Author: 2026-01-25 / Codex
+- Decision: Save one full rollout trajectory per `(row, action, sample)` and emit a compact `results.jsonl` plus `summary.json`.
+  Rationale: The trajectories are needed for qualitative inspection, while the JSONL/summary outputs are needed for aggregate experiment analysis.
+  Date/Author: 2026-03-08 / Codex
 
 ## Outcomes & Retrospective
 
-No outcomes yet; this plan has not been implemented.
+The merged-row Monte Carlo runner is implemented and covered by focused tests. A user can now branch over all candidate actions at a chosen verifier step, sample multiple continuations per candidate, and analyze outcomes through saved trajectories and result summaries. The main limitation of this first version is that it intentionally rejects parallel tool-call replay and does not yet have a documentation page.
 
 ## Context and Orientation
 
-Trajectories are saved by `src/minisweagent/run/utils/save.py` using the format `{"info": ..., "messages": ..., "trajectory_format": "mini-swe-agent-1"}`. Some older or test fixtures use a simpler format that is just a list of messages without the `info` wrapper. Messages are dictionaries with at least `role` and `content` fields. “Thoughts” in this plan refer to the assistant message content stored in the trajectory file; depending on the model or prompt, this may include reasoning text alongside the action.
+The main user entry point for extra commands is `src/minisweagent/run/utilities/mini_extra.py`. SWE-bench environment construction lives in `src/minisweagent/run/benchmarks/swebench.py`, specifically `get_sb_environment`, which turns a resolved config and dataset instance into an execution environment. The normal coding-agent control flow lives in `src/minisweagent/agents/default.py`: `query()` samples the next assistant message, `execute_actions()` runs the parsed tool commands, and `step()` advances one executed step.
 
-A “step” in mini-swe-agent corresponds to one assistant response and its associated user observation; the Textual UI groups messages into steps using `_messages_to_steps` in `src/minisweagent/agents/interactive_textual.py`. The default agent flow is implemented in `src/minisweagent/agents/default.py`, with action parsing governed by `action_regex` from agent config and action execution via an `Environment` object. Environment implementations live in `src/minisweagent/environments/` and are instantiated through `src/minisweagent/environments/__init__.py`.
+The merged verifier dataset row is a JSON object with at least `instance_id`, `step_index`, `message_index`, `history_trajectory`, and `actions`. In this repository, `history_trajectory` is already in the same tool-calling message format that current models use: assistant messages can have `tool_calls`, and corresponding tool outputs are separate `tool` messages. Each action entry contains a candidate command, label, gold flag, and often a `model_response` whose content serves as the candidate thought text.
 
-The extra CLI entry point is `src/minisweagent/run/mini_extra.py`, which wires subcommands like `inspect`, `swebench`, and `github-issue`. The SWE-bench runner (`src/minisweagent/run/extra/swebench.py`) demonstrates how to run many jobs concurrently using a thread pool.
-
-The new feature will add a Monte Carlo rollout command that reads trajectories (including those outside the repo, such as the example `/scratch/.../astropy__astropy-7166.traj.json`), replays actions to a target step to reproduce environment state, and then runs multiple sampled rollouts, saving each rollout trajectory and metadata. The command will allow filtering the replayed message history to exclude assistant thoughts while keeping user observations, and it will structure action selection so future trajectories with multiple action variants can be handled by swapping a selector.
+The Monte Carlo implementation consists of two layers. The reusable layer is `src/minisweagent/run/extra/utils/trajectory_replay.py`, which extracts the task from the logged history, replays the live prefix into a fresh agent/environment pair, and synthesizes a forced branch assistant message from a candidate action. The user-facing layer is `src/minisweagent/run/extra/monte_carlo.py`, which loads rows, resolves SWE-bench instances, runs one rollout task per `(row, action, sample)` branch, saves trajectories, and writes summary files.
 
 ## Plan of Work
 
-First, add a small utility module to normalize trajectory files and split messages into steps. Place it at `src/minisweagent/run/utils/trajectory.py` so it sits alongside `save.py` and is reusable by other runners. This module should load either a list-format trajectory or a dict-format trajectory with a `messages` field, returning a normalized structure that includes `messages`, `info`, and `trajectory_format` where available. It should also include a `messages_to_steps` function that mirrors the existing step grouping behavior; consider moving or duplicating the logic from `_messages_to_steps` to avoid UI-only dependencies in the new runner. Add a helper that builds the rollout message history with an `include_thoughts` flag; when false, omit assistant messages from the history and keep user/system messages so the model receives only non-thought context.
+The implementation first loads and filters the merged rows, then resolves the SWE-bench instance lookup using the same dataset-loading path as the batch/single benchmark runners. For each rollout task, it resolves the config exactly the way SWE-bench does, applies optional model/environment overrides, builds a fresh agent and environment, and replays the row’s `history_trajectory` into that agent.
 
-Next, implement a replay component in a new module such as `src/minisweagent/run/extra/utils/trajectory_replay.py`. This component should accept: the normalized messages, an agent configuration (for `action_regex` and templates), and an environment instance. It should construct a “replay plan” by extracting assistant actions from each step using the same regex as `DefaultAgent.parse_action`, but do so through an action-selection abstraction (for example an `ActionSelector` or `ActionProvider`) that can later choose rejected actions if present. The replay method should iterate through steps until the target step is reached, execute each action in the environment, optionally compare the resulting observation with the saved user message (if present), and track mismatches as metadata. It should also return the filtered message history up to the target step so that rollouts can continue from that exact conversation context with or without assistant thoughts.
+Replay works by iterating through the logged history, copying `system` and `user` messages directly, ignoring recorded `tool` messages, and for each `assistant` tool-call message: appending the assistant message, executing the extracted command through `agent.execute_actions(...)`, and keeping the live observation that comes back. This preserves the logged command sequence while allowing the environment outputs to diverge.
 
-Then, implement the Monte Carlo rollout runner in a new CLI module, for example `src/minisweagent/run/extra/monte_carlo.py`. This command should accept a trajectory file or directory, a target step index, a number of rollouts per trajectory, and a maximum number of rollout steps (default one step). It should also accept an explicit `--include-thoughts/--exclude-thoughts` argument that controls whether assistant messages from the trajectory are included in the rollout prompt history. It should accept model selection overrides (`--model`, `--model-class`, `--model-kwargs-json` for passing sampling params like temperature/top_p/seed), and environment overrides (`--environment-class`, `--environment-config-json`, and an optional `--env-startup-command` for SWE-bench-like setups that are not stored in the trajectory). For each rollout, it should instantiate a fresh environment, replay to the target step, and then run the rollout by calling agent `step()` repeatedly, collecting the resulting observations, exit status, cost, and timing. The action-selection abstraction should be threaded through so that later a CLI flag (for example `--action-source rejected`) can be added with minimal changes.
+After the prefix is seeded, the runner synthesizes a branch assistant message from one candidate action. It preserves the candidate thought text from `model_response.content` when available, adds one bash tool call whose arguments exactly match the chosen candidate command, and stores the command in `extra.actions` so the normal agent execution path can use it. The forced branch is executed once. If that command submits immediately, the rollout ends there. Otherwise the runner continues by calling the normal `agent.step()` loop until the agent exits or the configured continuation step cap is reached.
 
-To address efficiency, use a thread pool (patterned after `run/extra/swebench.py`) to run multiple rollouts concurrently. Pre-parse the trajectory into a replay plan once per file, and reuse that plan for each rollout instance to avoid repeated regex parsing. This provides a straightforward speedup without deep environment snapshotting. Keep each rollout isolated by using a new environment instance per rollout; when done, ensure cleanup by calling `stop()` or `cleanup()` if the environment exposes those methods.
-
-Add metadata recording that captures at least: source trajectory path, source step index, rollout index, model name/class and sampling parameters, whether assistant thoughts were included, number of replayed steps, number of rollout steps executed, outcome (Submitted, LimitsExceeded, FormatError, ExecutionTimeoutError, or other exception names), and per-action labels such as return code and output length. Embed this in the saved rollout trajectory under `info.rollout`, and also write a summary JSONL file (one line per rollout) to the output directory for easy analysis.
-
-Wire the new command into `src/minisweagent/run/mini_extra.py` by adding it to the `subcommands` list with an alias such as `monte-carlo` and `mc`. Update or add docs in `docs/` (for example a short page under usage) to explain expected inputs, step indexing, and output structure. Keep documentation concise, and include a minimal example invocation.
-
-Finally, add tests under `tests/run/` to validate: loading list-format and dict-format trajectories; replaying to a target step in a local environment; capturing metadata; include/exclude-thoughts behavior (confirm that assistant messages are present or absent in the rollout prompt history); and deterministic rollouts using `DeterministicModel` with provided outputs. The tests should use temporary directories and local shell commands that are safe and idempotent, such as `echo` or creating files inside a temp directory.
+Each rollout writes a `.traj.json` file under the output directory and records a compact JSON row with identifiers, candidate metadata, replay status, exit status, cost, and saved trajectory path. The top-level summary file aggregates counts for rows loaded, tasks planned/completed, replay failures, and terminal outcomes such as `Submitted`.
 
 ## Concrete Steps
 
-Work from the repository root `/home/zkjzou/SWE-PRM/mini-swe-agent`. Create a new branch for this feature:
+Work from the repository root `/home/zkjzou/SWE-PRM/mini-swe-agent`.
 
-    git switch -c feat/monte-carlo-rollouts
+Run the focused test suite for this feature:
 
-Add the new utility and runner modules, then wire the CLI and tests. When adding the CLI command, update `src/minisweagent/run/mini_extra.py` to include the new module and alias. Use the same Typer patterns as other `mini-extra` commands.
+    pytest -q tests/run/test_monte_carlo_rollout.py
 
-When implementing the replay component, ensure it takes an explicit target step index that is clearly defined as 1-based in the CLI, and convert to 0-based internally. Ensure the CLI exposes a boolean `--include-thoughts/--exclude-thoughts` argument that controls whether assistant messages are passed into the rollout prompt. If a trajectory does not include `info.config`, require the user to supply a config path or JSON overrides; make this explicit in error messages.
+Run a syntax check for the new modules:
+
+    python -m py_compile src/minisweagent/run/extra/monte_carlo.py src/minisweagent/run/extra/utils/trajectory_replay.py tests/run/test_monte_carlo_rollout.py
+
+Example invocation against merged verifier rows:
+
+    mini-extra monte-carlo-rollout /path/to/merged_grouped_latest.jsonl \
+      -c swebench.yaml \
+      --subset verified \
+      --split dev \
+      --samples-per-action 3 \
+      --max-rollout-steps 20 \
+      --output-dir /tmp/mc_rollouts
+
+Expected outcomes:
+- `results.jsonl` appears in the output directory
+- `summary.json` appears in the output directory
+- rollout trajectories appear under `<output-dir>/<instance_id>/step_<step>/<candidate>__sample_<n>.traj.json`
 
 ## Validation and Acceptance
 
-Run unit tests for the new functionality and ensure they fail before the change and pass after:
+Validation for this implementation is:
 
-    pytest -n auto tests/run/test_monte_carlo.py
+    pytest -q tests/run/test_monte_carlo_rollout.py
 
-Run a local smoke test using a small trajectory (for example `tests/test_data/local.traj.json`) and deterministic model outputs:
+The acceptance criteria are:
+- the runner replays a logged prefix and does not reuse stale recorded tool outputs
+- the forced candidate branch message contains the chosen command and candidate metadata
+- one rollout trajectory is saved for every `(candidate action, sample)` pair
+- `results.jsonl` records per-branch outcome fields such as `rollout_exit_status`, `forced_command`, and `trajectory_path`
+- the new command is reachable through `mini-extra monte-carlo-rollout`
 
-    mini-extra monte-carlo --trajectory tests/test_data/local.traj.json --step 1 --rollouts 2 --rollout-steps 1 --exclude-thoughts --model-class deterministic --model-kwargs-json '{"outputs":["Step 1\n```bash\necho ok\n```"]}' --output /tmp/mc_out
-
-Acceptance is met when the command produces two rollout trajectories in `/tmp/mc_out`, each with `info.rollout` metadata (including whether thoughts were included), and a summary JSONL file listing the rollouts with correct model and outcome fields. The environment should have executed the replayed commands up to the requested step before the rollout actions run.
+On 2026-03-08 this validation passed with `5 passed` in `tests/run/test_monte_carlo_rollout.py`.
 
 ## Idempotence and Recovery
 
-All steps are additive and safe to rerun. If output directories already exist, the command should either create a new timestamped subdirectory or cleanly overwrite only per-rollout files for the same rollout index; pick one behavior and document it in the CLI help. If replay fails for a trajectory, the runner should record the failure in the summary file and continue with other rollouts. Environment cleanup should be attempted even on exceptions to avoid leaking containers.
+The rollout runner is additive. Re-running it against the same output directory will overwrite `results.jsonl` and `summary.json`, while trajectory files for the same branch/sample path will be replaced by the latest run. If a rollout task fails before trajectory save, the error is still recorded in `results.jsonl` so analysis can continue across other tasks. Environment cleanup is attempted in a `finally` block for every rollout task.
 
 ## Artifacts and Notes
 
-Expected rollout summary record format (example fields; actual content defined in implementation):
+Important produced files:
+- `src/minisweagent/run/extra/monte_carlo.py`
+- `src/minisweagent/run/extra/utils/trajectory_replay.py`
+- `tests/run/test_monte_carlo_rollout.py`
 
-    {"trajectory_path":".../astropy__astropy-7166.traj.json","step":12,"rollout_index":0,"model_name":"gpt-4.1","model_class":"minisweagent.models.litellm_model.LitellmModel","sampling":{"temperature":0.7,"top_p":0.9,"seed":123},"replayed_steps":12,"rollout_steps":1,"outcome":"Submitted","cost":0.0042,"action_returncode":0,"action_output_len":182}
+Representative result-row fields:
+
+    {
+      "instance_id": "repo__issue-1",
+      "step_index": 1,
+      "action_label": "gold",
+      "sample_index": 0,
+      "forced_command": "printf gold > branch.txt",
+      "forced_thought": "Gold thought",
+      "replay_status": "ok",
+      "rollout_exit_status": "Submitted",
+      "trajectory_path": ".../repo__issue-1/step_0001/gold__sample_000.traj.json"
+    }
 
 ## Interfaces and Dependencies
 
-Add a small trajectory utility module in `src/minisweagent/run/utils/trajectory.py` with functions like:
+The main callable introduced by this work is `minisweagent.run.extra.monte_carlo.generate_monte_carlo_rollouts(...)`. It depends on:
+- `datasets.load_dataset` to resolve SWE-bench instances
+- `minisweagent.run.benchmarks.swebench.get_sb_environment` for environment creation
+- `minisweagent.models.get_model` for actor model creation
+- `minisweagent.agents.get_agent` for constructing the rollout agent
+- `minisweagent.utils.verifier_action_sampling.normalize_docent_message_for_model` and `extract_actions_from_assistant_message` for adapting merged-row messages into current model/runtime format
 
-    def load_trajectory(path: Path) -> dict[str, Any]:
-        """Return a normalized dict containing at least 'messages' and possibly 'info' and 'trajectory_format'."""
+The replay helper introduced by this work is `minisweagent.run.extra.utils.trajectory_replay.seed_agent_from_history(agent, row)`, which mutates a fresh agent into the live state represented by the row’s prefix and returns a small replay summary.
 
-    def messages_to_steps(messages: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
-        """Group messages into steps where each step ends with a user message."""
-
-    def build_message_history(messages: list[dict[str, Any]], *, include_thoughts: bool) -> list[dict[str, Any]]:
-        """Return a filtered message history for rollouts; omit assistant messages when include_thoughts is False."""
-
-Add a replay helper in `src/minisweagent/run/extra/utils/trajectory_replay.py` with a minimal interface:
-
-    class ActionSelector(Protocol):
-        def select_action(self, step_messages: list[dict[str, Any]]) -> str:
-            """Return the action string to replay for this step, e.g., expert or rejected."""
-
-    class TrajectoryReplayer:
-        def __init__(
-            self,
-            messages: list[dict],
-            agent_config: dict,
-            env: Environment,
-            *,
-            include_thoughts: bool,
-            action_selector: ActionSelector,
-            verify_observations: bool = False,
-        ): ...
-        def replay_to_step(self, target_step: int) -> dict[str, Any]:
-            """Execute actions up to target_step, return history and mismatch metadata."""
-
-Implement the CLI in `src/minisweagent/run/extra/monte_carlo.py` using Typer, and update `src/minisweagent/run/mini_extra.py` to expose it. Reuse `get_model` and `get_environment` where possible, but allow full import-path overrides using `model_class` and `environment_class`. Use standard library concurrency (`concurrent.futures.ThreadPoolExecutor`) for parallel rollouts. Avoid new external dependencies. Thread the `include_thoughts` flag and a default `ActionSelector` implementation through the runner so future support for rejected actions is localized.
-
-Note: Initial creation of ExecPlan per user request to save in `.agent/`.
-Update: Added include/exclude thoughts CLI argument, message-history filtering, and an action-selection abstraction to future-proof rejected-action rollouts per user request.
-Update: Reset progress and discovery logs per user request to restart implementation in worktrees.
+Update (2026-03-08): Replaced the older saved-trajectory Monte Carlo design with the merged verifier-row implementation requested by the user, and recorded the completed implementation and test results.

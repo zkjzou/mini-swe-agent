@@ -28,6 +28,7 @@ class RewardModelVerifier:
     ) -> tuple[int, dict]:
         template_vars = template_vars or {}
         verifier_vars = dict(template_vars)
+        verifier_vars.setdefault("enable_verbal_feedback", False)
         verifier_vars["task"] = task or ""
         if messages is not None:
             verifier_vars["messages"] = messages

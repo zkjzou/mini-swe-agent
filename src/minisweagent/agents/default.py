@@ -138,12 +138,13 @@ class VerifierConfig(BaseModel):
     reward_system_template: str = "You are a reward model that scores candidate actions for a coding agent."
     reward_prompt_template: str = (
         "Score the candidate action for how well it advances the task safely and correctly. "
-        "Return lines for FEEDBACK and REWARD.\n\n"
+        "Return the score"
+        "{% if enable_verbal_feedback %} and concise feedback{% endif %}.\n\n"
         "Task: {{ task }}\n"
         "Candidate:\n"
         "{{ candidate.content }}\n"
         "Output format:\n"
-        "FEEDBACK: <one-line critique for the coding model>\n"
+        "{% if enable_verbal_feedback %}FEEDBACK: <one-line critique for the coding model>\n{% endif %}"
         "REWARD: <number>\n"
     )
     reward_regex: str = r"REWARD:\s*([+-]?\d+(?:\.\d+)?)"
@@ -208,6 +209,8 @@ class AgentConfig(BaseModel):
     """Stop agent after exceeding (!) this cost."""
     output_path: Path | None = None
     """Save the trajectory to this path."""
+    enable_verbal_feedback: bool = False
+    """Whether verifier feedback is injected back into the actor on the next step."""
     verifier_feedback_role: Literal["user", "system"] = "user"
     """Role used for the outbound actor feedback prompt message."""
     verifier_feedback_template: str = ""
@@ -347,6 +350,7 @@ class DefaultAgent:
             "steps": verifier_steps,
             "all_steps": all_verifier_steps,
             "history_steps": configured_history_steps,
+            "enable_verbal_feedback": self.config.enable_verbal_feedback,
         }
 
         selected_index = 0
@@ -896,6 +900,8 @@ class DefaultAgent:
         return response
 
     def _build_verifier_feedback_message(self) -> dict[str, Any] | None:
+        if not self.config.enable_verbal_feedback:
+            return None
         if not self._previous_verifier_feedback:
             return None
         template = self.config.verifier_feedback_template

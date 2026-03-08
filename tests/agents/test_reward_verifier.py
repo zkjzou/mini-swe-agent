@@ -75,6 +75,50 @@ def test_reward_model_selects_highest_reward():
     assert verifier_output.get("api_calls") == 2
 
 
+def test_reward_model_prompt_only_requests_feedback_when_enabled():
+    class _CaptureRewardModel:
+        def __init__(self):
+            self.prompts: list[str] = []
+
+        def query(self, messages, **kwargs):
+            self.prompts.append(messages[-1].get("content", ""))
+            return {"role": "assistant", "content": "REWARD: 0.5", "extra": {"cost": 0.0}}
+
+    base_config = _load_default_agent_config()
+    base_config["candidate_sampling"] = {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}}
+    base_config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "reward_model",
+        "reward_regex": r"REWARD:\s*([+-]?\d+(?:\.\d+)?)",
+    }
+
+    disabled_agent = DefaultAgent(
+        model=DeterministicModel(outputs=[make_output("Option 1", [{"command": "echo first"}])]),
+        env=LocalEnvironment(),
+        **base_config,
+    )
+    disabled_capture = _CaptureRewardModel()
+    disabled_agent.verifier.model = disabled_capture
+    disabled_agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+    disabled_agent.query()
+
+    enabled_config = copy.deepcopy(base_config)
+    enabled_config["enable_verbal_feedback"] = True
+    enabled_config["verifier_feedback_template"] = _VERIFIER_FEEDBACK_TEMPLATE
+    enabled_agent = DefaultAgent(
+        model=DeterministicModel(outputs=[make_output("Option 1", [{"command": "echo first"}])]),
+        env=LocalEnvironment(),
+        **enabled_config,
+    )
+    enabled_capture = _CaptureRewardModel()
+    enabled_agent.verifier.model = enabled_capture
+    enabled_agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+    enabled_agent.query()
+
+    assert "FEEDBACK:" not in disabled_capture.prompts[-1]
+    assert "FEEDBACK:" in enabled_capture.prompts[-1]
+
+
 def test_reward_model_checklist_mode_attaches_progress_metadata():
     class _ChecklistAwareRewardModel:
         def query(self, messages, **kwargs):
@@ -107,6 +151,7 @@ def test_reward_model_checklist_mode_attaches_progress_metadata():
 
     config = _load_default_agent_config()
     config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["enable_verbal_feedback"] = True
     config["verifier_feedback_template"] = _VERIFIER_FEEDBACK_TEMPLATE
     config["verifier"] = {
         "enabled": True,
@@ -256,6 +301,7 @@ def test_reward_model_feedback_is_injected_into_next_actor_query():
 
     config = _load_default_agent_config()
     config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["enable_verbal_feedback"] = True
     config["verifier_feedback_template"] = _VERIFIER_FEEDBACK_TEMPLATE
     config["verifier"] = {
         "enabled": True,

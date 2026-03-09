@@ -7,7 +7,7 @@ import yaml
 from typer.testing import CliRunner
 
 from minisweagent.models.test_models import DeterministicToolcallModel, make_toolcall_output
-from minisweagent.run.extra.monte_carlo import app, generate_monte_carlo_rollouts
+from minisweagent.run.extra.monte_carlo import _load_rows, app, generate_monte_carlo_rollouts
 from minisweagent.run.extra.utils.trajectory_replay import build_candidate_branch_message, seed_agent_from_history
 from minisweagent.run.utilities.mini_extra import main as mini_extra_main
 
@@ -258,6 +258,10 @@ def test_monte_carlo_cli_invokes_generator(monkeypatch, tmp_path):
             "5",
             "--limit-rows",
             "2",
+            "--row-start",
+            "3",
+            "--row-end",
+            "7",
             "--instance",
             "repo__issue-1",
             "--step-index",
@@ -271,8 +275,35 @@ def test_monte_carlo_cli_invokes_generator(monkeypatch, tmp_path):
     assert called["max_rollout_steps"] == 7
     assert called["max_workers"] == 5
     assert called["limit_rows"] == 2
+    assert called["row_start"] == 3
+    assert called["row_end"] == 7
     assert called["instance_filter"] == ["repo__issue-1"]
     assert called["step_index"] == 4
+
+
+def test_load_rows_applies_row_start_and_row_end_after_filters(tmp_path):
+    rows_path = tmp_path / "rows.jsonl"
+    rows = []
+    for index in range(1, 7):
+        row = _make_row()
+        row["instance_id"] = "keep" if index != 3 else "skip"
+        row["step_index"] = 1 if index != 4 else 2
+        row["message_index"] = index
+        row["run_id"] = f"run-{index}"
+        rows.append(row)
+    rows_path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    loaded = _load_rows(
+        rows_path,
+        instance_filter={"keep"},
+        step_index=1,
+        row_start=2,
+        row_end=3,
+        limit_rows=None,
+    )
+
+    assert [line_no for line_no, _ in loaded] == [2, 5]
+    assert [row["run_id"] for _, row in loaded] == ["run-2", "run-5"]
 
 
 def test_generate_monte_carlo_rollouts_skips_existing_by_default(tmp_path, monkeypatch):

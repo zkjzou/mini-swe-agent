@@ -83,9 +83,12 @@ def _load_rows(
     *,
     instance_filter: set[str] | None,
     step_index: int | None,
+    row_start: int | None,
+    row_end: int | None,
     limit_rows: int | None,
 ) -> list[tuple[int, dict[str, Any]]]:
     rows: list[tuple[int, dict[str, Any]]] = []
+    matched_count = 0
     with input_jsonl.open("r", encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, start=1):
             if not line.strip():
@@ -98,6 +101,11 @@ def _load_rows(
                 continue
             if step_index is not None and int(row.get("step_index", -1)) != step_index:
                 continue
+            matched_count += 1
+            if row_start is not None and matched_count < row_start:
+                continue
+            if row_end is not None and matched_count > row_end:
+                break
             rows.append((line_no, row))
             if limit_rows is not None and len(rows) >= limit_rows:
                 break
@@ -499,6 +507,8 @@ def generate_monte_carlo_rollouts(
     max_rollout_steps: int = 20,
     max_workers: int = 1,
     limit_rows: int | None = None,
+    row_start: int | None = None,
+    row_end: int | None = None,
     instance_filter: list[str] | None = None,
     step_index: int | None = None,
     model_name: str | None = None,
@@ -514,6 +524,12 @@ def generate_monte_carlo_rollouts(
         raise ValueError("max_rollout_steps must be >= 0")
     if max_workers < 1:
         raise ValueError("max_workers must be >= 1")
+    if row_start is not None and row_start < 1:
+        raise ValueError("row_start must be >= 1")
+    if row_end is not None and row_end < 1:
+        raise ValueError("row_end must be >= 1")
+    if row_start is not None and row_end is not None and row_start > row_end:
+        raise ValueError("row_start must be <= row_end")
 
     resolved_config = _apply_overrides(
         _load_resolved_config(config_specs),
@@ -526,6 +542,8 @@ def generate_monte_carlo_rollouts(
         input_jsonl,
         instance_filter=set(instance_filter or []),
         step_index=step_index,
+        row_start=row_start,
+        row_end=row_end,
         limit_rows=limit_rows,
     )
 
@@ -646,6 +664,8 @@ def generate_monte_carlo_rollouts(
         "max_rollout_steps": max_rollout_steps,
         "max_workers": max_workers,
         "limit_rows": limit_rows,
+        "row_start": row_start,
+        "row_end": row_end,
         "instance_filter": list(instance_filter or []),
         "step_index": step_index,
         "redo_existing": redo_existing,
@@ -686,6 +706,8 @@ def main(
     max_rollout_steps: int = typer.Option(20, "--max-rollout-steps", min=0, help="Continuation steps after the forced branch"),
     max_workers: int = typer.Option(1, "--max-workers", min=1, help="Concurrent rollout workers"),
     limit_rows: int | None = typer.Option(None, "--limit-rows", min=1, help="Optional cap on source rows"),
+    row_start: int | None = typer.Option(None, "--row-start", min=1, help="1-based inclusive start row after filters"),
+    row_end: int | None = typer.Option(None, "--row-end", min=1, help="1-based inclusive end row after filters"),
     instance: list[str] | None = typer.Option(None, "--instance", help="Optional instance_id filter"),
     step_index: int | None = typer.Option(None, "--step-index", min=0, help="Optional exact step_index filter"),
     model_name: str | None = typer.Option(None, "-m", "--model", help="Optional actor model override"),
@@ -707,6 +729,8 @@ def main(
             max_rollout_steps=max_rollout_steps,
             max_workers=max_workers,
             limit_rows=limit_rows,
+            row_start=row_start,
+            row_end=row_end,
             instance_filter=instance,
             step_index=step_index,
             model_name=model_name,

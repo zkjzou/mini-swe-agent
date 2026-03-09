@@ -167,3 +167,5 @@ Update (2026-03-08): Added `--redo-existing` and `--redo-errors` handling for Mo
 Update (2026-03-08): Added SWE-bench-style live progress output for Monte Carlo rollout tasks using `RunBatchProgressManager` and `rich.Live`.
 
 Update (2026-03-09): `preds.json` now exports one patch per sampled rollout, while `preds_by_instance.json` preserves the single-patch-per-instance view. This matches Monte Carlo evaluation needs where all sampled terminal patches must remain visible.
+
+Update (2026-03-09): Added `--row-start` and `--row-end` so Monte Carlo runs can target an exact 1-based inclusive row slice after `--instance` and `--step-index` filtering.

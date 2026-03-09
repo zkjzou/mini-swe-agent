@@ -177,6 +177,46 @@ def _save_rollout(agent: Any, path: Path, instance_id: str, rollout_info: dict[s
     )
 
 
+def _prediction_priority(record: dict[str, Any]) -> tuple[int, int, int, int, int]:
+    submission = str(record.get("submission") or "")
+    exit_status = str(record.get("rollout_exit_status") or "")
+    if exit_status == "Submitted" and submission:
+        bucket = 0
+    elif submission:
+        bucket = 1
+    else:
+        bucket = 2
+    return (
+        bucket,
+        int(record.get("step_index") or 0),
+        0 if bool(record.get("is_gold")) else 1,
+        int(record.get("action_index") or 0),
+        int(record.get("sample_index") or 0),
+    )
+
+
+def _write_preds_file(results: list[dict[str, Any]], *, output_dir: Path, model_name: str) -> Path:
+    by_instance: dict[str, list[dict[str, Any]]] = {}
+    for record in results:
+        instance_id = record.get("instance_id")
+        if not isinstance(instance_id, str) or not instance_id:
+            continue
+        by_instance.setdefault(instance_id, []).append(record)
+
+    preds_payload: dict[str, dict[str, Any]] = {}
+    for instance_id, instance_records in sorted(by_instance.items()):
+        selected = sorted(instance_records, key=_prediction_priority)[0]
+        preds_payload[instance_id] = {
+            "model_name_or_path": model_name,
+            "instance_id": instance_id,
+            "model_patch": str(selected.get("submission") or ""),
+        }
+
+    preds_path = output_dir / "preds.json"
+    preds_path.write_text(json.dumps(preds_payload, indent=2, ensure_ascii=False))
+    return preds_path
+
+
 def _run_single_rollout(
     *,
     line_no: int,
@@ -408,6 +448,9 @@ def generate_monte_carlo_rollouts(
             handle.write(json.dumps(record, ensure_ascii=False, default=str))
             handle.write("\n")
 
+    resolved_model_name = str(((resolved_config.get("model") or {}).get("model_name")) or "")
+    preds_path = _write_preds_file(results, output_dir=output_dir, model_name=resolved_model_name)
+
     exit_counts = Counter(record.get("rollout_exit_status") or "Unknown" for record in results)
     summary = {
         "input_jsonl": str(input_jsonl),
@@ -420,6 +463,7 @@ def generate_monte_carlo_rollouts(
         "limit_rows": limit_rows,
         "instance_filter": list(instance_filter or []),
         "step_index": step_index,
+        "preds_json": str(preds_path),
         "counts": {
             "rows_loaded": len(filtered_rows),
             "rows_skipped": sum(skipped_rows.values()),
@@ -427,6 +471,7 @@ def generate_monte_carlo_rollouts(
             "tasks_completed": len(results),
             "replay_failures": sum(1 for record in results if record.get("replay_status") == "error"),
             "solved": exit_counts.get("Submitted", 0),
+            "pred_instances": len(json.loads(preds_path.read_text())),
         },
         "skipped_rows": dict(skipped_rows),
         "exit_status_counts": dict(exit_counts),

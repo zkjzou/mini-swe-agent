@@ -13,7 +13,7 @@ The goal is to let a user take a merged verifier-action dataset row from `merged
 - [x] (2026-03-08 17:45Z) Reworked the ExecPlan from saved `.traj.json` replay to merged-row branching based on `history_trajectory` and `actions` from `merged_grouped_latest.jsonl`.
 - [x] (2026-03-08 18:05Z) Implemented replay helpers in `src/minisweagent/run/extra/utils/trajectory_replay.py` for task extraction, live prefix replay, and forced candidate assistant message synthesis.
 - [x] (2026-03-08 18:15Z) Implemented the `mini-extra monte-carlo-rollout` command in `src/minisweagent/run/extra/monte_carlo.py` and wired it into `src/minisweagent/run/utilities/mini_extra.py`.
-- [x] (2026-03-08 18:25Z) Added targeted tests in `tests/run/test_monte_carlo_rollout.py` covering replay, branch message construction, end-to-end rollout generation, CLI invocation, and dispatcher wiring.
+- [x] (2026-03-08 18:25Z) Added targeted tests in `tests/run/test_monte_carlo_rollout.py` covering replay, branch message construction, end-to-end rollout generation, CLI invocation, dispatcher wiring, and `preds.json` export.
 - [ ] (2026-03-08 18:25Z) Documentation page for the new command remains to be written if user-facing docs are desired.
 
 ## Surprises & Discoveries
@@ -70,6 +70,8 @@ Replay works by iterating through the logged history, copying `system` and `user
 After the prefix is seeded, the runner synthesizes a branch assistant message from one candidate action. It preserves the candidate thought text from `model_response.content` when available, adds one bash tool call whose arguments exactly match the chosen candidate command, and stores the command in `extra.actions` so the normal agent execution path can use it. The forced branch is executed once. If that command submits immediately, the rollout ends there. Otherwise the runner continues by calling the normal `agent.step()` loop until the agent exits or the configured continuation step cap is reached.
 
 Each rollout writes a `.traj.json` file under the output directory and records a compact JSON row with identifiers, candidate metadata, replay status, exit status, cost, and saved trajectory path. The top-level summary file aggregates counts for rows loaded, tasks planned/completed, replay failures, and terminal outcomes such as `Submitted`.
+
+After all rollout rows are written, the runner also writes `preds.json` in the standard SWE-bench format. The export groups results by `instance_id` and chooses one rollout deterministically, preferring a non-empty `Submitted` patch, then any non-empty submission, then an empty patch if no rollout submitted successfully. This keeps downstream SWE-bench tooling compatible with Monte Carlo outputs.
 
 ## Concrete Steps
 
@@ -150,3 +152,6 @@ The main callable introduced by this work is `minisweagent.run.extra.monte_carlo
 The replay helper introduced by this work is `minisweagent.run.extra.utils.trajectory_replay.seed_agent_from_history(agent, row)`, which mutates a fresh agent into the live state represented by the row’s prefix and returns a small replay summary.
 
 Update (2026-03-08): Replaced the older saved-trajectory Monte Carlo design with the merged verifier-row implementation requested by the user, and recorded the completed implementation and test results.
+
+
+Update (2026-03-08): Added automatic `preds.json` export from Monte Carlo results so downstream SWE-bench evaluation can consume rollout outputs directly.

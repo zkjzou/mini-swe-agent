@@ -176,6 +176,15 @@ def test_generate_monte_carlo_rollouts(tmp_path, monkeypatch):
     assert all(row["rollout_exit_status"] == "Submitted" for row in rows)
     assert all(Path(row["trajectory_path"]).exists() for row in rows)
 
+    preds = json.loads((tmp_path / "out" / "preds.json").read_text())
+    assert preds == {
+        "repo__issue-1": {
+            "model_name_or_path": "deterministic_toolcall",
+            "instance_id": "repo__issue-1",
+            "model_patch": "patch",
+        }
+    }
+
 
 def test_monte_carlo_cli_invokes_generator(monkeypatch, tmp_path):
     called = {}

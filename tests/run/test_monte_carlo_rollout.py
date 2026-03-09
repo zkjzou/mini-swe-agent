@@ -191,6 +191,29 @@ def test_generate_monte_carlo_rollouts(tmp_path, monkeypatch):
 
     preds = json.loads((tmp_path / "out" / "preds.json").read_text())
     assert preds == {
+        "repo__issue-1__step_0001__action_00__gold__sample_000": {
+            "model_name_or_path": "deterministic_toolcall",
+            "instance_id": "repo__issue-1__step_0001__action_00__gold__sample_000",
+            "model_patch": "patch",
+        },
+        "repo__issue-1__step_0001__action_00__gold__sample_001": {
+            "model_name_or_path": "deterministic_toolcall",
+            "instance_id": "repo__issue-1__step_0001__action_00__gold__sample_001",
+            "model_patch": "patch",
+        },
+        "repo__issue-1__step_0001__action_01__alt__sample_000": {
+            "model_name_or_path": "deterministic_toolcall",
+            "instance_id": "repo__issue-1__step_0001__action_01__alt__sample_000",
+            "model_patch": "patch",
+        },
+        "repo__issue-1__step_0001__action_01__alt__sample_001": {
+            "model_name_or_path": "deterministic_toolcall",
+            "instance_id": "repo__issue-1__step_0001__action_01__alt__sample_001",
+            "model_patch": "patch",
+        },
+    }
+    preds_by_instance = json.loads((tmp_path / "out" / "preds_by_instance.json").read_text())
+    assert preds_by_instance == {
         "repo__issue-1": {
             "model_name_or_path": "deterministic_toolcall",
             "instance_id": "repo__issue-1",
@@ -314,7 +337,7 @@ def test_generate_monte_carlo_rollouts_skips_existing_by_default(tmp_path, monke
     assert called["count"] == 1
     assert summary["counts"]["tasks_skipped_existing"] == 1
     preds = json.loads((tmp_path / "out" / "preds.json").read_text())
-    assert preds["repo__issue-1"]["model_patch"] == "old_patch"
+    assert preds["repo__issue-1__step_0001__action_00__gold__sample_000"]["model_patch"] == "old_patch"
 
 
 def test_generate_monte_carlo_rollouts_redo_errors_only(tmp_path, monkeypatch):

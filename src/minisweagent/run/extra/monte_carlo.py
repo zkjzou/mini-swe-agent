@@ -238,6 +238,20 @@ def _prediction_priority(record: dict[str, Any]) -> tuple[int, int, int, int, in
     )
 
 
+def _rollout_pred_id(record: dict[str, Any]) -> str | None:
+    instance_id = record.get("instance_id")
+    if not isinstance(instance_id, str) or not instance_id:
+        return None
+    step_index = int(record.get("step_index") or 0)
+    action_index = int(record.get("action_index") or 0)
+    action_label = safe_label(str(record.get("action_label") or f"action_{action_index}"))
+    sample_index = int(record.get("sample_index") or 0)
+    return (
+        f"{instance_id}__step_{step_index:04d}__action_{action_index:02d}"
+        f"__{action_label}__sample_{sample_index:03d}"
+    )
+
+
 def _load_existing_results(results_path: Path) -> dict[str, dict[str, Any]]:
     if not results_path.exists():
         return {}
@@ -273,7 +287,32 @@ def _existing_record_is_error(record: dict[str, Any]) -> bool:
     return False
 
 
-def _write_preds_file(results: list[dict[str, Any]], *, output_dir: Path, model_name: str) -> Path:
+def _write_rollout_preds_file(results: list[dict[str, Any]], *, output_dir: Path, model_name: str) -> Path:
+    preds_payload: dict[str, dict[str, Any]] = {}
+    for record in sorted(
+        results,
+        key=lambda item: (
+            str(item.get("instance_id") or ""),
+            int(item.get("step_index") or 0),
+            int(item.get("action_index") or 0),
+            int(item.get("sample_index") or 0),
+        ),
+    ):
+        pred_id = _rollout_pred_id(record)
+        if pred_id is None:
+            continue
+        preds_payload[pred_id] = {
+            "model_name_or_path": model_name,
+            "instance_id": pred_id,
+            "model_patch": str(record.get("submission") or ""),
+        }
+
+    preds_path = output_dir / "preds.json"
+    preds_path.write_text(json.dumps(preds_payload, indent=2, ensure_ascii=False))
+    return preds_path
+
+
+def _write_instance_preds_file(results: list[dict[str, Any]], *, output_dir: Path, model_name: str) -> Path:
     by_instance: dict[str, list[dict[str, Any]]] = {}
     for record in results:
         instance_id = record.get("instance_id")
@@ -290,7 +329,7 @@ def _write_preds_file(results: list[dict[str, Any]], *, output_dir: Path, model_
             "model_patch": str(selected.get("submission") or ""),
         }
 
-    preds_path = output_dir / "preds.json"
+    preds_path = output_dir / "preds_by_instance.json"
     preds_path.write_text(json.dumps(preds_payload, indent=2, ensure_ascii=False))
     return preds_path
 
@@ -590,7 +629,12 @@ def generate_monte_carlo_rollouts(
             handle.write("\n")
 
     resolved_model_name = str(((resolved_config.get("model") or {}).get("model_name")) or "")
-    preds_path = _write_preds_file(all_results, output_dir=output_dir, model_name=resolved_model_name)
+    preds_path = _write_rollout_preds_file(all_results, output_dir=output_dir, model_name=resolved_model_name)
+    preds_by_instance_path = _write_instance_preds_file(
+        all_results,
+        output_dir=output_dir,
+        model_name=resolved_model_name,
+    )
 
     exit_counts = Counter(record.get("rollout_exit_status") or "Unknown" for record in all_results)
     summary = {
@@ -607,6 +651,7 @@ def generate_monte_carlo_rollouts(
         "redo_existing": redo_existing,
         "redo_errors": redo_errors,
         "preds_json": str(preds_path),
+        "preds_by_instance_json": str(preds_by_instance_path),
         "counts": {
             "rows_loaded": len(filtered_rows),
             "rows_skipped": sum(skipped_rows.values()),
@@ -616,7 +661,8 @@ def generate_monte_carlo_rollouts(
             "tasks_total_in_results": len(all_results),
             "replay_failures": sum(1 for record in all_results if record.get("replay_status") == "error"),
             "solved": exit_counts.get("Submitted", 0),
-            "pred_instances": len(json.loads(preds_path.read_text())),
+            "pred_rollouts": len(json.loads(preds_path.read_text())),
+            "pred_instances": len(json.loads(preds_by_instance_path.read_text())),
         },
         "skipped_rows": dict(skipped_rows),
         "skipped_tasks": dict(skipped_tasks),

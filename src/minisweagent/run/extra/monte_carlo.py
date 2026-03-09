@@ -9,14 +9,18 @@ import copy
 import json
 import time
 from collections import Counter
+from contextlib import nullcontext
 from pathlib import Path
+from types import MethodType
 from typing import Any
 
 import typer
 from datasets import load_dataset
 from rich.console import Console
+from rich.live import Live
 
 from minisweagent.agents import get_agent
+from minisweagent.agents.default import DefaultAgent
 from minisweagent.config import get_config_from_spec
 from minisweagent.exceptions import FormatError, InterruptAgentFlow
 from minisweagent.models import get_model
@@ -26,6 +30,7 @@ from minisweagent.run.benchmarks.swebench import (
     _resolve_profiled_model_config,
     get_sb_environment,
 )
+from minisweagent.run.benchmarks.utils.batch_progress import RunBatchProgressManager
 from minisweagent.run.extra.utils.trajectory_replay import (
     ReplayError,
     build_candidate_branch_message,
@@ -109,6 +114,16 @@ def _task_key(
     return f"{instance_id}::{step_index}::{action_index}::{sample_index}"
 
 
+def _task_display_id(
+    *,
+    instance_id: str,
+    step_index: int,
+    action_label: str,
+    sample_index: int,
+) -> str:
+    return f"{instance_id} s{step_index} {action_label} #{sample_index}"
+
+
 def _is_terminal(agent: Any) -> bool:
     return bool(agent.messages and isinstance(agent.messages[-1], dict) and agent.messages[-1].get("role") == "exit")
 
@@ -185,6 +200,24 @@ def _save_rollout(agent: Any, path: Path, instance_id: str, rollout_info: dict[s
             },
         },
     )
+
+
+def _install_progress_tracking(agent: Any, progress_manager: RunBatchProgressManager | None, display_id: str) -> None:
+    if progress_manager is None or not isinstance(agent, DefaultAgent):
+        return
+
+    original_step = agent.step
+    agent._mc_display_step = 0
+
+    def step_with_progress(self):
+        self._mc_display_step += 1
+        progress_manager.update_instance_status(
+            display_id,
+            f"Step {self._mc_display_step:3d} (${self.cost:.2f})",
+        )
+        return original_step()
+
+    agent.step = MethodType(step_with_progress, agent)
 
 
 def _prediction_priority(record: dict[str, Any]) -> tuple[int, int, int, int, int]:
@@ -273,13 +306,24 @@ def _run_single_rollout(
     instance: dict[str, Any],
     output_dir: Path,
     max_rollout_steps: int,
+    progress_manager: RunBatchProgressManager | None = None,
 ) -> dict[str, Any]:
     instance_id = str(row.get("instance_id") or instance.get("instance_id") or "")
     step = int(row.get("step_index") or 0)
     label = candidate_label(action, action_index)
+    display_id = _task_display_id(
+        instance_id=instance_id,
+        step_index=step,
+        action_label=safe_label(label),
+        sample_index=sample_index,
+    )
     started_at = time.time()
     agent = None
     trajectory_path: Path | None = None
+
+    if progress_manager is not None:
+        progress_manager.on_instance_start(display_id)
+        progress_manager.update_instance_status(display_id, "Initializing")
 
     branch_result: dict[str, Any] = {
         "task_key": _task_key(
@@ -323,13 +367,18 @@ def _run_single_rollout(
         model = get_model(config=config.get("model", {}))
         env = get_sb_environment(config, instance)
         agent = get_agent(model, env, config.get("agent", {}), default_type="default")
+        _install_progress_tracking(agent, progress_manager, display_id)
 
+        if progress_manager is not None:
+            progress_manager.update_instance_status(display_id, "Replaying prefix")
         replay_summary = seed_agent_from_history(agent, row)
         branch_result["replay_status"] = "ok"
         branch_result["replayed_prefix_steps"] = replay_summary.replayed_prefix_steps
 
         branch_message = build_candidate_branch_message(action, action_index=action_index)
         agent.add_messages(branch_message)
+        if progress_manager is not None:
+            progress_manager.update_instance_status(display_id, "Forced branch")
         try:
             agent.execute_actions(branch_message)
         except InterruptAgentFlow as exc:
@@ -338,6 +387,8 @@ def _run_single_rollout(
             agent.handle_uncaught_exception(exc)
 
         if not _is_terminal(agent):
+            if progress_manager is not None:
+                progress_manager.update_instance_status(display_id, "Continuing rollout")
             branch_result["rollout_executed_steps"] = _continue_rollout(agent, max_rollout_steps=max_rollout_steps)
         else:
             branch_result["rollout_executed_steps"] = 0
@@ -390,6 +441,8 @@ def _run_single_rollout(
         branch_result["trajectory_path"] = str(trajectory_path) if trajectory_path is not None else None
         return branch_result
     finally:
+        if progress_manager is not None:
+            progress_manager.on_instance_end(display_id, str(branch_result.get("rollout_exit_status")))
         if agent is not None and hasattr(agent, "env"):
             cleanup = getattr(agent.env, "cleanup", None)
             if callable(cleanup):
@@ -490,34 +543,35 @@ def generate_monte_carlo_rollouts(
                     }
                 )
 
-    progress = None
-    if show_progress and _tqdm is not None:
-        progress = _tqdm(total=len(tasks), desc="Rollouts", unit="rollout", leave=True)
+    progress_manager = None
+    if show_progress:
+        progress_manager = RunBatchProgressManager(
+            len(tasks),
+            output_dir / f"exit_statuses_{time.time()}.yaml",
+        )
 
     results: list[dict[str, Any]] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_map = {
-            executor.submit(
-                _run_single_rollout,
-                line_no=task["line_no"],
-                row=task["row"],
-                action=task["action"],
-                action_index=task["action_index"],
-                sample_index=task["sample_index"],
-                config=copy.deepcopy(resolved_config),
-                instance=task["instance"],
-                output_dir=output_dir,
-                max_rollout_steps=max_rollout_steps,
-            ): task
-            for task in tasks
-        }
-        for future in concurrent.futures.as_completed(future_map):
-            results.append(future.result())
-            if progress is not None:
-                progress.update(1)
-
-    if progress is not None:
-        progress.close()
+    live_context = Live(progress_manager.render_group, refresh_per_second=4) if progress_manager else nullcontext()
+    with live_context:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_map = {
+                executor.submit(
+                    _run_single_rollout,
+                    line_no=task["line_no"],
+                    row=task["row"],
+                    action=task["action"],
+                    action_index=task["action_index"],
+                    sample_index=task["sample_index"],
+                    config=copy.deepcopy(resolved_config),
+                    instance=task["instance"],
+                    output_dir=output_dir,
+                    max_rollout_steps=max_rollout_steps,
+                    progress_manager=progress_manager,
+                ): task
+                for task in tasks
+            }
+            for future in concurrent.futures.as_completed(future_map):
+                results.append(future.result())
 
     all_results: list[dict[str, Any]] = preserved_records + results
     all_results = sorted(

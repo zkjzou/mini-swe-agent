@@ -15,6 +15,7 @@ The goal is to let a user take a merged verifier-action dataset row from `merged
 - [x] (2026-03-08 18:15Z) Implemented the `mini-extra monte-carlo-rollout` command in `src/minisweagent/run/extra/monte_carlo.py` and wired it into `src/minisweagent/run/utilities/mini_extra.py`.
 - [x] (2026-03-08 18:25Z) Added targeted tests in `tests/run/test_monte_carlo_rollout.py` covering replay, branch message construction, end-to-end rollout generation, CLI invocation, dispatcher wiring, and `preds.json` export.
 - [x] (2026-03-08 18:45Z) Added `--redo-existing` and `--redo-errors` semantics plus tests so reruns can skip or selectively recompute existing rollout tasks.
+- [x] (2026-03-08 19:05Z) Added SWE-bench-style live progress reporting so rollout tasks show instance/step/action status during replay and continuation.
 - [ ] (2026-03-08 18:25Z) Documentation page for the new command remains to be written if user-facing docs are desired.
 
 ## Surprises & Discoveries
@@ -73,6 +74,8 @@ After the prefix is seeded, the runner synthesizes a branch assistant message fr
 Each rollout writes a `.traj.json` file under the output directory and records a compact JSON row with identifiers, candidate metadata, replay status, exit status, cost, and saved trajectory path. The top-level summary file aggregates counts for rows loaded, tasks planned/completed, replay failures, skipped-existing task counts, and terminal outcomes such as `Submitted`.
 
 The runner also supports SWE-bench-like rerun controls. By default it skips rollout tasks already present in `results.jsonl`. `--redo-errors` reruns only tasks whose previous result had an error or missing trajectory output, while preserving successful existing rows. `--redo-existing` reruns all matching tasks and overrides `--redo-errors`.
+
+When progress display is enabled, the runner uses the same `RunBatchProgressManager` pattern as the SWE-bench batch runner. Each rollout task gets its own live status line showing the instance, step, candidate/sample, and current phase such as replay, forced branch, or continuation step count.
 
 After all rollout rows are written, the runner also writes `preds.json` in the standard SWE-bench format. The export groups results by `instance_id` and chooses one rollout deterministically, preferring a non-empty `Submitted` patch, then any non-empty submission, then an empty patch if no rollout submitted successfully. This keeps downstream SWE-bench tooling compatible with Monte Carlo outputs.
 
@@ -160,3 +163,5 @@ Update (2026-03-08): Replaced the older saved-trajectory Monte Carlo design with
 Update (2026-03-08): Added automatic `preds.json` export from Monte Carlo results so downstream SWE-bench evaluation can consume rollout outputs directly.
 
 Update (2026-03-08): Added `--redo-existing` and `--redo-errors` handling for Monte Carlo tasks, using existing `results.jsonl` as the skip/rerun source of truth.
+
+Update (2026-03-08): Added SWE-bench-style live progress output for Monte Carlo rollout tasks using `RunBatchProgressManager` and `rich.Live`.

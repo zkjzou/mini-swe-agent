@@ -463,6 +463,72 @@ def test_generate_monte_carlo_rollouts_redo_existing_reruns_all(tmp_path, monkey
     assert summary["counts"]["tasks_skipped_existing"] == 0
 
 
+def test_generate_monte_carlo_rollouts_passes_progress_manager_when_enabled(tmp_path, monkeypatch):
+    row = _make_row()
+    input_jsonl = tmp_path / "merged.jsonl"
+    input_jsonl.write_text(json.dumps(row) + "\n")
+    config_path = tmp_path / "mc.yaml"
+    _write_config(config_path, tmp_path)
+
+    monkeypatch.setattr(
+        "minisweagent.run.extra.monte_carlo.load_dataset",
+        lambda *args, **kwargs: [{"instance_id": "repo__issue-1", "problem_statement": "Fix the issue"}],
+    )
+
+    observed = {"progress_manager": None, "live_used": False}
+
+    class _FakeProgressManager:
+        def __init__(self, *args, **kwargs):
+            self.render_group = object()
+
+    class _FakeLive:
+        def __init__(self, *args, **kwargs):
+            observed["live_used"] = True
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def _fake_run_single_rollout(**kwargs):
+        observed["progress_manager"] = kwargs["progress_manager"]
+        return {
+            "task_key": f"repo__issue-1::1::{kwargs['action_index']}::{kwargs['sample_index']}",
+            "instance_id": "repo__issue-1",
+            "step_index": 1,
+            "action_index": kwargs["action_index"],
+            "sample_index": kwargs["sample_index"],
+            "action_label": "alt" if kwargs["action_index"] else "gold",
+            "is_gold": kwargs["action_index"] == 0,
+            "submission": "",
+            "rollout_exit_status": "RolloutStepLimitReached",
+            "replay_status": "ok",
+            "trajectory_path": str(tmp_path / "out" / f"{kwargs['action_index']}.traj.json"),
+            "error": None,
+        }
+
+    monkeypatch.setattr("minisweagent.run.extra.monte_carlo.RunBatchProgressManager", _FakeProgressManager)
+    monkeypatch.setattr("minisweagent.run.extra.monte_carlo.Live", _FakeLive)
+    monkeypatch.setattr("minisweagent.run.extra.monte_carlo._run_single_rollout", _fake_run_single_rollout)
+
+    summary = generate_monte_carlo_rollouts(
+        input_jsonl=input_jsonl,
+        subset="verified",
+        split="dev",
+        config_specs=[str(config_path)],
+        output_dir=tmp_path / "out",
+        samples_per_action=1,
+        max_rollout_steps=1,
+        max_workers=1,
+        show_progress=True,
+    )
+
+    assert observed["progress_manager"] is not None
+    assert observed["live_used"] is True
+    assert summary["counts"]["tasks_completed"] == 2
+
+
 def test_mini_extra_dispatch_exposes_monte_carlo(monkeypatch):
     called = {}
 

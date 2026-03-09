@@ -114,6 +114,19 @@ def _make_submit_model() -> DeterministicToolcallModel:
     )
 
 
+def _write_existing_results(path: Path, records: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record))
+            handle.write("\n")
+
+
+def _write_placeholder_file(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{}")
+
+
 def test_seed_agent_from_history_replays_live_commands(tmp_path):
     from minisweagent.agents import get_agent
     from minisweagent.models.test_models import DeterministicToolcallModel
@@ -237,6 +250,217 @@ def test_monte_carlo_cli_invokes_generator(monkeypatch, tmp_path):
     assert called["limit_rows"] == 2
     assert called["instance_filter"] == ["repo__issue-1"]
     assert called["step_index"] == 4
+
+
+def test_generate_monte_carlo_rollouts_skips_existing_by_default(tmp_path, monkeypatch):
+    row = _make_row()
+    input_jsonl = tmp_path / "merged.jsonl"
+    input_jsonl.write_text(json.dumps(row) + "\n")
+    config_path = tmp_path / "mc.yaml"
+    _write_config(config_path, tmp_path)
+
+    existing_record = {
+        "task_key": "repo__issue-1::1::0::0",
+        "instance_id": "repo__issue-1",
+        "step_index": 1,
+        "action_index": 0,
+        "sample_index": 0,
+        "action_label": "gold",
+        "is_gold": True,
+        "submission": "old_patch",
+        "rollout_exit_status": "Submitted",
+        "replay_status": "ok",
+        "trajectory_path": str(tmp_path / "out" / "existing.traj.json"),
+        "error": None,
+    }
+    _write_placeholder_file(Path(existing_record["trajectory_path"]))
+    _write_existing_results(tmp_path / "out" / "results.jsonl", [existing_record])
+
+    monkeypatch.setattr("minisweagent.run.extra.monte_carlo.load_dataset", lambda *args, **kwargs: [{"instance_id": "repo__issue-1", "problem_statement": "Fix the issue"}])
+
+    called = {"count": 0}
+
+    def _fake_run_single_rollout(**kwargs):
+        called["count"] += 1
+        return {
+            "task_key": f"repo__issue-1::1::{kwargs['action_index']}::{kwargs['sample_index']}",
+            "instance_id": "repo__issue-1",
+            "step_index": 1,
+            "action_index": kwargs["action_index"],
+            "sample_index": kwargs["sample_index"],
+            "action_label": "alt" if kwargs["action_index"] else "gold",
+            "is_gold": kwargs["action_index"] == 0,
+            "submission": "new_patch",
+            "rollout_exit_status": "Submitted",
+            "replay_status": "ok",
+            "trajectory_path": str(tmp_path / "out" / f"{kwargs['action_index']}_{kwargs['sample_index']}.traj.json"),
+            "error": None,
+        }
+
+    monkeypatch.setattr("minisweagent.run.extra.monte_carlo._run_single_rollout", _fake_run_single_rollout)
+
+    summary = generate_monte_carlo_rollouts(
+        input_jsonl=input_jsonl,
+        subset="verified",
+        split="dev",
+        config_specs=[str(config_path)],
+        output_dir=tmp_path / "out",
+        samples_per_action=1,
+        max_rollout_steps=1,
+        max_workers=1,
+        show_progress=False,
+    )
+
+    assert called["count"] == 1
+    assert summary["counts"]["tasks_skipped_existing"] == 1
+    preds = json.loads((tmp_path / "out" / "preds.json").read_text())
+    assert preds["repo__issue-1"]["model_patch"] == "old_patch"
+
+
+def test_generate_monte_carlo_rollouts_redo_errors_only(tmp_path, monkeypatch):
+    row = _make_row()
+    input_jsonl = tmp_path / "merged.jsonl"
+    input_jsonl.write_text(json.dumps(row) + "\n")
+    config_path = tmp_path / "mc.yaml"
+    _write_config(config_path, tmp_path)
+
+    ok_record = {
+        "task_key": "repo__issue-1::1::0::0",
+        "instance_id": "repo__issue-1",
+        "step_index": 1,
+        "action_index": 0,
+        "sample_index": 0,
+        "action_label": "gold",
+        "is_gold": True,
+        "submission": "old_patch",
+        "rollout_exit_status": "Submitted",
+        "replay_status": "ok",
+        "trajectory_path": str(tmp_path / "out" / "ok.traj.json"),
+        "error": None,
+    }
+    err_record = {
+        "task_key": "repo__issue-1::1::1::0",
+        "instance_id": "repo__issue-1",
+        "step_index": 1,
+        "action_index": 1,
+        "sample_index": 0,
+        "action_label": "alt",
+        "is_gold": False,
+        "submission": "",
+        "rollout_exit_status": "RuntimeError",
+        "replay_status": "error",
+        "trajectory_path": str(tmp_path / "out" / "missing.traj.json"),
+        "error": {"type": "RuntimeError", "message": "boom"},
+    }
+    _write_placeholder_file(Path(ok_record["trajectory_path"]))
+    _write_existing_results(tmp_path / "out" / "results.jsonl", [ok_record, err_record])
+
+    monkeypatch.setattr("minisweagent.run.extra.monte_carlo.load_dataset", lambda *args, **kwargs: [{"instance_id": "repo__issue-1", "problem_statement": "Fix the issue"}])
+
+    called = {"count": 0}
+
+    def _fake_run_single_rollout(**kwargs):
+        called["count"] += 1
+        return {
+            "task_key": "repo__issue-1::1::1::0",
+            "instance_id": "repo__issue-1",
+            "step_index": 1,
+            "action_index": 1,
+            "sample_index": 0,
+            "action_label": "alt",
+            "is_gold": False,
+            "submission": "new_patch",
+            "rollout_exit_status": "Submitted",
+            "replay_status": "ok",
+            "trajectory_path": str(tmp_path / "out" / "rerun.traj.json"),
+            "error": None,
+        }
+
+    monkeypatch.setattr("minisweagent.run.extra.monte_carlo._run_single_rollout", _fake_run_single_rollout)
+
+    summary = generate_monte_carlo_rollouts(
+        input_jsonl=input_jsonl,
+        subset="verified",
+        split="dev",
+        config_specs=[str(config_path)],
+        output_dir=tmp_path / "out",
+        samples_per_action=1,
+        max_rollout_steps=1,
+        max_workers=1,
+        redo_errors=True,
+        show_progress=False,
+    )
+
+    assert called["count"] == 1
+    assert summary["counts"]["tasks_skipped_existing"] == 1
+    rows = [json.loads(line) for line in (tmp_path / "out" / "results.jsonl").read_text().splitlines()]
+    assert len(rows) == 2
+    rerun = next(row for row in rows if row["action_index"] == 1)
+    assert rerun["submission"] == "new_patch"
+
+
+def test_generate_monte_carlo_rollouts_redo_existing_reruns_all(tmp_path, monkeypatch):
+    row = _make_row()
+    input_jsonl = tmp_path / "merged.jsonl"
+    input_jsonl.write_text(json.dumps(row) + "\n")
+    config_path = tmp_path / "mc.yaml"
+    _write_config(config_path, tmp_path)
+
+    old_record = {
+        "task_key": "repo__issue-1::1::0::0",
+        "instance_id": "repo__issue-1",
+        "step_index": 1,
+        "action_index": 0,
+        "sample_index": 0,
+        "action_label": "gold",
+        "is_gold": True,
+        "submission": "old_patch",
+        "rollout_exit_status": "Submitted",
+        "replay_status": "ok",
+        "trajectory_path": str(tmp_path / "out" / "old.traj.json"),
+        "error": None,
+    }
+    _write_placeholder_file(Path(old_record["trajectory_path"]))
+    _write_existing_results(tmp_path / "out" / "results.jsonl", [old_record])
+
+    monkeypatch.setattr("minisweagent.run.extra.monte_carlo.load_dataset", lambda *args, **kwargs: [{"instance_id": "repo__issue-1", "problem_statement": "Fix the issue"}])
+
+    called = {"count": 0}
+
+    def _fake_run_single_rollout(**kwargs):
+        called["count"] += 1
+        return {
+            "task_key": f"repo__issue-1::1::{kwargs['action_index']}::{kwargs['sample_index']}",
+            "instance_id": "repo__issue-1",
+            "step_index": 1,
+            "action_index": kwargs["action_index"],
+            "sample_index": kwargs["sample_index"],
+            "action_label": "alt" if kwargs["action_index"] else "gold",
+            "is_gold": kwargs["action_index"] == 0,
+            "submission": "rerun_patch",
+            "rollout_exit_status": "Submitted",
+            "replay_status": "ok",
+            "trajectory_path": str(tmp_path / "out" / f"rerun_{kwargs['action_index']}.traj.json"),
+            "error": None,
+        }
+
+    monkeypatch.setattr("minisweagent.run.extra.monte_carlo._run_single_rollout", _fake_run_single_rollout)
+
+    summary = generate_monte_carlo_rollouts(
+        input_jsonl=input_jsonl,
+        subset="verified",
+        split="dev",
+        config_specs=[str(config_path)],
+        output_dir=tmp_path / "out",
+        samples_per_action=1,
+        max_rollout_steps=1,
+        max_workers=1,
+        redo_existing=True,
+        show_progress=False,
+    )
+
+    assert called["count"] == 2
+    assert summary["counts"]["tasks_skipped_existing"] == 0
 
 
 def test_mini_extra_dispatch_exposes_monte_carlo(monkeypatch):

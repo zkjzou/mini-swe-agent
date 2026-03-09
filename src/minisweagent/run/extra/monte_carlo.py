@@ -99,6 +99,16 @@ def _load_rows(
     return rows
 
 
+def _task_key(
+    *,
+    instance_id: str,
+    step_index: int,
+    action_index: int,
+    sample_index: int,
+) -> str:
+    return f"{instance_id}::{step_index}::{action_index}::{sample_index}"
+
+
 def _is_terminal(agent: Any) -> bool:
     return bool(agent.messages and isinstance(agent.messages[-1], dict) and agent.messages[-1].get("role") == "exit")
 
@@ -195,6 +205,41 @@ def _prediction_priority(record: dict[str, Any]) -> tuple[int, int, int, int, in
     )
 
 
+def _load_existing_results(results_path: Path) -> dict[str, dict[str, Any]]:
+    if not results_path.exists():
+        return {}
+    existing: dict[str, dict[str, Any]] = {}
+    with results_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                continue
+            instance_id = record.get("instance_id")
+            if not isinstance(instance_id, str) or not instance_id:
+                continue
+            key = _task_key(
+                instance_id=instance_id,
+                step_index=int(record.get("step_index") or 0),
+                action_index=int(record.get("action_index") or 0),
+                sample_index=int(record.get("sample_index") or 0),
+            )
+            existing[key] = record
+    return existing
+
+
+def _existing_record_is_error(record: dict[str, Any]) -> bool:
+    if record.get("error") not in (None, {}):
+        return True
+    if record.get("replay_status") == "error":
+        return True
+    trajectory_path = record.get("trajectory_path")
+    if isinstance(trajectory_path, str) and trajectory_path and not Path(trajectory_path).exists():
+        return True
+    return False
+
+
 def _write_preds_file(results: list[dict[str, Any]], *, output_dir: Path, model_name: str) -> Path:
     by_instance: dict[str, list[dict[str, Any]]] = {}
     for record in results:
@@ -237,6 +282,12 @@ def _run_single_rollout(
     trajectory_path: Path | None = None
 
     branch_result: dict[str, Any] = {
+        "task_key": _task_key(
+            instance_id=instance_id,
+            step_index=step,
+            action_index=action_index,
+            sample_index=sample_index,
+        ),
         "line_no": line_no,
         "instance_id": instance_id,
         "step_index": step,
@@ -361,6 +412,8 @@ def generate_monte_carlo_rollouts(
     model_name: str | None = None,
     model_class: str | None = None,
     environment_class: str | None = None,
+    redo_existing: bool = False,
+    redo_errors: bool = False,
     show_progress: bool = True,
 ) -> dict[str, Any]:
     if samples_per_action < 1:
@@ -386,9 +439,14 @@ def generate_monte_carlo_rollouts(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     results_path = output_dir / "results.jsonl"
+    existing_results = _load_existing_results(results_path)
 
     tasks: list[dict[str, Any]] = []
     skipped_rows = Counter()
+    skipped_tasks = Counter()
+    preserved_records: list[dict[str, Any]] = []
+    if redo_existing and redo_errors:
+        console.print("--redo-existing overrides --redo-errors; rerunning all rollout tasks.")
     for line_no, row in filtered_rows:
         instance_id = row.get("instance_id")
         if not isinstance(instance_id, str) or instance_id not in instance_lookup:
@@ -403,8 +461,26 @@ def generate_monte_carlo_rollouts(
                 skipped_rows["non_mapping_action"] += 1
                 continue
             for sample_index in range(samples_per_action):
+                task_key = _task_key(
+                    instance_id=instance_id,
+                    step_index=int(row.get("step_index") or 0),
+                    action_index=action_index,
+                    sample_index=sample_index,
+                )
+                existing_record = existing_results.get(task_key)
+                if existing_record is not None and not redo_existing:
+                    if redo_errors:
+                        if not _existing_record_is_error(existing_record):
+                            preserved_records.append(existing_record)
+                            skipped_tasks["existing_non_error"] += 1
+                            continue
+                    else:
+                        preserved_records.append(existing_record)
+                        skipped_tasks["existing"] += 1
+                        continue
                 tasks.append(
                     {
+                        "task_key": task_key,
                         "line_no": line_no,
                         "row": row,
                         "action": action,
@@ -443,15 +519,26 @@ def generate_monte_carlo_rollouts(
     if progress is not None:
         progress.close()
 
+    all_results: list[dict[str, Any]] = preserved_records + results
+    all_results = sorted(
+        all_results,
+        key=lambda record: (
+            str(record.get("instance_id") or ""),
+            int(record.get("step_index") or 0),
+            int(record.get("action_index") or 0),
+            int(record.get("sample_index") or 0),
+        ),
+    )
+
     with results_path.open("w", encoding="utf-8") as handle:
-        for record in results:
+        for record in all_results:
             handle.write(json.dumps(record, ensure_ascii=False, default=str))
             handle.write("\n")
 
     resolved_model_name = str(((resolved_config.get("model") or {}).get("model_name")) or "")
-    preds_path = _write_preds_file(results, output_dir=output_dir, model_name=resolved_model_name)
+    preds_path = _write_preds_file(all_results, output_dir=output_dir, model_name=resolved_model_name)
 
-    exit_counts = Counter(record.get("rollout_exit_status") or "Unknown" for record in results)
+    exit_counts = Counter(record.get("rollout_exit_status") or "Unknown" for record in all_results)
     summary = {
         "input_jsonl": str(input_jsonl),
         "subset": subset,
@@ -463,17 +550,22 @@ def generate_monte_carlo_rollouts(
         "limit_rows": limit_rows,
         "instance_filter": list(instance_filter or []),
         "step_index": step_index,
+        "redo_existing": redo_existing,
+        "redo_errors": redo_errors,
         "preds_json": str(preds_path),
         "counts": {
             "rows_loaded": len(filtered_rows),
             "rows_skipped": sum(skipped_rows.values()),
             "tasks_planned": len(tasks),
+            "tasks_skipped_existing": sum(skipped_tasks.values()),
             "tasks_completed": len(results),
-            "replay_failures": sum(1 for record in results if record.get("replay_status") == "error"),
+            "tasks_total_in_results": len(all_results),
+            "replay_failures": sum(1 for record in all_results if record.get("replay_status") == "error"),
             "solved": exit_counts.get("Submitted", 0),
             "pred_instances": len(json.loads(preds_path.read_text())),
         },
         "skipped_rows": dict(skipped_rows),
+        "skipped_tasks": dict(skipped_tasks),
         "exit_status_counts": dict(exit_counts),
         "results_jsonl": str(results_path),
     }
@@ -499,6 +591,8 @@ def main(
     model_name: str | None = typer.Option(None, "-m", "--model", help="Optional actor model override"),
     model_class: str | None = typer.Option(None, "--model-class", help="Optional actor model class override"),
     environment_class: str | None = typer.Option(None, "--environment-class", help="Optional environment class override"),
+    redo_existing: bool = typer.Option(False, "--redo-existing", help="Redo existing rollout tasks"),
+    redo_errors: bool = typer.Option(False, "--redo-errors", help="Redo only existing rollout tasks whose prior result was an error"),
     show_progress: bool = typer.Option(True, "--show-progress/--no-show-progress", help="Display tqdm progress if available"),
 ) -> None:
     # fmt: on
@@ -518,6 +612,8 @@ def main(
             model_name=model_name,
             model_class=model_class,
             environment_class=environment_class,
+            redo_existing=redo_existing,
+            redo_errors=redo_errors,
             show_progress=show_progress,
         )
     except Exception as exc:  # noqa: BLE001

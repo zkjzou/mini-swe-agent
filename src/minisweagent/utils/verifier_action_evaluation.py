@@ -20,6 +20,7 @@ from minisweagent.models.utils.content_string import get_content_string
 from minisweagent.run.benchmarks.swebench import DEFAULT_CONFIG_FILE, _resolve_profiled_model_config
 from minisweagent.utils.serialize import recursive_merge
 from minisweagent.verifiers.checklist import generate_issue_checklist, resolve_checklist_output_format
+from minisweagent.verifiers.first_valid import FirstValidVerifier
 from minisweagent.verifiers.llm import LLMVerifier
 from minisweagent.verifiers.prompt_loader import apply_prompt_overrides
 from minisweagent.verifiers.reward_model import RewardModelVerifier
@@ -29,25 +30,192 @@ try:
 except Exception:  # pragma: no cover - tqdm may be unavailable in some environments
     _tqdm = None
 
-VerifierType = Literal["llm", "reward_model"]
+VerifierType = Literal["first_valid", "llm", "reward_model"]
+
+
+@dataclass(frozen=True)
+class _VerifierVariantSpec:
+    name: str
+    verifier_type: VerifierType
+    prompt_name: str | None = None
+    prompt_dir: str | None = None
+    config_overrides: dict[str, Any] = field(default_factory=dict)
+
+
+_WORLD_SELECTION_SCORE_REGEX = (
+    r"(?ms)Candidate\s+(\d+)\s*:\s*.*?SCORES:\s*([+-]?\d+(?:\.\d+)?)"
+)
+_CHECKLIST_STATIC_OVERRIDES = {
+    "checklist_mode": "issue_progress",
+    "checklist_dynamic": False,
+    "checklist_update_mode": "regenerate",
+}
+_DYNAMIC_CHECKLIST_REGENERATE_OVERRIDES = {
+    "checklist_mode": "issue_progress",
+    "checklist_dynamic": True,
+    "checklist_update_mode": "regenerate",
+}
+_DYNAMIC_CHECKLIST_MODIFY_OVERRIDES = {
+    "checklist_mode": "issue_progress",
+    "checklist_dynamic": True,
+    "checklist_update_mode": "modify",
+}
+_NON_CHECKLIST_OVERRIDES = {
+    "checklist_mode": "off",
+    "checklist_dynamic": False,
+    "checklist_update_mode": "regenerate",
+}
+_VERIFIER_VARIANTS: tuple[_VerifierVariantSpec, ...] = (
+    _VerifierVariantSpec(name="first_valid", verifier_type="first_valid"),
+    _VerifierVariantSpec(
+        name="basic_verifier",
+        verifier_type="llm",
+        prompt_name="basic/verifier",
+        prompt_dir="prompts/verifier",
+        config_overrides=_NON_CHECKLIST_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="swebench_verifier",
+        verifier_type="llm",
+        prompt_name="swebench/verifier",
+        prompt_dir="prompts/verifier",
+        config_overrides=_NON_CHECKLIST_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="domain_verifier",
+        verifier_type="llm",
+        prompt_name="domain/verifier",
+        prompt_dir="prompts/verifier",
+        config_overrides=_NON_CHECKLIST_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="domain_v2_verifier",
+        verifier_type="llm",
+        prompt_name="domain_v2/verifier",
+        prompt_dir="prompts/verifier",
+        config_overrides=_NON_CHECKLIST_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="world_verifier",
+        verifier_type="llm",
+        prompt_name="world/verifier",
+        prompt_dir="prompts/verifier",
+        config_overrides={**_NON_CHECKLIST_OVERRIDES, "selection_score_regex": _WORLD_SELECTION_SCORE_REGEX},
+    ),
+    _VerifierVariantSpec(
+        name="checklist_verifier",
+        verifier_type="llm",
+        prompt_name="checklist/verifier",
+        prompt_dir="prompts/verifier",
+        config_overrides=_CHECKLIST_STATIC_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="checklist_v2_verifier",
+        verifier_type="llm",
+        prompt_name="checklist_v2/verifier",
+        prompt_dir="prompts/verifier",
+        config_overrides=_CHECKLIST_STATIC_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="dynamic_checklist_regenerate_verifier",
+        verifier_type="llm",
+        prompt_name="dynamic_checklist_regenerate/verifier",
+        prompt_dir="prompts/verifier",
+        config_overrides=_DYNAMIC_CHECKLIST_REGENERATE_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="dynamic_checklist_modify_verifier",
+        verifier_type="llm",
+        prompt_name="dynamic_checklist_modify/verifier",
+        prompt_dir="prompts/verifier",
+        config_overrides=_DYNAMIC_CHECKLIST_MODIFY_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="basic_reward",
+        verifier_type="reward_model",
+        prompt_name="basic/reward",
+        prompt_dir="prompts/verifier",
+        config_overrides=_NON_CHECKLIST_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="swebench_reward",
+        verifier_type="reward_model",
+        prompt_name="swebench/reward",
+        prompt_dir="prompts/verifier",
+        config_overrides=_NON_CHECKLIST_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="domain_reward",
+        verifier_type="reward_model",
+        prompt_name="domain/reward",
+        prompt_dir="prompts/verifier",
+        config_overrides=_NON_CHECKLIST_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="domain_v2_reward",
+        verifier_type="reward_model",
+        prompt_name="domain_v2/reward",
+        prompt_dir="prompts/verifier",
+        config_overrides=_NON_CHECKLIST_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="world_reward",
+        verifier_type="reward_model",
+        prompt_name="world/reward",
+        prompt_dir="prompts/verifier",
+        config_overrides=_NON_CHECKLIST_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="checklist_reward",
+        verifier_type="reward_model",
+        prompt_name="checklist/reward",
+        prompt_dir="prompts/verifier",
+        config_overrides=_CHECKLIST_STATIC_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="checklist_v2_reward",
+        verifier_type="reward_model",
+        prompt_name="checklist_v2/reward",
+        prompt_dir="prompts/verifier",
+        config_overrides=_CHECKLIST_STATIC_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="dynamic_checklist_regenerate_reward",
+        verifier_type="reward_model",
+        prompt_name="dynamic_checklist_regenerate/reward",
+        prompt_dir="prompts/verifier",
+        config_overrides=_DYNAMIC_CHECKLIST_REGENERATE_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="dynamic_checklist_modify_reward",
+        verifier_type="reward_model",
+        prompt_name="dynamic_checklist_modify/reward",
+        prompt_dir="prompts/verifier",
+        config_overrides=_DYNAMIC_CHECKLIST_MODIFY_OVERRIDES,
+    ),
+)
+_VERIFIER_VARIANT_BY_NAME = {spec.name: spec for spec in _VERIFIER_VARIANTS}
 
 
 @dataclass
 class _VerifierSession:
+    variant_name: str
     verifier_type: VerifierType
     config: VerifierConfig
-    verifier: LLMVerifier | RewardModelVerifier
+    verifier: FirstValidVerifier | LLMVerifier | RewardModelVerifier
     checklist_cache: dict[tuple[str, str, str], dict[str, Any]] = field(default_factory=dict)
 
 
 def _normalize_verifier_types(verifier_types: list[str] | None) -> list[VerifierType]:
     if not verifier_types:
-        return ["llm", "reward_model"]
+        return ["first_valid", "llm", "reward_model"]
     resolved: list[VerifierType] = []
     for verifier_type in verifier_types:
         raw = str(verifier_type or "").strip()
-        if raw not in {"llm", "reward_model"}:
-            raise ValueError(f"Unsupported verifier type '{verifier_type}'. Expected llm or reward_model.")
+        if raw not in {"first_valid", "llm", "reward_model"}:
+            raise ValueError(
+                f"Unsupported verifier type '{verifier_type}'. Expected first_valid, llm, or reward_model."
+            )
         typed = raw  # type: ignore[assignment]
         if typed not in resolved:
             resolved.append(typed)
@@ -69,10 +237,16 @@ def _load_resolved_config(config_specs: list[str] | None) -> tuple[dict[str, Any
 
 
 def _default_prompt_name(verifier_type: VerifierType) -> str:
-    return "swebench/verifier" if verifier_type == "llm" else "swebench/reward"
+    if verifier_type == "llm":
+        return "swebench/verifier"
+    if verifier_type == "reward_model":
+        return "swebench/reward"
+    return ""
 
 
 def _align_prompt_name(prompt_name: str | None, verifier_type: VerifierType) -> str:
+    if verifier_type == "first_valid":
+        return ""
     if not isinstance(prompt_name, str) or not prompt_name.strip():
         return _default_prompt_name(verifier_type)
     name = prompt_name.strip()
@@ -83,7 +257,29 @@ def _align_prompt_name(prompt_name: str | None, verifier_type: VerifierType) -> 
     return name
 
 
-def _build_verifier_session(config: dict[str, Any], verifier_type: VerifierType) -> _VerifierSession:
+def _resolve_verifier_variants(
+    verifier_types: list[str] | None,
+    verifier_variants: list[str] | None,
+) -> list[_VerifierVariantSpec]:
+    if verifier_variants:
+        resolved_variants: list[_VerifierVariantSpec] = []
+        for verifier_variant in verifier_variants:
+            name = str(verifier_variant or "").strip()
+            spec = _VERIFIER_VARIANT_BY_NAME.get(name)
+            if spec is None:
+                available = ", ".join(sorted(_VERIFIER_VARIANT_BY_NAME)) or "<none>"
+                raise ValueError(f"Unsupported verifier variant '{verifier_variant}'. Available variants: {available}")
+            if spec not in resolved_variants:
+                resolved_variants.append(spec)
+        if not resolved_variants:
+            raise ValueError("No verifier variants selected.")
+        return resolved_variants
+
+    resolved_types = _normalize_verifier_types(verifier_types)
+    return [spec for spec in _VERIFIER_VARIANTS if spec.verifier_type in resolved_types]
+
+
+def _build_verifier_session(config: dict[str, Any], variant_spec: _VerifierVariantSpec) -> _VerifierSession:
     agent_config = config.get("agent") or {}
     if not isinstance(agent_config, dict):
         raise ValueError("Invalid config: 'agent' must be a mapping.")
@@ -93,38 +289,53 @@ def _build_verifier_session(config: dict[str, Any], verifier_type: VerifierType)
         raise ValueError("Invalid config: 'agent.verifier' must be a mapping.")
 
     verifier_payload["enabled"] = True
-    verifier_payload["verifier_type"] = verifier_type
+    verifier_payload["verifier_type"] = variant_spec.verifier_type
+    if variant_spec.prompt_name is not None:
+        verifier_payload["prompt_name"] = variant_spec.prompt_name
+    else:
+        verifier_payload["prompt_name"] = None
+    if variant_spec.prompt_dir is not None:
+        verifier_payload["prompt_dir"] = variant_spec.prompt_dir
+    for key, value in variant_spec.config_overrides.items():
+        verifier_payload[key] = copy.deepcopy(value)
     verifier_config = VerifierConfig(**verifier_payload)
 
     if (
         verifier_config.checklist_mode == "issue_progress"
         and verifier_config.checklist_dynamic
-        and verifier_type in {"llm", "reward_model"}
+        and variant_spec.verifier_type in {"llm", "reward_model"}
         and not verifier_config.prompt_name
     ):
-        suffix = "verifier" if verifier_type == "llm" else "reward"
+        suffix = "verifier" if variant_spec.verifier_type == "llm" else "reward"
         verifier_config.prompt_name = f"dynamic_checklist_{verifier_config.checklist_update_mode}/{suffix}"
 
-    verifier_config.prompt_name = _align_prompt_name(verifier_config.prompt_name, verifier_type)
-    verifier_config = apply_prompt_overrides(verifier_config)
+    if variant_spec.verifier_type != "first_valid":
+        verifier_config.prompt_name = _align_prompt_name(verifier_config.prompt_name, variant_spec.verifier_type)
+        verifier_config = apply_prompt_overrides(verifier_config)
 
-    if verifier_config.model:
+    if variant_spec.verifier_type == "first_valid":
+        verifier = FirstValidVerifier(verifier_config)
+    elif verifier_config.model:
         verifier_config.model = _normalize_verifier_model_config(verifier_config.model)
         verifier_model = get_model(verifier_config.model.get("model_name"), verifier_config.model)
+        verifier = LLMVerifier(verifier_model, verifier_config) if variant_spec.verifier_type == "llm" else RewardModelVerifier(
+            verifier_model,
+            verifier_config,
+        )
     else:
         actor_model_config = config.get("model") or {}
         if not isinstance(actor_model_config, dict):
             raise ValueError("Invalid config: 'model' must be a mapping.")
         verifier_model = get_model(config=actor_model_config)
         _assert_safe_verifier_fallback_model(verifier_model)
-
-    if verifier_type == "llm":
-        verifier = LLMVerifier(verifier_model, verifier_config)
-    else:
-        verifier = RewardModelVerifier(verifier_model, verifier_config)
+        verifier = LLMVerifier(verifier_model, verifier_config) if variant_spec.verifier_type == "llm" else RewardModelVerifier(
+            verifier_model,
+            verifier_config,
+        )
 
     return _VerifierSession(
-        verifier_type=verifier_type,
+        variant_name=variant_spec.name,
+        verifier_type=variant_spec.verifier_type,
         config=verifier_config,
         verifier=verifier,
     )
@@ -448,6 +659,7 @@ def _evaluate_row(
     output: dict[str, Any] = {
         "row_index": row_index,
         "line_no": line_no,
+        "verifier_variant": session.variant_name,
         "verifier_type": session.verifier_type,
         "instance_id": row.get("instance_id"),
         "run_id": row.get("run_id"),
@@ -598,12 +810,14 @@ def _build_failed_task_result(
     row: dict[str, Any],
     row_index: int,
     line_no: int,
+    verifier_variant: str,
     verifier_type: str,
     exc: Exception,
 ) -> dict[str, Any]:
     return {
         "row_index": row_index,
         "line_no": line_no,
+        "verifier_variant": verifier_variant,
         "verifier_type": verifier_type,
         "instance_id": row.get("instance_id"),
         "run_id": row.get("run_id"),
@@ -618,6 +832,44 @@ def _build_failed_task_result(
     }
 
 
+def _record_metric_row(
+    *,
+    metric: dict[str, Any],
+    skip_counter: Counter,
+    failure_counter: Counter,
+    row_result: dict[str, Any],
+) -> None:
+    metric["rows_total"] += 1
+    status = row_result.get("status")
+    if status == "evaluated":
+        metric["rows_evaluated"] += 1
+        if row_result.get("selected_is_gold") is True:
+            metric["gold_pick_count"] += 1
+        metric["total_cost"] += _safe_float(row_result.get("row_cost"))
+        metric["total_api_calls"] += _safe_int(row_result.get("row_api_calls"))
+        return
+
+    if status == "skipped":
+        metric["rows_skipped"] += 1
+        skip_counter[str(row_result.get("skip_reason") or "unknown")] += 1
+        return
+
+    metric["rows_failed"] += 1
+    error_type = "unknown"
+    error = row_result.get("error")
+    if isinstance(error, dict) and isinstance(error.get("type"), str):
+        error_type = error["type"]
+    failure_counter[error_type] += 1
+
+
+def _finalize_metric_bucket(metric: dict[str, Any], skip_counter: Counter, failure_counter: Counter) -> None:
+    evaluated = _safe_int(metric.get("rows_evaluated"))
+    gold_pick_count = _safe_int(metric.get("gold_pick_count"))
+    metric["accuracy"] = (gold_pick_count / evaluated) if evaluated > 0 else 0.0
+    metric["skip_reasons"] = dict(skip_counter)
+    metric["failure_reasons"] = dict(failure_counter)
+
+
 def evaluate_verifier_action_selection(
     *,
     input_jsonl: Path,
@@ -625,6 +877,7 @@ def evaluate_verifier_action_selection(
     output_summary: Path | None = None,
     config_specs: list[str] | None = None,
     verifier_types: list[str] | None = None,
+    verifier_variants: list[str] | None = None,
     strict_five_actions: bool = True,
     limit_rows: int | None = None,
     show_progress: bool = True,
@@ -638,7 +891,8 @@ def evaluate_verifier_action_selection(
     if not overwrite and output_summary.exists():
         raise FileExistsError(f"Summary file already exists: {output_summary}")
 
-    resolved_verifier_types = _normalize_verifier_types(verifier_types)
+    resolved_variants = _resolve_verifier_variants(verifier_types, verifier_variants)
+    resolved_verifier_types = list(dict.fromkeys(spec.verifier_type for spec in resolved_variants))
     resolved_config, resolved_specs = _load_resolved_config(config_specs)
     requested_max_workers = max(1, int(max_workers))
 
@@ -649,9 +903,12 @@ def evaluate_verifier_action_selection(
         "rows_considered": 0,
         "rows_written": 0,
     }
-    metrics = {verifier_type: _init_metric_bucket() for verifier_type in resolved_verifier_types}
-    skip_counters = {verifier_type: Counter() for verifier_type in resolved_verifier_types}
-    failure_counters = {verifier_type: Counter() for verifier_type in resolved_verifier_types}
+    per_variant_metrics = {spec.name: _init_metric_bucket() for spec in resolved_variants}
+    per_variant_skip_counters = {spec.name: Counter() for spec in resolved_variants}
+    per_variant_failure_counters = {spec.name: Counter() for spec in resolved_variants}
+    per_type_metrics = {verifier_type: _init_metric_bucket() for verifier_type in resolved_verifier_types}
+    per_type_skip_counters = {verifier_type: Counter() for verifier_type in resolved_verifier_types}
+    per_type_failure_counters = {verifier_type: Counter() for verifier_type in resolved_verifier_types}
 
     rows_to_evaluate: list[tuple[int, int, dict[str, Any]]] = []
     with input_jsonl.open("r", encoding="utf-8") as input_handle:
@@ -676,11 +933,11 @@ def evaluate_verifier_action_selection(
             rows_to_evaluate.append((line_no, len(rows_to_evaluate), row))
 
     counts["rows_considered"] = len(rows_to_evaluate)
-    verifier_type_order = {verifier_type: idx for idx, verifier_type in enumerate(resolved_verifier_types)}
+    variant_order = {spec.name: idx for idx, spec in enumerate(resolved_variants)}
     tasks = [
-        (line_no, row_index, row, verifier_type)
+        (line_no, row_index, row, spec)
         for line_no, row_index, row in rows_to_evaluate
-        for verifier_type in resolved_verifier_types
+        for spec in resolved_variants
     ]
     task_count = len(tasks)
     effective_max_workers = min(requested_max_workers, task_count) if task_count > 0 else 1
@@ -697,21 +954,19 @@ def evaluate_verifier_action_selection(
     shared_sessions: dict[str, _VerifierSession] | None = None
     thread_local = threading.local()
 
-    def _evaluate_task(task: tuple[int, int, dict[str, Any], str]) -> dict[str, Any]:
-        line_no, row_index, row, verifier_type = task
+    def _evaluate_task(task: tuple[int, int, dict[str, Any], _VerifierVariantSpec]) -> dict[str, Any]:
+        line_no, row_index, row, variant_spec = task
         try:
             if effective_max_workers <= 1:
                 if shared_sessions is None:  # pragma: no cover - guarded by outer initialization
                     raise RuntimeError("shared verifier sessions are not initialized")
-                session = shared_sessions[verifier_type]
+                session = shared_sessions[variant_spec.name]
             else:
                 thread_sessions = getattr(thread_local, "sessions", None)
                 if thread_sessions is None:
-                    thread_sessions = {
-                        v_type: _build_verifier_session(resolved_config, v_type) for v_type in resolved_verifier_types
-                    }
+                    thread_sessions = {spec.name: _build_verifier_session(resolved_config, spec) for spec in resolved_variants}
                     thread_local.sessions = thread_sessions
-                session = thread_sessions[verifier_type]
+                session = thread_sessions[variant_spec.name]
 
             return _evaluate_row(
                 row=row,
@@ -725,17 +980,15 @@ def evaluate_verifier_action_selection(
                 row=row,
                 row_index=row_index,
                 line_no=line_no,
-                verifier_type=verifier_type,
+                verifier_variant=variant_spec.name,
+                verifier_type=variant_spec.verifier_type,
                 exc=exc,
             )
 
     results: list[dict[str, Any]] = []
     try:
         if effective_max_workers <= 1:
-            shared_sessions = {
-                verifier_type: _build_verifier_session(resolved_config, verifier_type)
-                for verifier_type in resolved_verifier_types
-            }
+            shared_sessions = {spec.name: _build_verifier_session(resolved_config, spec) for spec in resolved_variants}
             for task in tasks:
                 results.append(_evaluate_task(task))
                 if progress is not None:
@@ -754,7 +1007,7 @@ def evaluate_verifier_action_selection(
     results.sort(
         key=lambda row_result: (
             _safe_int(row_result.get("row_index")),
-            verifier_type_order.get(str(row_result.get("verifier_type") or ""), 999),
+            variant_order.get(str(row_result.get("verifier_variant") or ""), 999),
             _safe_int(row_result.get("line_no")),
         )
     )
@@ -766,43 +1019,34 @@ def evaluate_verifier_action_selection(
             output_handle.write("\n")
             counts["rows_written"] += 1
 
+            verifier_variant = str(row_result.get("verifier_variant") or "")
             verifier_type = str(row_result.get("verifier_type") or "")
-            if verifier_type not in metrics:
+            if verifier_variant not in per_variant_metrics or verifier_type not in per_type_metrics:
                 continue
-            metric = metrics[verifier_type]
-            metric["rows_total"] += 1
+            _record_metric_row(
+                metric=per_variant_metrics[verifier_variant],
+                skip_counter=per_variant_skip_counters[verifier_variant],
+                failure_counter=per_variant_failure_counters[verifier_variant],
+                row_result=row_result,
+            )
+            _record_metric_row(
+                metric=per_type_metrics[verifier_type],
+                skip_counter=per_type_skip_counters[verifier_type],
+                failure_counter=per_type_failure_counters[verifier_type],
+                row_result=row_result,
+            )
 
-            status = row_result.get("status")
-            if status == "evaluated":
-                metric["rows_evaluated"] += 1
-                if row_result.get("selected_is_gold") is True:
-                    metric["gold_pick_count"] += 1
-                metric["total_cost"] += _safe_float(row_result.get("row_cost"))
-                metric["total_api_calls"] += _safe_int(row_result.get("row_api_calls"))
-            elif status == "skipped":
-                metric["rows_skipped"] += 1
-                skip_counters[verifier_type][str(row_result.get("skip_reason") or "unknown")] += 1
-            else:
-                metric["rows_failed"] += 1
-                error_type = "unknown"
-                error = row_result.get("error")
-                if isinstance(error, dict) and isinstance(error.get("type"), str):
-                    error_type = error["type"]
-                failure_counters[verifier_type][error_type] += 1
-
-    for verifier_type in resolved_verifier_types:
-        metric = metrics[verifier_type]
-        evaluated = _safe_int(metric.get("rows_evaluated"))
-        gold_pick_count = _safe_int(metric.get("gold_pick_count"))
-        metric["accuracy"] = (gold_pick_count / evaluated) if evaluated > 0 else 0.0
-        metric["skip_reasons"] = dict(skip_counters[verifier_type])
-        metric["failure_reasons"] = dict(failure_counters[verifier_type])
+    for variant_name, metric in per_variant_metrics.items():
+        _finalize_metric_bucket(metric, per_variant_skip_counters[variant_name], per_variant_failure_counters[variant_name])
+    for verifier_type, metric in per_type_metrics.items():
+        _finalize_metric_bucket(metric, per_type_skip_counters[verifier_type], per_type_failure_counters[verifier_type])
 
     summary = {
         "input_jsonl": str(input_jsonl),
         "output_jsonl": str(output_jsonl),
         "output_summary": str(output_summary),
         "config_specs": resolved_specs,
+        "verifier_variants": [spec.name for spec in resolved_variants],
         "verifier_types": resolved_verifier_types,
         "strict_five_actions": strict_five_actions,
         "limit_rows": limit_rows,
@@ -810,7 +1054,8 @@ def evaluate_verifier_action_selection(
         "max_workers": requested_max_workers,
         "effective_max_workers": effective_max_workers,
         "counts": counts,
-        "per_verifier": metrics,
+        "per_variant": per_variant_metrics,
+        "per_verifier": per_type_metrics,
     }
 
     output_summary.parent.mkdir(parents=True, exist_ok=True)

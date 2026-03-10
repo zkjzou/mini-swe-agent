@@ -30,7 +30,12 @@ def main(
     verifier_types: list[str] = typer.Option(
         None,
         "--verifier-type",
-        help="Verifier type(s) to evaluate. Repeat for multiple: llm, reward_model",
+        help="Verifier type(s) to evaluate. Repeat for multiple: first_valid, llm, reward_model",
+    ),
+    verifier_variants: list[str] = typer.Option(
+        None,
+        "--verifier-variant",
+        help="Concrete verifier variant(s) to evaluate. Repeat for multiple; defaults to all current variants.",
     ),
     strict_five_actions: bool = typer.Option(
         True,
@@ -53,6 +58,7 @@ def main(
             output_summary=Path(output_summary) if output_summary else None,
             config_specs=config_specs,
             verifier_types=verifier_types,
+            verifier_variants=verifier_variants,
             strict_five_actions=strict_five_actions,
             limit_rows=limit_rows,
             show_progress=show_progress,
@@ -73,9 +79,21 @@ def main(
             invalid_rows=counts.get("invalid_rows", 0),
         )
     )
-    for verifier_type, metrics in (summary.get("per_verifier") or {}).items():
+    for verifier_variant, metrics in (summary.get("per_variant") or {}).items():
         console.print(
             "{name}: evaluated={evaluated} gold_picks={gold_picks} accuracy={accuracy:.4f} "
+            "skipped={skipped} failed={failed}".format(
+                name=verifier_variant,
+                evaluated=metrics.get("rows_evaluated", 0),
+                gold_picks=metrics.get("gold_pick_count", 0),
+                accuracy=float(metrics.get("accuracy", 0.0) or 0.0),
+                skipped=metrics.get("rows_skipped", 0),
+                failed=metrics.get("rows_failed", 0),
+            )
+        )
+    for verifier_type, metrics in (summary.get("per_verifier") or {}).items():
+        console.print(
+            "aggregate[{name}]: evaluated={evaluated} gold_picks={gold_picks} accuracy={accuracy:.4f} "
             "skipped={skipped} failed={failed}".format(
                 name=verifier_type,
                 evaluated=metrics.get("rows_evaluated", 0),

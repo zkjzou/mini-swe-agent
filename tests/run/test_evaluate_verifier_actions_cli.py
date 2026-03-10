@@ -16,6 +16,15 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
             "output_jsonl": str(tmp_path / "rows.jsonl"),
             "output_summary": str(tmp_path / "summary.json"),
             "counts": {"rows_considered": 12, "rows_written": 24, "invalid_rows": 0},
+            "per_variant": {
+                "world_reward": {
+                    "rows_evaluated": 12,
+                    "gold_pick_count": 9,
+                    "accuracy": 0.75,
+                    "rows_skipped": 0,
+                    "rows_failed": 0,
+                }
+            },
             "per_verifier": {
                 "llm": {"rows_evaluated": 12, "gold_pick_count": 9, "accuracy": 0.75, "rows_skipped": 0, "rows_failed": 0}
             },
@@ -44,6 +53,8 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
             "llm",
             "--verifier-type",
             "reward_model",
+            "--verifier-variant",
+            "world_reward",
             "--no-strict-five-actions",
             "--no-show-progress",
             "--max-workers",
@@ -60,6 +71,7 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
     assert called["output_summary"] == Path(tmp_path / "eval_summary.json")
     assert called["config_specs"] == ["swebench.yaml", 'agent.verifier.model.model_name="fake/verifier"']
     assert called["verifier_types"] == ["llm", "reward_model"]
+    assert called["verifier_variants"] == ["world_reward"]
     assert called["strict_five_actions"] is False
     assert called["show_progress"] is False
     assert called["max_workers"] == 3

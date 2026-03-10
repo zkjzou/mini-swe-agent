@@ -143,7 +143,7 @@ Use profile selectors in the config:
 ```yaml
 agent_model_profile: default
 verifier_model_profile: default
-verifier_prompt_profile: swebench_verifier
+verifier_prompt_profile: basic_verifier
 ```
 
 Then override selectors from CLI when launching runs:
@@ -151,7 +151,7 @@ Then override selectors from CLI when launching runs:
 ```bash
 mini-extra swebench -c swebench.yaml -c agent_model_profile=gpt5_mini
 mini-extra swebench -c swebench.yaml -c verifier_model_profile=gpt5_2
-mini-extra swebench -c swebench.yaml -c verifier_prompt_profile=swebench_reward
+mini-extra swebench -c swebench.yaml -c verifier_prompt_profile=basic_reward
 ```
 
 When verifier profiles are resolved, verifier model classes are always text-based. If a verifier profile sets

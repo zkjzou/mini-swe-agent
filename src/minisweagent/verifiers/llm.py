@@ -5,7 +5,7 @@ from typing import Any
 
 from jinja2 import StrictUndefined, Template
 
-from minisweagent.verifiers.query_utils import query_verifier_text
+from minisweagent.verifiers.query_utils import query_verifier_text, sanitize_captured_verifier_messages
 
 
 class LLMVerifier:
@@ -35,9 +35,10 @@ class LLMVerifier:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": selection_prompt},
         ]
+        verifier_messages = sanitize_captured_verifier_messages(input_messages)["messages"]
         content, response, response_cost = query_verifier_text(
             self.model,
-            input_messages,
+            verifier_messages,
         )
         matches = re.findall(self.config.selection_regex, content)
         selected_index = None
@@ -67,7 +68,7 @@ class LLMVerifier:
             "api_calls": 1,
         }
         if getattr(self.config, "include_inputs_in_output", False):
-            metadata["input"] = {"messages": input_messages}
+            metadata["input"] = {"messages": verifier_messages}
         return selected_index, metadata
 
     def _render(self, template: str, **kwargs) -> str:

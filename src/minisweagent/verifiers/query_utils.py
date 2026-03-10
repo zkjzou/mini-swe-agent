@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from collections.abc import Mapping
 from typing import Any
 
@@ -20,6 +19,20 @@ def query_verifier_text(model: Any, messages: list[dict[str, Any]]) -> tuple[str
     response_cost = _calculate_cost(model, raw_response)
     GLOBAL_MODEL_STATS.add(response_cost)
     return _extract_text(raw_response), _serialize_response(raw_response), response_cost
+
+
+def sanitize_captured_verifier_messages(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    sanitized_messages: list[dict[str, Any]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        sanitized_messages.append({"role": "user", "content": content})
+    return {"messages": sanitized_messages}
 
 
 def _calculate_cost(model: Any, response: Any) -> float:
@@ -148,6 +161,8 @@ def _extract_text_from_content(content: Any) -> str:
         if isinstance(text, str) and text:
             parts.append(text)
     return "\n".join(parts)
+
+
 
 
 def _to_dict(item: Any) -> dict[str, Any]:

@@ -49,12 +49,14 @@ class _RawQueryModel:
 class _RawResponsesModel:
     def __init__(self):
         self.query_called = False
+        self.prepared_messages = []
 
     def query(self, messages, **kwargs):
         self.query_called = True
         raise AssertionError("query() should not be called for verifier text queries when _query is available")
 
     def _prepare_messages_for_api(self, messages):
+        self.prepared_messages.append(messages)
         return messages
 
     def _query(self, messages, **kwargs):
@@ -120,6 +122,12 @@ def test_llm_verifier_uses_raw_query_path_when_available():
     assert model.query_called is False
     assert model.prepared_messages is not None
     assert model.raw_messages is not None
+    assert model.prepared_messages == [
+        {
+            "role": "user",
+            "content": "Candidates:\n1. Option 1\n2. Option 2\n",
+        }
+    ]
 
 
 def test_reward_verifier_uses_raw_query_path_and_extracts_response_output_text():
@@ -149,6 +157,8 @@ def test_reward_verifier_uses_raw_query_path_and_extracts_response_output_text()
     assert "REWARD: 0.2" in metadata["raw_outputs"][0]
     assert "REWARD: 0.9" in metadata["raw_outputs"][1]
     assert model.query_called is False
+    assert model.prepared_messages[0] == [{"role": "user", "content": "Candidate action:\nOption 1"}]
+    assert model.prepared_messages[1] == [{"role": "user", "content": "Candidate action:\nOption 2"}]
 
 
 def test_reward_verifier_falls_back_to_score_when_configured_regex_misses():

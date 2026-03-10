@@ -55,9 +55,11 @@ class _VariantAwareModel:
                 "extra": {"cost": 0.05},
             }
 
+        is_world_prompt = "predictive world model" in lower_system or "next_state:" in lower_prompt
+
         if "candidate action:" in lower_prompt:
             reward = "0.95" if "echo gold_target" in user_prompt else "0.10"
-            if "predictive world model" in lower_system:
+            if is_world_prompt:
                 return {
                     "role": "assistant",
                     "content": (
@@ -101,7 +103,7 @@ class _VariantAwareModel:
             if score == "0.95":
                 chosen = idx
 
-        if "predictive world model" in lower_system:
+        if is_world_prompt:
             content = []
             for raw_index, _block in candidate_blocks:
                 idx = int(raw_index)
@@ -522,10 +524,16 @@ def test_evaluate_verifier_action_selection_can_include_verifier_and_checklist_i
 
     row = json.loads(output_jsonl.read_text().splitlines()[0])
     verifier_output = row["verifier_output"]
-    assert verifier_output["inputs"][0]["messages"][0]["role"] == "system"
-    assert verifier_output["inputs"][0]["messages"][1]["role"] == "user"
-    assert verifier_output["checklist"]["input"]["messages"][0]["role"] == "system"
-    assert verifier_output["checklist"]["input"]["messages"][1]["role"] == "user"
+    reward_messages = verifier_output["inputs"][0]["messages"]
+    assert reward_messages == [reward_messages[0]]
+    assert reward_messages[0]["role"] == "user"
+    assert "Task: Fix the failing parser test." in reward_messages[0]["content"]
+    assert "Candidate action:" in reward_messages[0]["content"]
+    checklist_messages = verifier_output["checklist"]["input"]["messages"]
+    assert checklist_messages == [checklist_messages[0]]
+    assert checklist_messages[0]["role"] == "user"
+    assert "Issue description:" in checklist_messages[0]["content"]
+    assert "Recent steps" in checklist_messages[0]["content"]
 
 
 def test_evaluate_verifier_action_selection_can_include_llm_verifier_inputs(tmp_path, monkeypatch):
@@ -555,8 +563,8 @@ def test_evaluate_verifier_action_selection_can_include_llm_verifier_inputs(tmp_
     )
 
     row = json.loads(output_jsonl.read_text().splitlines()[0])
-    assert row["verifier_output"]["input"]["messages"][0]["role"] == "system"
-    assert row["verifier_output"]["input"]["messages"][1]["role"] == "user"
+    assert row["verifier_output"]["input"]["messages"][0]["role"] == "user"
+    assert "Task: Fix the failing parser test." in row["verifier_output"]["input"]["messages"][0]["content"]
 
 
 def test_world_reward_prompt_includes_task_in_captured_input(tmp_path, monkeypatch):
@@ -586,5 +594,6 @@ def test_world_reward_prompt_includes_task_in_captured_input(tmp_path, monkeypat
     )
 
     row = json.loads(output_jsonl.read_text().splitlines()[0])
-    first_candidate_input = row["verifier_output"]["inputs"][0]["messages"][1]["content"]
+    first_candidate_input = row["verifier_output"]["inputs"][0]["messages"][0]["content"]
     assert "Task: Fix the failing parser test." in first_candidate_input
+    assert row["verifier_output"]["inputs"][0]["messages"][0]["role"] == "user"

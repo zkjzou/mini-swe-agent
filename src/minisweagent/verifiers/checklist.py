@@ -6,7 +6,7 @@ from typing import Any
 import yaml
 from jinja2 import StrictUndefined, Template
 
-from minisweagent.verifiers.query_utils import query_verifier_text
+from minisweagent.verifiers.query_utils import query_verifier_text, sanitize_captured_verifier_messages
 
 _DEFAULT_CHECKLIST_ITEMS = [
     "Reproduce and confirm the issue behavior.",
@@ -43,9 +43,10 @@ def generate_issue_checklist(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": checklist_prompt},
     ]
+    verifier_messages = sanitize_captured_verifier_messages(input_messages)["messages"]
     content, response, response_cost = query_verifier_text(
         model,
-        input_messages,
+        verifier_messages,
     )
     output_format = resolve_checklist_output_format(config)
     rubric_items = parse_checklist_rubric(content)
@@ -73,7 +74,7 @@ def generate_issue_checklist(
         "api_calls": 1,
     }
     if getattr(config, "include_inputs_in_output", False):
-        output["input"] = {"messages": input_messages}
+        output["input"] = {"messages": verifier_messages}
     return output
 
 

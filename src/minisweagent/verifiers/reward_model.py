@@ -7,7 +7,7 @@ from typing import Any
 
 from jinja2 import StrictUndefined, Template
 
-from minisweagent.verifiers.query_utils import query_verifier_text
+from minisweagent.verifiers.query_utils import query_verifier_text, sanitize_captured_verifier_messages
 
 
 class RewardModelVerifier:
@@ -62,13 +62,14 @@ class RewardModelVerifier:
                 **verifier_vars,
             )
             input_payload = None
+            verifier_messages = sanitize_captured_verifier_messages(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": reward_prompt},
+                ]
+            )["messages"]
             if getattr(self.config, "include_inputs_in_output", False):
-                input_payload = {
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": reward_prompt},
-                    ]
-                }
+                input_payload = {"messages": verifier_messages}
             last_exc: Exception | None = None
             api_calls = 0
             for attempt in range(3):
@@ -76,10 +77,7 @@ class RewardModelVerifier:
                 try:
                     content, response, response_cost = query_verifier_text(
                         self.model,
-                        [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": reward_prompt},
-                        ],
+                        verifier_messages,
                     )
                     reward = self._parse_reward(content)
                     progress_score = self._parse_progress_score(content)

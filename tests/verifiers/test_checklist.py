@@ -156,6 +156,5 @@ def test_generate_issue_checklist_can_include_rendered_inputs():
     output = generate_issue_checklist(_QueryOnlyModel(), config, template_vars={"task": "sample issue", "messages": []})
 
     assert output["input"]["messages"] == [
-        {"role": "system", "content": "system sample issue"},
         {"role": "user", "content": "task: sample issue"},
     ]

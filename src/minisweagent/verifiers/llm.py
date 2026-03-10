@@ -5,7 +5,11 @@ from typing import Any
 
 from jinja2 import StrictUndefined, Template
 
-from minisweagent.verifiers.query_utils import query_verifier_text, sanitize_captured_verifier_messages
+from minisweagent.verifiers.query_utils import (
+    build_verifier_messages,
+    query_verifier_text,
+    resolve_verifier_history_message_format,
+)
 
 
 class LLMVerifier:
@@ -18,7 +22,8 @@ class LLMVerifier:
     def select(
         self, *, candidates: list[dict[str, Any]], template_vars: dict[str, Any] | None = None
     ) -> tuple[int, dict]:
-        template_vars = template_vars or {}
+        template_vars = dict(template_vars or {})
+        template_vars.setdefault("history_message_format", resolve_verifier_history_message_format(self.config))
         system_prompt = self._render(
             self.config.system_template,
             candidates=candidates,
@@ -31,11 +36,12 @@ class LLMVerifier:
             selection_index_base=self.config.selection_index_base,
             **template_vars,
         )
-        input_messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": selection_prompt},
-        ]
-        verifier_messages = sanitize_captured_verifier_messages(input_messages)["messages"]
+        verifier_messages = build_verifier_messages(
+            config=self.config,
+            system_prompt=system_prompt,
+            final_user_prompt=selection_prompt,
+            template_vars=template_vars,
+        )
         content, response, response_cost = query_verifier_text(
             self.model,
             verifier_messages,

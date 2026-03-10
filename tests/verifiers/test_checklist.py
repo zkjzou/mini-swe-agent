@@ -159,3 +159,41 @@ def test_generate_issue_checklist_can_include_rendered_inputs():
         {"role": "system", "content": "system sample issue"},
         {"role": "user", "content": "task: sample issue"},
     ]
+
+
+def test_generate_issue_checklist_can_replay_history_as_multi_turn_chat():
+    class _QueryOnlyModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": "CHECKLIST:\n- Reproduce issue\n- Patch source code\n- Run tests\n",
+                "extra": {"cost": 0.25},
+            }
+
+    config = SimpleNamespace(
+        checklist_system_template="system",
+        checklist_prompt_template="Issue description: {{ task }}",
+        checklist_item_regex=r"^\s*(?:[-*]|\d+[.)])\s*(.+?)\s*$",
+        checklist_min_items=3,
+        checklist_max_items=5,
+        include_inputs_in_output=True,
+        history_message_format="multi_turn_chat",
+    )
+    output = generate_issue_checklist(
+        _QueryOnlyModel(),
+        config,
+        template_vars={
+            "task": "sample issue",
+            "messages": [
+                {"role": "assistant", "content": "Inspect parser"},
+                {"role": "user", "content": "Found failing test output"},
+            ],
+        },
+    )
+
+    assert output["input"]["messages"] == [
+        {"role": "system", "content": "system"},
+        {"role": "assistant", "content": "Inspect parser"},
+        {"role": "user", "content": "Found failing test output"},
+        {"role": "user", "content": "Issue description: sample issue"},
+    ]

@@ -16,6 +16,7 @@ Always follow the output format exactly.
 [[[REWARD_PROMPT_TEMPLATE]]]
 Task: {{ task }}
 
+{% if history_message_format == "single_prompt" %}
 Recent steps (history_steps={{ history_steps }}, latest last):
 {% if history_steps == -1 %}
 {% set visible_steps = all_steps %}
@@ -27,6 +28,9 @@ Recent steps (history_steps={{ history_steps }}, latest last):
 {{ msg.role }}: {{ msg.content }}
 {% endfor %}
 {% endfor %}
+{% else %}
+Use the preceding conversation as the trajectory history.
+{% endif %}
 
 Issue Progress Checklist:
 {{ checklist_text }}
@@ -61,9 +65,19 @@ Rubric requirements:
 - Ground each item using concrete identifiers available in the issue/history (paths, symbols, error strings).
 - Include at least 2 integrity/safety items (e.g., avoid test weakening, avoid unrelated refactors, avoid dependency churn).
 
+Output YAML format:
+rubric:
+  - id: D1
+    phase: diagnose|reproduce|localize|fix|validate|cleanup
+    weight: 1|2|3
+    description: "<verb-first, concrete criterion grounded in known paths/symbols/errors>"
+    done_when: "<observable condition>"
+
+[[[CHECKLIST_PROMPT_TEMPLATE]]]
 Issue description:
 {{ task }}
 
+{% if history_message_format == "single_prompt" %}
 Recent steps (history_steps={{ history_steps }}, latest last):
 {% if history_steps == -1 %}
 {% set visible_steps = all_steps %}
@@ -75,18 +89,11 @@ Recent steps (history_steps={{ history_steps }}, latest last):
 {{ msg.role }}: {{ msg.content }}
 {% endfor %}
 {% endfor %}
+{% else %}
+Use the preceding conversation as the trajectory history.
+{% endif %}
 
+Generate the rubric now using the issue description and available history.
 Write a YAML rubric checklist that tracks progress from diagnosis to validated fix.
 Make every item observable and gradable from logs/diffs/tests.
-
-Output YAML format:
-rubric:
-  - id: D1
-    phase: diagnose|reproduce|localize|fix|validate|cleanup
-    weight: 1|2|3
-    description: "<verb-first, concrete criterion grounded in known paths/symbols/errors>"
-    done_when: "<observable condition>"
-
-[[[CHECKLIST_PROMPT_TEMPLATE]]]
-Generate the rubric now using the issue and history in the system message.
 Return YAML only with a top-level `rubric` list.

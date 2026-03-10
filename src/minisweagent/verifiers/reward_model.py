@@ -7,7 +7,11 @@ from typing import Any
 
 from jinja2 import StrictUndefined, Template
 
-from minisweagent.verifiers.query_utils import query_verifier_text, sanitize_captured_verifier_messages
+from minisweagent.verifiers.query_utils import (
+    build_verifier_messages,
+    query_verifier_text,
+    resolve_verifier_history_message_format,
+)
 
 
 class RewardModelVerifier:
@@ -29,6 +33,7 @@ class RewardModelVerifier:
         template_vars = template_vars or {}
         verifier_vars = dict(template_vars)
         verifier_vars.setdefault("enable_verbal_feedback", False)
+        verifier_vars.setdefault("history_message_format", resolve_verifier_history_message_format(self.config))
         verifier_vars["task"] = task or ""
         if messages is not None:
             verifier_vars["messages"] = messages
@@ -62,12 +67,12 @@ class RewardModelVerifier:
                 **verifier_vars,
             )
             input_payload = None
-            verifier_messages = sanitize_captured_verifier_messages(
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": reward_prompt},
-                ]
-            )["messages"]
+            verifier_messages = build_verifier_messages(
+                config=self.config,
+                system_prompt=system_prompt,
+                final_user_prompt=reward_prompt,
+                template_vars=verifier_vars,
+            )
             if getattr(self.config, "include_inputs_in_output", False):
                 input_payload = {"messages": verifier_messages}
             last_exc: Exception | None = None

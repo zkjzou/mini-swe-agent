@@ -16,6 +16,7 @@ Always follow the output format exactly.
 [[[REWARD_PROMPT_TEMPLATE]]]
 Task: {{ task }}
 
+{% if history_message_format == "single_prompt" %}
 Recent steps (history_steps={{ history_steps }}, latest last):
 {% if history_steps == -1 %}
 {% set visible_steps = all_steps %}
@@ -27,6 +28,9 @@ Recent steps (history_steps={{ history_steps }}, latest last):
 {{ msg.role }}: {{ msg.content }}
 {% endfor %}
 {% endfor %}
+{% else %}
+Use the preceding conversation as the trajectory history.
+{% endif %}
 
 Issue Progress Checklist:
 {{ checklist_text }}
@@ -58,6 +62,7 @@ Return checklist content only. Do not call tools.
 Issue description:
 {{ task }}
 
+{% if history_message_format == "single_prompt" %}
 Recent steps (history_steps={{ history_steps }}, latest last):
 {% if history_steps == -1 %}
 {% set visible_steps = all_steps %}
@@ -69,6 +74,9 @@ Recent steps (history_steps={{ history_steps }}, latest last):
 {{ msg.role }}: {{ msg.content }}
 {% endfor %}
 {% endfor %}
+{% else %}
+Use the preceding conversation as the trajectory history.
+{% endif %}
 
 Existing checklist:
 {% if previous_checklist_text %}

@@ -124,6 +124,10 @@ def test_llm_verifier_uses_raw_query_path_when_available():
     assert model.raw_messages is not None
     assert model.prepared_messages == [
         {
+            "role": "system",
+            "content": "system",
+        },
+        {
             "role": "user",
             "content": "Candidates:\n1. Option 1\n2. Option 2\n",
         }
@@ -157,8 +161,14 @@ def test_reward_verifier_uses_raw_query_path_and_extracts_response_output_text()
     assert "REWARD: 0.2" in metadata["raw_outputs"][0]
     assert "REWARD: 0.9" in metadata["raw_outputs"][1]
     assert model.query_called is False
-    assert model.prepared_messages[0] == [{"role": "user", "content": "Candidate action:\nOption 1"}]
-    assert model.prepared_messages[1] == [{"role": "user", "content": "Candidate action:\nOption 2"}]
+    assert model.prepared_messages[0] == [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "Candidate action:\nOption 1"},
+    ]
+    assert model.prepared_messages[1] == [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "Candidate action:\nOption 2"},
+    ]
 
 
 def test_reward_verifier_falls_back_to_score_when_configured_regex_misses():
@@ -235,3 +245,73 @@ def test_llm_verifier_falls_back_to_query_when_raw_query_path_not_available():
     assert metadata["response_cost"] == 0.7
     assert "FINAL: 2" in metadata["raw_output"]
     assert metadata["scores"] == [0.3, 0.8]
+
+
+def test_llm_verifier_can_replay_history_as_multi_turn_chat():
+    model = _RawQueryModel()
+    config = SimpleNamespace(
+        system_template="system",
+        selection_template="Task: {{ task }}\nCandidates:\n{% for c in candidates %}{{ c.index + selection_index_base }}. {{ c.content }}\n{% endfor %}",
+        selection_index_base=1,
+        selection_regex=r"(\d+)",
+        fallback="first_candidate",
+        history_message_format="multi_turn_chat",
+    )
+    verifier = LLMVerifier(model, config)
+    candidates = [
+        {"index": 0, "content": "Option 1", "action": "echo first"},
+        {"index": 1, "content": "Option 2", "action": "echo second"},
+    ]
+
+    verifier.select(
+        candidates=candidates,
+        template_vars={
+            "task": "Fix bug",
+            "messages": [
+                {"role": "user", "content": "Previous observation"},
+                {"role": "assistant", "content": "Run rg"},
+                {"role": "user", "content": "stdout"},
+            ],
+        },
+    )
+
+    assert model.prepared_messages == [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "Previous observation"},
+        {"role": "assistant", "content": "Run rg"},
+        {"role": "user", "content": "stdout"},
+        {"role": "user", "content": "Task: Fix bug\nCandidates:\n1. Option 1\n2. Option 2\n"},
+    ]
+
+
+def test_reward_verifier_can_replay_history_as_multi_turn_chat():
+    model = _RawResponsesModel()
+    config = SimpleNamespace(
+        reward_system_template="system",
+        reward_prompt_template="Task: {{ task }}\nCandidate action:\n{{ candidate.content }}",
+        reward_regex=r"REWARD:\s*([+-]?\d+(?:\.\d+)?)",
+        fallback="first_candidate",
+        history_message_format="multi_turn_chat",
+    )
+    verifier = RewardModelVerifier(model, config)
+    candidates = [
+        {"index": 0, "content": "Option 1", "action": "echo first"},
+        {"index": 1, "content": "Option 2", "action": "echo second"},
+    ]
+
+    verifier.select(
+        candidates=candidates,
+        template_vars={"checklist_items": ["reproduce", "validate"]},
+        task="Fix bug",
+        messages=[
+            {"role": "assistant", "content": "Run rg"},
+            {"role": "user", "content": "stdout"},
+        ],
+    )
+
+    assert model.prepared_messages[0] == [
+        {"role": "system", "content": "system"},
+        {"role": "assistant", "content": "Run rg"},
+        {"role": "user", "content": "stdout"},
+        {"role": "user", "content": "Task: Fix bug\nCandidate action:\nOption 1"},
+    ]

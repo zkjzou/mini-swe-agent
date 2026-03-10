@@ -38,6 +38,7 @@ Do not prefer candidates that commit changes, submit test/helper/config files un
 
 Task: {{ task }}
 
+{% if history_message_format == "single_prompt" %}
 Recent steps (history_steps={{ history_steps }}, latest last):
 {% if history_steps == -1 %}
 {% set visible_steps = all_steps %}
@@ -49,6 +50,9 @@ Recent steps (history_steps={{ history_steps }}, latest last):
 {{ msg.role }}: {{ msg.content }}
 {% endfor %}
 {% endfor %}
+{% else %}
+Use the preceding conversation as the trajectory history.
+{% endif %}
 
 Candidate action:
 {{ candidate.content }}

@@ -352,3 +352,60 @@ def test_reward_model_feedback_is_injected_into_next_actor_query():
         assert "Executed action: echo second" in prompt[-1]["content"]
         assert "Verifier score: 0.900" in prompt[-1]["content"]
         assert "Critique: Prefer the targeted command that narrows the search." in prompt[-1]["content"]
+
+
+def test_reward_model_multi_turn_history_excludes_feedback_from_verifier_inputs():
+    class _CaptureRewardModel:
+        def __init__(self):
+            self.seen_queries: list[list[dict]] = []
+
+        def query(self, messages, **kwargs):
+            self.seen_queries.append(copy.deepcopy(messages))
+            prompt = messages[-1].get("content", "")
+            reward = "0.9" if "Option 2" in prompt or "Second round option 2" in prompt else "0.2"
+            return {"role": "assistant", "content": f"FEEDBACK: Focus the next step.\nREWARD: {reward}"}
+
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["enable_verbal_feedback"] = True
+    config["verifier_feedback_template"] = _VERIFIER_FEEDBACK_TEMPLATE
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "reward_model",
+        "reward_regex": r"REWARD:\s*([+-]?\d+(?:\.\d+)?)",
+        "include_inputs_in_output": True,
+        "history_message_format": "multi_turn_chat",
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("REWARD: 0.0", [])],
+        },
+    }
+
+    model = DeterministicModel(
+        outputs=[
+            make_output("Option 1", [{"command": "echo first"}]),
+            make_output("Option 2", [{"command": "echo second"}]),
+            make_output("Second round option 1", [{"command": "echo round-two-first"}]),
+            make_output("Second round option 2", [{"command": "echo round-two-second"}]),
+        ]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    capture_model = _CaptureRewardModel()
+    agent.verifier.model = capture_model
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    agent.query()
+    second = agent.query()
+
+    second_round_verifier_inputs = second.get("extra", {}).get("verifier", {}).get("verifier_output", {}).get("inputs", [])
+    assert second_round_verifier_inputs
+    first_candidate_messages = second_round_verifier_inputs[0]["messages"]
+    assert [message["role"] for message in first_candidate_messages] == ["system", "assistant", "user"]
+    assert "Verifier feedback from the previous step:" not in "\n".join(
+        message["content"] for message in first_candidate_messages if isinstance(message.get("content"), str)
+    )
+    assert "FEEDBACK:" not in "\n".join(
+        message["content"] for message in first_candidate_messages[:-1] if isinstance(message.get("content"), str)
+    )
+    assert capture_model.seen_queries

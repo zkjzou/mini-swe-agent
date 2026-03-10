@@ -126,6 +126,8 @@ class VerifierConfig(BaseModel):
     """Whether assistant message content is included in verifier history context."""
     include_inputs_in_output: bool = False
     """Whether to store rendered verifier/checklist input messages in output metadata."""
+    history_message_format: Literal["single_prompt", "multi_turn_chat"] = "single_prompt"
+    """How verifier history is passed: flattened into one prompt or replayed as chat turns."""
     selection_template: str = (
         "Choose the best candidate action for the task. "
         "Return only the number of the chosen candidate.\n\n"
@@ -179,8 +181,12 @@ class VerifierConfig(BaseModel):
     checklist_prompt_template: str = (
         "Issue description:\n"
         "{{ task }}\n\n"
+        "{% if history_message_format == 'single_prompt' %}"
         "Recent agent context:\n"
         "{% for msg in messages[-6:] %}{{ msg.role }}: {{ msg.content }}\n{% endfor %}\n"
+        "{% else %}"
+        "Use the preceding conversation as the recent agent context.\n\n"
+        "{% endif %}"
         "Generate {{ checklist_min_items }} to {{ checklist_max_items }} checklist items that track concrete progress "
         "from diagnosis to validated fix. Keep each item short and observable.\n\n"
         "Output format:\n"

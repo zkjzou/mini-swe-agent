@@ -1,0 +1,69 @@
+# Feature Map
+
+This is the working feature tracker for `mini-swe-agent`. Update it when features are added, changed, split, or
+deprecated so planned work and existing capabilities stay visible in one document.
+
+## Status Legend
+
+- `Live`: implemented and expected to work
+- `Experimental`: implemented but still research-grade or evolving
+- `Planned`: accepted but not started
+
+## Project Snapshot
+
+| Field | Value |
+| --- | --- |
+| Project | mini-swe-agent |
+| Maintainer | update as needed |
+| Last reviewed | 2026-03-10 |
+| Primary branch | main |
+| Notes | Use `FEATURE_MAP_TEMPLATE.md` when you want to restart or fork this tracker. |
+
+## Existing Features
+
+| Feature ID | Area | Feature | Status | User Value | Main Entry Points | Tests/Docs | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| FEAT-001 | Agents | Default agent loop | Live | Core coding-agent execution flow | `src/minisweagent/agents/default.py` | `tests/agents/test_default.py`, `docs/reference/agents/default.md` | Main non-interactive agent path |
+| FEAT-002 | Agents | Interactive agent | Live | Human-in-the-loop agent usage | `src/minisweagent/agents/interactive.py` | `tests/agents/test_interactive.py`, `docs/reference/agents/interactive.md` | Separate interaction mode |
+| FEAT-003 | Models | LiteLLM model integrations | Live | General model access for text/tool-call flows | `src/minisweagent/models/litellm_model.py`, `src/minisweagent/models/litellm_textbased_model.py`, `src/minisweagent/models/litellm_response_model.py` | `tests/models/test_litellm_model.py`, `tests/models/test_litellm_textbased_model.py`, `docs/reference/models/litellm.md`, `docs/reference/models/litellm_response_toolcall.md` | Core provider path |
+| FEAT-004 | Models | OpenRouter integrations | Live | OpenRouter-backed model execution | `src/minisweagent/models/openrouter_model.py`, `src/minisweagent/models/openrouter_textbased_model.py`, `src/minisweagent/models/openrouter_response_model.py` | `tests/models/test_openrouter_textbased_model.py`, `docs/reference/models/openrouter.md` | Multiple protocol variants |
+| FEAT-005 | Models | Portkey integrations | Live | Portkey-backed model execution | `src/minisweagent/models/portkey_model.py`, `src/minisweagent/models/portkey_response_model.py` | `tests/models/test_portkey_model.py`, `tests/models/test_portkey_response_model.py`, `docs/reference/models/portkey.md`, `docs/reference/models/portkey_response.md` | Includes response-model support |
+| FEAT-006 | Models | Requesty integration | Live | Alternate model backend | `src/minisweagent/models/requesty_model.py` | `docs/reference/models/requesty.md` | Smaller integration surface |
+| FEAT-007 | Models | Test and extra model helpers | Experimental | Testing and research variants | `src/minisweagent/models/test_models.py`, `src/minisweagent/models/extra/roulette.py` | `tests/models/test_test_models.py`, `docs/reference/models/test_models.md`, `docs/reference/models/extra.md` | Research-oriented extensions |
+| FEAT-008 | Environments | Local environment | Live | Run commands directly on host | `src/minisweagent/environments/local.py` | `tests/environments/test_local.py`, `docs/reference/environments/local.md` | Default execution environment |
+| FEAT-009 | Environments | Docker environment | Live | Containerized execution | `src/minisweagent/environments/docker.py` | `tests/environments/test_docker.py`, `docs/reference/environments/docker.md` | Main sandbox option |
+| FEAT-010 | Environments | Singularity environment | Live | HPC-friendly sandboxing | `src/minisweagent/environments/singularity.py` | `tests/environments/test_singularity.py`, `docs/reference/environments/singularity.md` | Alternative container runtime |
+| FEAT-011 | Environments | Extra environment backends | Experimental | Additional sandbox/runtime options | `src/minisweagent/environments/extra/bubblewrap.py`, `src/minisweagent/environments/extra/swerex_docker.py`, `src/minisweagent/environments/extra/swerex_modal.py` | `tests/environments/extra/test_bubblewrap.py`, `tests/environments/extra/test_swerex_docker.py`, `docs/reference/environments/bubblewrap.md`, `docs/reference/environments/swerex_docker.md`, `docs/reference/environments/swerex_modal.md` | Extension area for new runtimes |
+| FEAT-012 | Run | CLI entrypoints | Live | User-facing command execution | `src/minisweagent/run/mini.py`, `src/minisweagent/run/utilities/mini_extra.py`, `src/minisweagent/__main__.py` | `tests/run/test_cli_integration.py`, `docs/usage/mini.md`, `docs/reference/run/mini.md`, `docs/reference/run/mini_extra.md` | Includes extra CLI utilities |
+| FEAT-013 | Run | Hello world and Python bindings | Live | Minimal programmable entrypoint | `src/minisweagent/run/hello_world.py` | `tests/run/test_run_hello_world.py`, `docs/reference/run/hello_world.md`, `docs/usage/python_bindings.md` | Smallest example surface |
+| FEAT-014 | Run | SWE-bench batch and single-run flows | Live | Benchmark execution and evaluation | `src/minisweagent/run/benchmarks/swebench.py`, `src/minisweagent/run/benchmarks/swebench_single.py` | `tests/run/test_swebench.py`, `tests/run/test_swebench_single.py`, `docs/usage/swebench.md`, `docs/reference/run/swebench.md`, `docs/reference/run/swebench_single.md` | Main research pipeline |
+| FEAT-015 | Run | Inspector utility | Live | Trajectory inspection UI | `src/minisweagent/run/utilities/inspector.py` | `tests/run/test_inspector.py`, `docs/usage/inspector.md`, `docs/reference/run/inspector.md` | Debugging and review flow |
+| FEAT-016 | Run | Config utility and packaged configs | Live | Reusable run configuration surfaces | `src/minisweagent/run/utilities/config.py`, `src/minisweagent/config/` | `tests/run/test_extra_config.py`, `tests/config/test_swebench_template.py`, `docs/usage/config.md`, `docs/reference/run/config.md` | Central config catalog |
+| FEAT-017 | Verifiers | Core verifier implementations | Experimental | Action ranking and selection research | `src/minisweagent/verifiers/first_valid.py`, `src/minisweagent/verifiers/llm.py`, `src/minisweagent/verifiers/checklist.py`, `src/minisweagent/verifiers/reward_model.py`, `src/minisweagent/verifiers/action_similarity.py` | `tests/agents/test_verifier.py`, `tests/agents/test_reward_verifier.py`, `tests/verifiers/`, `prompts/verifier/` | Active research area |
+| FEAT-018 | Utilities | Verifier dataset and evaluation utilities | Experimental | Offline analysis and data preparation | `src/minisweagent/utils/verifier_action_evaluation.py`, `src/minisweagent/utils/verifier_action_sampling.py`, `src/minisweagent/utils/verifier_dataset_merge.py`, `src/minisweagent/run/utilities/evaluate_verifier_actions.py`, `src/minisweagent/run/utilities/sample_verifier_actions.py`, `src/minisweagent/run/utilities/merge_verifier_actions.py` | `tests/utils/test_verifier_action_evaluation.py`, `tests/utils/test_verifier_action_sampling.py`, `tests/utils/test_verifier_dataset_merge.py`, `tests/run/test_evaluate_verifier_actions_cli.py`, `tests/run/test_sample_verifier_actions_cli.py`, `tests/run/test_merge_verifier_actions_cli.py` | Tooling around verifier research |
+| FEAT-019 | Research | Monte Carlo rollout utilities | Experimental | Rollout exploration for action search | `src/minisweagent/run/extra/monte_carlo.py`, `scripts/monte_carlo_rollout.sh` | `tests/run/test_monte_carlo_rollout.py`, `.agent/EXECPLAN_monte_carlo.md` | Ongoing experimental workflow |
+
+## Planned Features
+
+| Feature ID | Area | Feature | Status | Priority | Why Now | Proposed Entry Points | Dependencies | Next Step |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| PLAN-001 | Tracking | Add new feature request here | Planned | P2 | Replace this example row with real work | `src/...` | note blockers here | link an issue or ExecPlan |
+
+## Cross-Cutting Gaps
+
+| Gap ID | Type | Description | Affects | Suggested Fix | Owner | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| GAP-001 | Tracking | Feature tracker exists but needs ongoing manual updates | Entire repo | Update this file as part of feature work and reviews | update as needed | Planned |
+
+## Decision Log
+
+| Date | Decision | Reason | Related Features |
+| --- | --- | --- | --- |
+| 2026-03-10 | Keep a root-level feature map plus a reusable template | Makes feature intake and current-state tracking easy to find and maintain | FEAT-001 to FEAT-019 |
+
+## Update Checklist
+
+- [ ] Add new implemented features to `Existing Features`
+- [ ] Add incoming work to `Planned Features`
+- [ ] Update status when work moves from planned to live
+- [ ] Link tests, docs, configs, and ExecPlans for any feature you touch

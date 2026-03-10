@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import minisweagent.verifiers.prompt_loader as prompt_loader_module
+import pytest
 from minisweagent.verifiers.prompt_loader import (
     _parse_reward_prompt_file,
     _parse_selection_prompt_file,
@@ -117,6 +119,42 @@ def test_apply_prompt_overrides_llm_single_file_legacy_prompt_only(tmp_path):
     assert updated.selection_template == "legacy selection prompt"
     assert updated.checklist_system_template == "original checklist system"
     assert updated.checklist_prompt_template == "original checklist prompt"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "prompts/verifier/basic/verifier/selection.jinja",
+        "prompts/verifier/basic/reward/reward.jinja",
+        "prompts/verifier/basic_mini/verifier/selection.jinja",
+        "prompts/verifier/basic_mini/reward/reward.jinja",
+        "prompts/verifier/checklist/verifier/selection.jinja",
+        "prompts/verifier/checklist/reward/reward.jinja",
+        "prompts/verifier/checklist_v2/verifier/selection.jinja",
+        "prompts/verifier/checklist_v2/reward/reward.jinja",
+        "prompts/verifier/dynamic_checklist_modify/verifier/selection.jinja",
+        "prompts/verifier/dynamic_checklist_modify/reward/reward.jinja",
+        "prompts/verifier/dynamic_checklist_regenerate/verifier/selection.jinja",
+        "prompts/verifier/dynamic_checklist_regenerate/reward/reward.jinja",
+    ],
+)
+def test_core_verifier_prompts_keep_task_out_of_system_section(path: str) -> None:
+    content = Path(path).read_text()
+    system_start = content.index("[[[SYSTEM_TEMPLATE]]]")
+    next_markers = [
+        content.find(marker)
+        for marker in (
+            "[[[SELECTION_TEMPLATE]]]",
+            "[[[REWARD_PROMPT_TEMPLATE]]]",
+            "[[[CHECKLIST_SYSTEM_TEMPLATE]]]",
+            "[[[CHECKLIST_PROMPT_TEMPLATE]]]",
+        )
+        if content.find(marker) != -1
+    ]
+    system_end = min(next_markers) if next_markers else len(content)
+
+    assert "Task: {{ task }}" not in content[system_start:system_end]
+    assert "Task: {{ task }}" in content[system_end:]
 
 
 def test_apply_prompt_overrides_reward_single_file_legacy_prompt_only(tmp_path):
@@ -243,7 +281,8 @@ def test_apply_prompt_overrides_loads_builtin_basic_mini_verifier_prompt():
 
     assert "choose the single best candidate action" in updated.system_template.lower()
     assert "choose the single best candidate action" in updated.selection_template.lower()
-    assert "Task: {{ task }}" in updated.system_template
+    assert "Task: {{ task }}" not in updated.system_template
+    assert "Task: {{ task }}" in updated.selection_template
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.system_template
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.selection_template
     assert "Candidates:" in updated.selection_template
@@ -264,7 +303,8 @@ def test_apply_prompt_overrides_loads_builtin_basic_mini_reward_prompt():
 
     assert "evaluate a single candidate next action" in updated.reward_system_template.lower()
     assert "evaluate a single candidate next action" in updated.reward_prompt_template.lower()
-    assert "Task: {{ task }}" in updated.reward_system_template
+    assert "Task: {{ task }}" not in updated.reward_system_template
+    assert "Task: {{ task }}" in updated.reward_prompt_template
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.reward_system_template
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.reward_prompt_template
     assert "Candidate action:" in updated.reward_prompt_template

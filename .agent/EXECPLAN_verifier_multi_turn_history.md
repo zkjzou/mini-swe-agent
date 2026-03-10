@@ -12,6 +12,7 @@ After this change, verifier prompts can receive prior trajectory context as an a
 - [x] (2026-03-10 19:05Z) Updated built-in verifier prompt variants to conditionally omit inline history in multi-turn mode.
 - [x] (2026-03-10 19:12Z) Added focused tests for selection, reward, checklist, agent integration, and offline evaluation paths.
 - [x] (2026-03-10 19:24Z) Extended multi-turn replay to include assistant tool-call metadata and tool output messages.
+- [x] (2026-03-10 19:39Z) Preserved assistant tool calls in structured chat format (`tool_calls`) instead of flattening them into content text.
 
 ## Surprises & Discoveries
 
@@ -30,6 +31,9 @@ After this change, verifier prompts can receive prior trajectory context as an a
   Date/Author: 2026-03-10 / Codex
 - Decision: include tool-call summaries on assistant turns and replay tool outputs as `tool` messages in multi-turn history.
   Rationale: verifier decisions often depend on the exact command invocation and resulting tool output, not just free-form assistant text.
+  Date/Author: 2026-03-10 / Codex
+- Decision: preserve assistant tool calls as structured `tool_calls` fields when available, matching the original chat transcript shape.
+  Rationale: this keeps replayed history closer to the source trajectory and matches downstream expectations for tool-using assistant messages.
   Date/Author: 2026-03-10 / Codex
 - Decision: exclude verifier feedback and verifier metadata from replayed history.
   Rationale: the verifier should judge the actor trajectory itself, not its own previous outputs or injected critique text.

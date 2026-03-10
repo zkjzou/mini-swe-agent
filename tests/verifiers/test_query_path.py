@@ -18,7 +18,11 @@ class _RawQueryModel:
 
     def _prepare_messages_for_api(self, messages):
         self.prepared_messages = messages
-        return [{"role": m["role"], "content": m["content"]} for m in messages]
+        prepared = []
+        for message in messages:
+            allowed = {"role", "content", "tool_calls", "tool_call_id", "name"}
+            prepared.append({k: v for k, v in message.items() if k in allowed})
+        return prepared
 
     def _query(self, messages, **kwargs):
         self.raw_messages = messages
@@ -288,8 +292,18 @@ def test_llm_verifier_can_replay_history_as_multi_turn_chat():
     assert model.prepared_messages == [
         {"role": "system", "content": "system"},
         {"role": "user", "content": "Previous observation"},
-        {"role": "assistant", "content": 'Run rg\n\nTool calls:\n- bash[call_1]: {"command": "rg parser"}'},
-        {"role": "tool", "content": "stdout"},
+        {
+            "role": "assistant",
+            "content": "Run rg",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "bash", "arguments": '{"command": "rg parser"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "stdout"},
         {"role": "user", "content": "Task: Fix bug\nCandidates:\n1. Option 1\n2. Option 2\n"},
     ]
 
@@ -331,7 +345,17 @@ def test_reward_verifier_can_replay_history_as_multi_turn_chat():
 
     assert model.prepared_messages[0] == [
         {"role": "system", "content": "system"},
-        {"role": "assistant", "content": 'Run rg\n\nTool calls:\n- bash[call_1]: {"command": "rg parser"}'},
-        {"role": "tool", "content": "stdout"},
+        {
+            "role": "assistant",
+            "content": "Run rg",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "bash", "arguments": '{"command": "rg parser"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "stdout"},
         {"role": "user", "content": "Task: Fix bug\nCandidate action:\nOption 1"},
     ]

@@ -187,7 +187,17 @@ def _make_row(*, run_id: str = "run-1", trajectory_relpath: str = "repo__issue-1
         "history_trajectory": [
             {"role": "system", "content": "You are coding agent."},
             {"role": "user", "content": "Fix the failing parser test."},
-            {"role": "assistant", "content": "SECRET_THOUGHT: inspect parser first."},
+            {
+                "role": "assistant",
+                "content": "SECRET_THOUGHT: inspect parser first.",
+                "tool_calls": [
+                    {
+                        "id": "tc-x",
+                        "type": "function",
+                        "function": {"name": "bash", "arguments": '{"command": "rg parser /testbed"}'},
+                    }
+                ],
+            },
             {"role": "tool", "name": "bash", "tool_call_id": "tc-x", "content": "ok"},
         ],
         "actions": [
@@ -628,7 +638,10 @@ def test_evaluate_verifier_action_selection_can_use_multi_turn_verifier_history(
     messages = row["verifier_output"]["input"]["messages"]
     assert [message["role"] for message in messages] == ["system", "assistant", "tool", "user"]
     assert "inspect parser first" in messages[1]["content"].lower()
+    assert messages[1]["tool_calls"][0]["function"]["name"] == "bash"
+    assert messages[1]["tool_calls"][0]["id"] == "tc-x"
     assert messages[2]["content"] == "ok"
+    assert messages[2]["tool_call_id"] == "tc-x"
     assert "Recent steps" not in messages[-1]["content"]
     assert "Task: Fix the failing parser test." in messages[-1]["content"]
 

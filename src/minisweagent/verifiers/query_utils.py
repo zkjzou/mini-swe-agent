@@ -66,10 +66,10 @@ def sanitize_captured_verifier_messages(
         role = _extract_history_role(message)
         if role not in allowed_roles:
             continue
-        content = _extract_history_text(message)
-        if not content:
+        sanitized = _sanitize_history_message(message, role=role)
+        if sanitized is None:
             continue
-        sanitized_messages.append({"role": role, "content": content})
+        sanitized_messages.append(sanitized)
     return {"messages": sanitized_messages}
 
 
@@ -88,10 +88,10 @@ def _extract_history_messages(template_vars: Mapping[str, Any]) -> list[dict[str
         role = _extract_history_role(message)
         if role not in {"user", "assistant", "tool"}:
             continue
-        content = _extract_history_text(message)
-        if not content:
+        sanitized = _sanitize_history_message(message, role=role)
+        if sanitized is None:
             continue
-        history_messages.append({"role": role, "content": content})
+        history_messages.append(sanitized)
     return history_messages
 
 
@@ -108,14 +108,44 @@ def _extract_history_role(message: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _extract_history_text(message: Mapping[str, Any]) -> str:
-    base_text = _extract_message_text(message)
-    tool_call_text = _extract_tool_call_text(message)
-    if base_text and tool_call_text:
-        return f"{base_text}\n\nTool calls:\n{tool_call_text}"
-    if tool_call_text:
-        return f"Tool calls:\n{tool_call_text}"
-    return base_text
+def _sanitize_history_message(message: Mapping[str, Any], *, role: str) -> dict[str, Any] | None:
+    if role == "assistant":
+        return _sanitize_assistant_history_message(message)
+    if role == "tool":
+        return _sanitize_tool_history_message(message)
+    content = _extract_message_text(message)
+    if not content:
+        return None
+    return {"role": role, "content": content}
+
+
+def _sanitize_assistant_history_message(message: Mapping[str, Any]) -> dict[str, Any] | None:
+    content = _extract_message_text(message)
+    tool_calls = _extract_tool_calls(message)
+    if not content and not tool_calls:
+        return None
+    sanitized: dict[str, Any] = {"role": "assistant", "content": content}
+    if tool_calls:
+        sanitized["tool_calls"] = tool_calls
+    return sanitized
+
+
+def _sanitize_tool_history_message(message: Mapping[str, Any]) -> dict[str, Any] | None:
+    content = _extract_message_text(message)
+    if not content:
+        return None
+    sanitized: dict[str, Any] = {"role": "tool", "content": content}
+    tool_call_id = message.get("tool_call_id")
+    if not isinstance(tool_call_id, str):
+        call_id = message.get("call_id")
+        if isinstance(call_id, str):
+            tool_call_id = call_id
+    if isinstance(tool_call_id, str) and tool_call_id:
+        sanitized["tool_call_id"] = tool_call_id
+    name = message.get("name")
+    if isinstance(name, str) and name:
+        sanitized["name"] = name
+    return sanitized
 
 
 def _extract_message_text(message: Mapping[str, Any]) -> str:
@@ -134,45 +164,39 @@ def _extract_message_text(message: Mapping[str, Any]) -> str:
     return ""
 
 
-def _extract_tool_call_text(message: Mapping[str, Any]) -> str:
-    lines: list[str] = []
-    tool_calls = message.get("tool_calls")
-    if isinstance(tool_calls, list):
-        for tool_call in tool_calls:
-            line = _format_tool_call_line(tool_call)
-            if line:
-                lines.append(line)
+def _extract_tool_calls(message: Mapping[str, Any]) -> list[dict[str, Any]]:
+    normalized_tool_calls: list[dict[str, Any]] = []
+    raw_tool_calls = message.get("tool_calls")
+    if isinstance(raw_tool_calls, list):
+        for tool_call in raw_tool_calls:
+            normalized = _normalize_tool_call(tool_call)
+            if normalized is not None:
+                normalized_tool_calls.append(normalized)
     output = message.get("output")
     if isinstance(output, list):
         for item in output:
             item_dict = _to_dict(item)
             if item_dict.get("type") == "function_call":
-                line = _format_tool_call_line(item_dict)
-                if line:
-                    lines.append(line)
-    if not lines:
-        extra = message.get("extra")
-        if isinstance(extra, Mapping):
-            actions = extra.get("actions")
-            if isinstance(actions, list):
-                for action in actions:
-                    if not isinstance(action, Mapping):
-                        continue
-                    command = action.get("command")
-                    if not isinstance(command, str) or not command:
-                        continue
-                    tool_call_id = action.get("tool_call_id")
-                    if isinstance(tool_call_id, str) and tool_call_id:
-                        lines.append(f"- bash[{tool_call_id}]: {command}")
-                    else:
-                        lines.append(f"- bash: {command}")
-    return "\n".join(lines)
+                normalized = _normalize_tool_call(item_dict)
+                if normalized is not None:
+                    normalized_tool_calls.append(normalized)
+    if normalized_tool_calls:
+        return normalized_tool_calls
+    extra = message.get("extra")
+    if isinstance(extra, Mapping):
+        actions = extra.get("actions")
+        if isinstance(actions, list):
+            for action in actions:
+                normalized = _normalize_action_tool_call(action)
+                if normalized is not None:
+                    normalized_tool_calls.append(normalized)
+    return normalized_tool_calls
 
 
-def _format_tool_call_line(tool_call: Any) -> str:
+def _normalize_tool_call(tool_call: Any) -> dict[str, Any] | None:
     tool_call_dict = _to_dict(tool_call)
     if not tool_call_dict:
-        return ""
+        return None
     function = tool_call_dict.get("function")
     if isinstance(function, Mapping):
         name = function.get("name")
@@ -183,11 +207,33 @@ def _format_tool_call_line(tool_call: Any) -> str:
         arguments = tool_call_dict.get("arguments")
         tool_call_id = tool_call_dict.get("call_id") or tool_call_dict.get("id")
     if not isinstance(name, str) or not name:
-        return ""
-    rendered_arguments = arguments if isinstance(arguments, str) else repr(arguments)
+        return None
+    normalized: dict[str, Any] = {
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": arguments if arguments is not None else "",
+        },
+    }
     if isinstance(tool_call_id, str) and tool_call_id:
-        return f"- {name}[{tool_call_id}]: {rendered_arguments}"
-    return f"- {name}: {rendered_arguments}"
+        normalized["id"] = tool_call_id
+    return normalized
+
+
+def _normalize_action_tool_call(action: Any) -> dict[str, Any] | None:
+    if not isinstance(action, Mapping):
+        return None
+    command = action.get("command")
+    if not isinstance(command, str) or not command:
+        return None
+    normalized: dict[str, Any] = {
+        "type": "function",
+        "function": {"name": "bash", "arguments": {"command": command}},
+    }
+    tool_call_id = action.get("tool_call_id")
+    if isinstance(tool_call_id, str) and tool_call_id:
+        normalized["id"] = tool_call_id
+    return normalized
 
 
 def _calculate_cost(model: Any, response: Any) -> float:

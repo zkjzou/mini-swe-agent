@@ -856,8 +856,11 @@ def test_llm_verifier_multi_turn_history_includes_tool_calls_and_outputs():
 
     messages = second.get("extra", {}).get("verifier", {}).get("verifier_output", {}).get("input", {}).get("messages", [])
     assert [message["role"] for message in messages] == ["system", "assistant", "tool", "user"]
-    assert 'Tool calls:\n- bash[call_1]: {"command": "echo hello"}' in messages[1]["content"]
+    assert messages[1]["content"] == "Inspect current state"
+    assert messages[1]["tool_calls"][0]["function"]["name"] == "bash"
+    assert messages[1]["tool_calls"][0]["id"] == "call_1"
     assert "<returncode>0</returncode>" in messages[2]["content"]
+    assert messages[2]["tool_call_id"] == "call_1"
 
 
 def test_pair_thoughts_with_toolcalls_requires_exact_num_candidates():

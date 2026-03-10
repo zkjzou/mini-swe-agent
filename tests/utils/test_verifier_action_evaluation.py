@@ -4,7 +4,13 @@ import json
 import re
 from pathlib import Path
 
-from minisweagent.utils.verifier_action_evaluation import _VERIFIER_VARIANTS, evaluate_verifier_action_selection
+from minisweagent.utils.verifier_action_evaluation import (
+    _VERIFIER_VARIANTS,
+    _VerifierVariantSpec,
+    _requires_serial_evaluation,
+    _resolve_variant_verifier_config,
+    evaluate_verifier_action_selection,
+)
 
 
 class _VariantAwareModel:
@@ -215,6 +221,51 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
         for row in rows:
             handle.write(json.dumps(row))
             handle.write("\n")
+
+
+def test_resolve_variant_verifier_config_infers_checklist_mode_from_prompt_name():
+    resolved = _resolve_variant_verifier_config(
+        {
+            "agent": {
+                "verifier": {
+                    "enabled": True,
+                    "verifier_type": "llm",
+                    "prompt_dir": "prompts/verifier",
+                }
+            }
+        },
+        _VerifierVariantSpec(
+            name="adhoc_checklist_verifier",
+            verifier_type="llm",
+            prompt_name="checklist/verifier",
+            prompt_dir="prompts/verifier",
+        ),
+    )
+
+    assert resolved.checklist_mode == "issue_progress"
+    assert resolved.checklist_dynamic is False
+    assert resolved.checklist_update_mode == "regenerate"
+    assert "checklist_text" in resolved.selection_template
+
+
+def test_requires_serial_evaluation_when_prompt_name_implies_checklist_mode():
+    config = {
+        "agent": {
+            "verifier": {
+                "enabled": True,
+                "verifier_type": "llm",
+                "prompt_dir": "prompts/verifier",
+            }
+        }
+    }
+    variant = _VerifierVariantSpec(
+        name="adhoc_checklist_verifier",
+        verifier_type="llm",
+        prompt_name="checklist/verifier",
+        prompt_dir="prompts/verifier",
+    )
+
+    assert _requires_serial_evaluation(config, [variant]) is True
 
 
 def test_evaluate_verifier_action_selection_defaults_to_all_variants(tmp_path, monkeypatch):

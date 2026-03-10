@@ -27,11 +27,10 @@ from minisweagent.verifiers.llm import LLMVerifier
 from minisweagent.verifiers.action_similarity import analyze_action_similarity
 from minisweagent.verifiers.checklist import (
     generate_issue_checklist,
-    infer_checklist_prompt_settings,
     resolve_checklist_output_format,
 )
-from minisweagent.verifiers.prompt_loader import apply_prompt_overrides
 from minisweagent.verifiers.reward_model import RewardModelVerifier
+from minisweagent.verifiers.runtime_config import resolve_verifier_runtime_config, verifier_uses_checklist_mode
 
 _VERIFIER_MODEL_CLASS_DEFAULT = "litellm_textbased"
 _VERIFIER_MODEL_CLASS_REWRITES = {
@@ -462,20 +461,7 @@ class DefaultAgent:
         if not self.config.verifier.enabled:
             return None
         verifier_config = self.config.verifier.model_copy(deep=True)
-        if (
-            verifier_config.checklist_mode == "issue_progress"
-            and verifier_config.checklist_dynamic
-            and verifier_config.verifier_type in {"llm", "reward_model"}
-            and not verifier_config.prompt_name
-        ):
-            suffix = "verifier" if verifier_config.verifier_type == "llm" else "reward"
-            verifier_config.prompt_name = f"dynamic_checklist_{verifier_config.checklist_update_mode}/{suffix}"
-        inferred_checklist_settings = infer_checklist_prompt_settings(verifier_config.prompt_name)
-        if inferred_checklist_settings is not None:
-            verifier_config.checklist_mode = inferred_checklist_settings["checklist_mode"]
-            verifier_config.checklist_dynamic = inferred_checklist_settings["checklist_dynamic"]
-            verifier_config.checklist_update_mode = inferred_checklist_settings["checklist_update_mode"]
-        verifier_config = apply_prompt_overrides(verifier_config)
+        verifier_config = resolve_verifier_runtime_config(verifier_config)
         if verifier_config.model:
             verifier_config.model = _normalize_verifier_model_config(verifier_config.model)
         self._resolved_verifier_config = verifier_config.model_copy(deep=True)
@@ -767,9 +753,7 @@ class DefaultAgent:
 
     def _should_use_checklist_mode(self) -> bool:
         checklist_config = self._get_checklist_config()
-        if checklist_config.checklist_mode != "issue_progress":
-            return False
-        return checklist_config.verifier_type in {"llm", "reward_model"}
+        return verifier_uses_checklist_mode(checklist_config)
 
     def _get_checklist_model(self) -> Model:
         verifier_model = getattr(self.verifier, "model", None)
@@ -800,7 +784,7 @@ class DefaultAgent:
             return checklist_config
         static_config = checklist_config.model_copy(deep=True)
         static_config.prompt_name = static_prompt_name
-        return apply_prompt_overrides(static_config)
+        return resolve_verifier_runtime_config(static_config)
 
     def _resolve_checklist_output_format(self, checklist_config: VerifierConfig) -> str:
         return resolve_checklist_output_format(checklist_config)

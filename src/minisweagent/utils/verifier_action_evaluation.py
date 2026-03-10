@@ -21,13 +21,12 @@ from minisweagent.run.benchmarks.swebench import DEFAULT_CONFIG_FILE, _resolve_p
 from minisweagent.utils.serialize import recursive_merge
 from minisweagent.verifiers.checklist import (
     generate_issue_checklist,
-    infer_checklist_prompt_settings,
     resolve_checklist_output_format,
 )
 from minisweagent.verifiers.first_valid import FirstValidVerifier
 from minisweagent.verifiers.llm import LLMVerifier
-from minisweagent.verifiers.prompt_loader import apply_prompt_overrides
 from minisweagent.verifiers.reward_model import RewardModelVerifier
+from minisweagent.verifiers.runtime_config import resolve_verifier_runtime_config, verifier_uses_checklist_mode
 
 try:
     from tqdm.auto import tqdm as _tqdm
@@ -293,11 +292,11 @@ def _resolve_verifier_variants(
     return [spec for spec in _VERIFIER_VARIANTS if spec.verifier_type in resolved_types]
 
 
-def _requires_serial_evaluation(variant_specs: list[_VerifierVariantSpec]) -> bool:
-    return any(spec.config_overrides.get("checklist_mode") == "issue_progress" for spec in variant_specs)
+def _requires_serial_evaluation(config: dict[str, Any], variant_specs: list[_VerifierVariantSpec]) -> bool:
+    return any(verifier_uses_checklist_mode(_resolve_variant_verifier_config(config, spec)) for spec in variant_specs)
 
 
-def _build_verifier_session(config: dict[str, Any], variant_spec: _VerifierVariantSpec) -> _VerifierSession:
+def _resolve_variant_verifier_config(config: dict[str, Any], variant_spec: _VerifierVariantSpec) -> VerifierConfig:
     agent_config = config.get("agent") or {}
     if not isinstance(agent_config, dict):
         raise ValueError("Invalid config: 'agent' must be a mapping.")
@@ -317,24 +316,14 @@ def _build_verifier_session(config: dict[str, Any], variant_spec: _VerifierVaria
     for key, value in variant_spec.config_overrides.items():
         verifier_payload[key] = copy.deepcopy(value)
     verifier_config = VerifierConfig(**verifier_payload)
-
-    if (
-        verifier_config.checklist_mode == "issue_progress"
-        and verifier_config.checklist_dynamic
-        and variant_spec.verifier_type in {"llm", "reward_model"}
-        and not verifier_config.prompt_name
-    ):
-        suffix = "verifier" if variant_spec.verifier_type == "llm" else "reward"
-        verifier_config.prompt_name = f"dynamic_checklist_{verifier_config.checklist_update_mode}/{suffix}"
-
     if variant_spec.verifier_type != "first_valid":
         verifier_config.prompt_name = _align_prompt_name(verifier_config.prompt_name, variant_spec.verifier_type)
-        inferred_checklist_settings = infer_checklist_prompt_settings(verifier_config.prompt_name)
-        if inferred_checklist_settings is not None:
-            verifier_config.checklist_mode = inferred_checklist_settings["checklist_mode"]
-            verifier_config.checklist_dynamic = inferred_checklist_settings["checklist_dynamic"]
-            verifier_config.checklist_update_mode = inferred_checklist_settings["checklist_update_mode"]
-        verifier_config = apply_prompt_overrides(verifier_config)
+        verifier_config = resolve_verifier_runtime_config(verifier_config)
+    return verifier_config
+
+
+def _build_verifier_session(config: dict[str, Any], variant_spec: _VerifierVariantSpec) -> _VerifierSession:
+    verifier_config = _resolve_variant_verifier_config(config, variant_spec)
 
     if variant_spec.verifier_type == "first_valid":
         verifier = FirstValidVerifier(verifier_config)
@@ -564,9 +553,7 @@ def _sum_verifier_api_calls(verifier_output: dict[str, Any]) -> int:
 
 
 def _should_use_checklist_mode(config: VerifierConfig) -> bool:
-    if config.checklist_mode != "issue_progress":
-        return False
-    return config.verifier_type in {"llm", "reward_model"}
+    return verifier_uses_checklist_mode(config)
 
 
 def _get_static_seed_checklist_config(checklist_config: VerifierConfig) -> VerifierConfig:
@@ -580,7 +567,7 @@ def _get_static_seed_checklist_config(checklist_config: VerifierConfig) -> Verif
         return checklist_config
     static_config = checklist_config.model_copy(deep=True)
     static_config.prompt_name = static_prompt_name
-    return apply_prompt_overrides(static_config)
+    return resolve_verifier_runtime_config(static_config)
 
 
 def _prepare_checklist_template_vars(
@@ -974,7 +961,7 @@ def evaluate_verifier_action_selection(
     ]
     task_count = len(tasks)
     effective_max_workers = min(requested_max_workers, task_count) if task_count > 0 else 1
-    if _requires_serial_evaluation(resolved_variants):
+    if _requires_serial_evaluation(resolved_config, resolved_variants):
         effective_max_workers = 1
 
     progress = None

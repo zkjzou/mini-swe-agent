@@ -9,7 +9,9 @@ from minisweagent import package_dir
 from minisweagent.config import get_config_from_spec
 from minisweagent.models.test_models import DeterministicModel, make_output
 from minisweagent.run.benchmarks.swebench import (
+    _attach_langfuse_session_metadata,
     _enable_langfuse_tracing,
+    _make_langfuse_session_id,
     _resolve_profiled_model_config,
     filter_instances,
     get_swebench_docker_image_name,
@@ -196,6 +198,25 @@ def test_enable_langfuse_tracing_adds_callback_once():
         from minisweagent.run.benchmarks import swebench as swebench_module
 
         assert swebench_module.litellm.callbacks == ["langfuse_otel"]
+
+
+def test_attach_langfuse_session_metadata_updates_actor_and_verifier_models():
+    config = {
+        "model": {"model_kwargs": {"temperature": 0.1}},
+        "agent": {"verifier": {"model": {"model_kwargs": {"temperature": 0.2}}}},
+    }
+
+    _attach_langfuse_session_metadata(config, session_id="session-123")
+
+    assert config["model"]["model_kwargs"]["metadata"]["session_id"] == "session-123"
+    assert config["model"]["model_kwargs"]["litellm_session_id"] == "session-123"
+    assert config["agent"]["verifier"]["model"]["model_kwargs"]["metadata"]["session_id"] == "session-123"
+    assert config["agent"]["verifier"]["model"]["model_kwargs"]["litellm_session_id"] == "session-123"
+
+
+def test_make_langfuse_session_id_includes_run_context(tmp_path):
+    session_id = _make_langfuse_session_id(subset="verified", split="test", output_path=tmp_path / "run-name")
+    assert session_id.startswith("swebench:verified:test:run-name:")
 
 
 def test_resolve_profiled_model_config_applies_actor_verifier_and_prompt_profiles():

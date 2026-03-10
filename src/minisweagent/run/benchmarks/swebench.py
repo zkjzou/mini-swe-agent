@@ -74,6 +74,34 @@ def _enable_langfuse_tracing() -> None:
     litellm.callbacks = ["langfuse_otel"]
 
 
+def _make_langfuse_session_id(*, subset: str, split: str, output_path: Path) -> str:
+    return f"swebench:{subset}:{split}:{output_path.name or 'run'}:{int(time.time())}"
+
+
+def _attach_langfuse_session_metadata(config: dict, *, session_id: str) -> None:
+    def _apply_to_model_config(model_config: dict | None) -> None:
+        if not isinstance(model_config, dict):
+            return
+        model_kwargs = model_config.setdefault("model_kwargs", {})
+        if not isinstance(model_kwargs, dict):
+            return
+        metadata = model_kwargs.get("metadata")
+        if metadata is None:
+            metadata = {}
+            model_kwargs["metadata"] = metadata
+        if not isinstance(metadata, dict):
+            return
+        metadata["session_id"] = session_id
+        model_kwargs["litellm_session_id"] = session_id
+
+    _apply_to_model_config(config.get("model"))
+    agent_config = config.get("agent")
+    if isinstance(agent_config, dict):
+        verifier_config = agent_config.get("verifier")
+        if isinstance(verifier_config, dict):
+            _apply_to_model_config(verifier_config.get("model"))
+
+
 def _resolve_profiled_model_config(config: dict) -> dict:
     """Resolve optional actor/verifier profile selectors in a SWE-bench config."""
     resolved = recursive_merge(config)
@@ -414,6 +442,11 @@ def main(
     })
     config = recursive_merge(*configs)
     config = _resolve_profiled_model_config(config)
+
+    if enable_langfuse is True:
+        session_id = _make_langfuse_session_id(subset=subset, split=split, output_path=output_path)
+        _attach_langfuse_session_metadata(config, session_id=session_id)
+        logger.info("Using Langfuse session_id=%s", session_id)
 
     progress_manager = RunBatchProgressManager(len(instances), output_path / f"exit_statuses_{time.time()}.yaml")
 

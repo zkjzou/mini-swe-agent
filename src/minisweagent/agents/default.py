@@ -124,6 +124,8 @@ class VerifierConfig(BaseModel):
     """How many recent action+observation steps to pass to the verifier. Use -1 for all steps."""
     include_thoughts_in_history_steps: bool = True
     """Whether assistant message content is included in verifier history context."""
+    include_inputs_in_output: bool = False
+    """Whether to store rendered verifier/checklist input messages in output metadata."""
     selection_template: str = (
         "Choose the best candidate action for the task. "
         "Return only the number of the chosen candidate.\n\n"

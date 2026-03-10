@@ -31,12 +31,13 @@ class LLMVerifier:
             selection_index_base=self.config.selection_index_base,
             **template_vars,
         )
+        input_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": selection_prompt},
+        ]
         content, response, response_cost = query_verifier_text(
             self.model,
-            [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": selection_prompt},
-            ],
+            input_messages,
         )
         matches = re.findall(self.config.selection_regex, content)
         selected_index = None
@@ -65,6 +66,8 @@ class LLMVerifier:
             "response_cost": response_cost,
             "api_calls": 1,
         }
+        if getattr(self.config, "include_inputs_in_output", False):
+            metadata["input"] = {"messages": input_messages}
         return selected_index, metadata
 
     def _render(self, template: str, **kwargs) -> str:

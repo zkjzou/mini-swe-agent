@@ -39,12 +39,13 @@ def generate_issue_checklist(
     template_vars = template_vars or {}
     system_prompt = _render(getattr(config, "checklist_system_template"), **template_vars)
     checklist_prompt = _render(getattr(config, "checklist_prompt_template"), **template_vars)
+    input_messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": checklist_prompt},
+    ]
     content, response, response_cost = query_verifier_text(
         model,
-        [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": checklist_prompt},
-        ],
+        input_messages,
     )
     output_format = resolve_checklist_output_format(config)
     rubric_items = parse_checklist_rubric(content)
@@ -62,7 +63,7 @@ def generate_issue_checklist(
             min_items=getattr(config, "checklist_min_items"),
             max_items=getattr(config, "checklist_max_items"),
         )
-    return {
+    output = {
         "items": items,
         "rubric_items": rubric_items,
         "checklist_output_format": output_format,
@@ -71,6 +72,9 @@ def generate_issue_checklist(
         "response_cost": response_cost,
         "api_calls": 1,
     }
+    if getattr(config, "include_inputs_in_output", False):
+        output["input"] = {"messages": input_messages}
+    return output
 
 
 def parse_checklist_items(content: str, *, item_regex: str) -> list[str]:

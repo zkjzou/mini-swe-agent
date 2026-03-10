@@ -38,7 +38,17 @@ class RewardModelVerifier:
 
         def _score_candidate(
             candidate: dict[str, Any],
-        ) -> tuple[float | None, float | None, list[float | None], str | None, str, dict[str, Any], float, int]:
+        ) -> tuple[
+            float | None,
+            float | None,
+            list[float | None],
+            str | None,
+            str,
+            dict[str, Any],
+            float,
+            int,
+            dict[str, Any] | None,
+        ]:
             system_prompt = self._render(
                 self.config.reward_system_template,
                 candidates=candidates,
@@ -51,6 +61,14 @@ class RewardModelVerifier:
                 candidate=candidate,
                 **verifier_vars,
             )
+            input_payload = None
+            if getattr(self.config, "include_inputs_in_output", False):
+                input_payload = {
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": reward_prompt},
+                    ]
+                }
             last_exc: Exception | None = None
             api_calls = 0
             for attempt in range(3):
@@ -76,6 +94,7 @@ class RewardModelVerifier:
                         response,
                         response_cost,
                         api_calls,
+                        input_payload,
                     )
                 except Exception as exc:
                     last_exc = exc
@@ -91,15 +110,24 @@ class RewardModelVerifier:
         feedback_by_candidate: list[str | None] = [None] * len(candidates)
         checklist_item_scores_by_candidate: list[list[float | None]] = [[] for _ in candidates]
         candidate_api_calls: list[int] = [0] * len(candidates)
+        candidate_inputs: list[dict[str, Any] | None] = [None] * len(candidates)
         with ThreadPoolExecutor(max_workers=min(len(candidates), 8)) as executor:
             futures = {
                 executor.submit(_score_candidate, candidate): idx for idx, candidate in enumerate(candidates)
             }
             for future in as_completed(futures):
                 idx = futures[future]
-                reward, progress_score, checklist_item_scores, feedback, content, response, response_cost, api_calls = (
-                    future.result()
-                )
+                (
+                    reward,
+                    progress_score,
+                    checklist_item_scores,
+                    feedback,
+                    content,
+                    response,
+                    response_cost,
+                    api_calls,
+                    input_payload,
+                ) = future.result()
                 rewards[idx] = reward
                 progress_scores[idx] = progress_score
                 feedback_by_candidate[idx] = feedback
@@ -108,6 +136,7 @@ class RewardModelVerifier:
                 responses[idx] = response
                 response_costs[idx] = response_cost
                 candidate_api_calls[idx] = api_calls
+                candidate_inputs[idx] = input_payload
         selected_index = self._select_best(rewards, candidates)
         metadata = {
             "verifier_type": "reward_model",
@@ -123,6 +152,8 @@ class RewardModelVerifier:
             "selected_reward": rewards[selected_index] if rewards else None,
             "api_calls": sum(candidate_api_calls),
         }
+        if getattr(self.config, "include_inputs_in_output", False):
+            metadata["inputs"] = candidate_inputs
         return selected_index, metadata
 
     def _render(self, template: str, **kwargs) -> str:

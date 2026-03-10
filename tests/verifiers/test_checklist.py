@@ -134,3 +134,28 @@ def test_generate_issue_checklist_parses_rubric_without_min_max():
     ]
     assert output["rubric_items"][0]["id"] == "S1"
     assert output["response_cost"] == 0.12
+
+
+def test_generate_issue_checklist_can_include_rendered_inputs():
+    class _QueryOnlyModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": "CHECKLIST:\n- Reproduce issue\n- Patch source code\n- Run tests\n",
+                "extra": {"cost": 0.25},
+            }
+
+    config = SimpleNamespace(
+        checklist_system_template="system {{ task }}",
+        checklist_prompt_template="task: {{ task }}",
+        checklist_item_regex=r"^\s*(?:[-*]|\d+[.)])\s*(.+?)\s*$",
+        checklist_min_items=3,
+        checklist_max_items=5,
+        include_inputs_in_output=True,
+    )
+    output = generate_issue_checklist(_QueryOnlyModel(), config, template_vars={"task": "sample issue", "messages": []})
+
+    assert output["input"]["messages"] == [
+        {"role": "system", "content": "system sample issue"},
+        {"role": "user", "content": "task: sample issue"},
+    ]

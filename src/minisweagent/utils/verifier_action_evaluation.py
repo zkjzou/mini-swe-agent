@@ -636,6 +636,7 @@ def _prepare_checklist_template_vars(
         "rubric_items": checklist_rubric,
         "checklist_output_format": checklist_output_format,
         "raw_output": checklist_data.get("raw_output", "") if isinstance(checklist_data, dict) else "",
+        "input": checklist_data.get("input") if isinstance(checklist_data, dict) else None,
         "response": checklist_data.get("response", {}) if isinstance(checklist_data, dict) else {},
         "response_cost": _safe_float(checklist_data.get("response_cost")) if isinstance(checklist_data, dict) else 0.0,
         "api_calls": _safe_int(checklist_data.get("api_calls")) if isinstance(checklist_data, dict) else 0,

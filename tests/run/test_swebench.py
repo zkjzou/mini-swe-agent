@@ -192,13 +192,13 @@ def test_resolve_profiled_model_config_applies_actor_verifier_and_prompt_profile
     config = {
         "agent_model_profile": "gpt5_mini",
         "verifier_model_profile": "gpt5_2",
-        "verifier_prompt_profile": "swebench_reward",
+        "verifier_prompt_profile": "basic_reward",
         "profiles": {
             "model_profiles": {
                 "gpt5_mini": {"model_name": "openai/gpt-5-mini", "model_kwargs": {"drop_params": True}},
                 "gpt5_2": {"model_name": "openai/gpt-5.2", "model_kwargs": {"drop_params": True}},
             },
-            "verifier_prompts": {"swebench_reward": "swebench/reward"},
+            "verifier_prompts": {"basic_reward": "basic/reward"},
         },
     }
 
@@ -206,7 +206,7 @@ def test_resolve_profiled_model_config_applies_actor_verifier_and_prompt_profile
 
     assert resolved["model"]["model_name"] == "openai/gpt-5-mini"
     assert resolved["agent"]["verifier"]["model"]["model_name"] == "openai/gpt-5.2"
-    assert resolved["agent"]["verifier"]["prompt_name"] == "swebench/reward"
+    assert resolved["agent"]["verifier"]["prompt_name"] == "basic/reward"
     assert "profiles" not in resolved
     assert "agent_model_profile" not in resolved
     assert "verifier_model_profile" not in resolved
@@ -217,7 +217,7 @@ def test_resolve_profiled_model_config_keeps_explicit_overrides_over_profile_def
     config = {
         "agent_model_profile": "gpt5_mini",
         "verifier_model_profile": "gpt5_2",
-        "verifier_prompt_profile": "swebench_reward",
+        "verifier_prompt_profile": "basic_reward",
         "model": {"model_name": "manual/actor", "model_kwargs": {"temperature": 0.2}},
         "agent": {
             "verifier": {
@@ -230,7 +230,7 @@ def test_resolve_profiled_model_config_keeps_explicit_overrides_over_profile_def
                 "gpt5_mini": {"model_name": "openai/gpt-5-mini", "model_kwargs": {"drop_params": True}},
                 "gpt5_2": {"model_name": "openai/gpt-5.2", "model_kwargs": {"drop_params": True}},
             },
-            "verifier_prompts": {"swebench_reward": "swebench/reward"},
+            "verifier_prompts": {"basic_reward": "basic/reward"},
         },
     }
 

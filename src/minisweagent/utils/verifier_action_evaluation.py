@@ -82,13 +82,6 @@ _VERIFIER_VARIANTS: tuple[_VerifierVariantSpec, ...] = (
         config_overrides=_NON_CHECKLIST_OVERRIDES,
     ),
     _VerifierVariantSpec(
-        name="swebench_verifier",
-        verifier_type="llm",
-        prompt_name="swebench/verifier",
-        prompt_dir="prompts/verifier",
-        config_overrides=_NON_CHECKLIST_OVERRIDES,
-    ),
-    _VerifierVariantSpec(
         name="domain_verifier",
         verifier_type="llm",
         prompt_name="domain/verifier",
@@ -141,13 +134,6 @@ _VERIFIER_VARIANTS: tuple[_VerifierVariantSpec, ...] = (
         name="basic_reward",
         verifier_type="reward_model",
         prompt_name="basic/reward",
-        prompt_dir="prompts/verifier",
-        config_overrides=_NON_CHECKLIST_OVERRIDES,
-    ),
-    _VerifierVariantSpec(
-        name="swebench_reward",
-        verifier_type="reward_model",
-        prompt_name="swebench/reward",
         prompt_dir="prompts/verifier",
         config_overrides=_NON_CHECKLIST_OVERRIDES,
     ),
@@ -245,9 +231,9 @@ def _load_resolved_config(config_specs: list[str] | None) -> tuple[dict[str, Any
 
 def _default_prompt_name(verifier_type: VerifierType) -> str:
     if verifier_type == "llm":
-        return "swebench/verifier"
+        return "basic/verifier"
     if verifier_type == "reward_model":
-        return "swebench/reward"
+        return "basic/reward"
     return ""
 
 

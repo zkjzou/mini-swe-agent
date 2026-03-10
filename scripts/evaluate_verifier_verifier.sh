@@ -9,7 +9,7 @@ export SINGULARITY_TMPDIR="/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/s
 
 mkdir -p /scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/verifier_samples/qwen3_5_35b
 
-for verifier_variant in basic_verifier swebench_verifier domain_verifier domain_v2_verifier world_verifier; do
+for verifier_variant in basic_verifier domain_verifier domain_v2_verifier world_verifier; do
     mini-extra evaluate-verifier-actions \
         --input-jsonl /scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/verifier_samples/merged_grouped_latest.jsonl \
         --output-jsonl "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/verifier_samples/qwen3_5_35b/${verifier_variant}_rows.jsonl" \

@@ -362,16 +362,16 @@ def test_evaluate_verifier_action_selection_skips_rows_when_not_five_actions(tmp
             'agent.verifier.model.model_name="fake/verifier"',
             'agent.verifier.model.model_class="deterministic"',
         ],
-        verifier_variants=["swebench_verifier"],
+        verifier_variants=["basic_verifier"],
         strict_five_actions=True,
         show_progress=False,
         max_workers=1,
         overwrite=True,
     )
 
-    assert summary["per_variant"]["swebench_verifier"]["rows_evaluated"] == 0
-    assert summary["per_variant"]["swebench_verifier"]["rows_skipped"] == 1
-    assert summary["per_variant"]["swebench_verifier"]["skip_reasons"]["not_5_actions"] == 1
+    assert summary["per_variant"]["basic_verifier"]["rows_evaluated"] == 0
+    assert summary["per_variant"]["basic_verifier"]["rows_skipped"] == 1
+    assert summary["per_variant"]["basic_verifier"]["skip_reasons"]["not_5_actions"] == 1
 
     rows = [json.loads(line) for line in output_jsonl.read_text().splitlines()]
     assert len(rows) == 1
@@ -398,7 +398,7 @@ def test_evaluate_verifier_action_selection_redacts_assistant_history_when_disab
             'agent.verifier.model.model_class="deterministic"',
             "agent.verifier.include_thoughts_in_history_steps=false",
         ],
-        verifier_variants=["swebench_verifier"],
+        verifier_variants=["basic_verifier"],
         strict_five_actions=True,
         show_progress=False,
         max_workers=1,
@@ -417,7 +417,7 @@ def test_evaluate_verifier_action_selection_redacts_assistant_history_when_disab
             'agent.verifier.model.model_class="deterministic"',
             "agent.verifier.include_thoughts_in_history_steps=true",
         ],
-        verifier_variants=["swebench_verifier"],
+        verifier_variants=["basic_verifier"],
         strict_five_actions=True,
         show_progress=False,
         max_workers=1,

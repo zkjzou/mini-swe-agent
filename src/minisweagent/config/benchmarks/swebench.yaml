@@ -291,6 +291,9 @@ profiles:
     basic_verifier:
       prompt_name: "basic/verifier"
       prompt_dir: "prompts/verifier"
+    basic_mini_verifier:
+      prompt_name: "basic_mini/verifier"
+      prompt_dir: "prompts/verifier"
     swebench_verifier:
       prompt_name: "swebench/verifier"
       prompt_dir: "prompts/verifier"

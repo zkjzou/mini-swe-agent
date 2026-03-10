@@ -6,6 +6,7 @@ import pytest
 from pydantic import BaseModel
 
 from minisweagent import package_dir
+from minisweagent.config import get_config_from_spec
 from minisweagent.models.test_models import DeterministicModel, make_output
 from minisweagent.run.benchmarks.swebench import (
     _resolve_profiled_model_config,
@@ -263,6 +264,15 @@ def test_resolve_profiled_model_config_supports_prompt_profile_mapping_with_prom
 
     assert resolved["agent"]["verifier"]["prompt_name"] == "basic/verifier"
     assert resolved["agent"]["verifier"]["prompt_dir"] == "/abs/path/to/prompts/verifier"
+
+
+def test_builtin_swebench_config_exposes_basic_mini_verifier_prompt_profile():
+    config = get_config_from_spec("benchmarks/swebench.yaml")
+
+    verifier_prompts = config["profiles"]["verifier_prompts"]
+
+    assert verifier_prompts["basic_mini_verifier"]["prompt_name"] == "basic_mini/verifier"
+    assert verifier_prompts["basic_mini_verifier"]["prompt_dir"] == "prompts/verifier"
 
 
 def test_resolve_profiled_model_config_raises_for_unknown_profile():

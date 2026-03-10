@@ -75,6 +75,13 @@ _VERIFIER_VARIANTS: tuple[_VerifierVariantSpec, ...] = (
         config_overrides=_NON_CHECKLIST_OVERRIDES,
     ),
     _VerifierVariantSpec(
+        name="basic_mini_verifier",
+        verifier_type="llm",
+        prompt_name="basic_mini/verifier",
+        prompt_dir="prompts/verifier",
+        config_overrides=_NON_CHECKLIST_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
         name="swebench_verifier",
         verifier_type="llm",
         prompt_name="swebench/verifier",

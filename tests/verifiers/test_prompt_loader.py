@@ -226,3 +226,21 @@ def test_apply_prompt_overrides_resolves_relative_prompt_dir_from_repo_root(tmp_
     updated = apply_prompt_overrides(config)
 
     assert updated.selection_template == "resolved from repo root"
+
+
+def test_apply_prompt_overrides_loads_builtin_basic_mini_verifier_prompt():
+    config = SimpleNamespace(
+        prompt_name="basic_mini/verifier",
+        prompt_dir="prompts/verifier",
+        verifier_type="llm",
+        system_template="original system",
+        selection_template="original selection prompt",
+        checklist_system_template="original checklist system",
+        checklist_prompt_template="original checklist prompt",
+    )
+
+    updated = apply_prompt_overrides(config)
+
+    assert "choose the single best candidate action" in updated.system_template.lower()
+    assert "choose the single best candidate action" in updated.selection_template.lower()
+    assert "Candidates:" in updated.selection_template

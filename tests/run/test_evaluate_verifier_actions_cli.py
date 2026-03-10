@@ -9,6 +9,7 @@ from minisweagent.run.utilities.evaluate_verifier_actions import app
 
 def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
     called = {}
+    appended = {}
 
     def _fake_evaluate(**kwargs):
         called.update(kwargs)
@@ -34,6 +35,12 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
         "minisweagent.run.utilities.evaluate_verifier_actions.evaluate_verifier_action_selection",
         _fake_evaluate,
     )
+    monkeypatch.setattr(
+        "minisweagent.run.utilities.evaluate_verifier_actions.append_predicted_action_distribution",
+        lambda output_jsonl, output_csv: appended.update(
+            {"output_jsonl": output_jsonl, "output_csv": output_csv}
+        ),
+    )
 
     runner = CliRunner()
     result = runner.invoke(
@@ -45,6 +52,8 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
             str(tmp_path / "eval_rows.jsonl"),
             "--output-summary",
             str(tmp_path / "eval_summary.json"),
+            "--output-distribution-csv",
+            str(tmp_path / "predicted_action_distribution.csv"),
             "-c",
             "swebench.yaml",
             "-c",
@@ -77,6 +86,8 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
     assert called["max_workers"] == 3
     assert called["limit_rows"] == 5
     assert called["overwrite"] is True
+    assert appended["output_jsonl"] == Path(tmp_path / "rows.jsonl")
+    assert appended["output_csv"] == Path(tmp_path / "predicted_action_distribution.csv")
 
 
 def test_evaluate_verifier_actions_cli_returns_error_code_on_failure(monkeypatch, tmp_path):

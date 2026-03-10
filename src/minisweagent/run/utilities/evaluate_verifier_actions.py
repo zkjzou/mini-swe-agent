@@ -2,6 +2,10 @@
 
 """Evaluate verifier gold-action selection accuracy from merged verifier-action rows."""
 
+import csv
+import json
+from collections import Counter, defaultdict
+from datetime import datetime, UTC
 from pathlib import Path
 
 import typer
@@ -13,11 +17,71 @@ app = typer.Typer(rich_markup_mode="rich", add_completion=False)
 console = Console(highlight=False)
 
 
+def append_predicted_action_distribution(output_jsonl: Path, output_csv: Path) -> None:
+    counts: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
+    totals: Counter[tuple[str, str]] = Counter()
+    with output_jsonl.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            if row.get("status") != "evaluated":
+                continue
+            verifier_type = str(row.get("verifier_type") or "")
+            verifier_variant = str(row.get("verifier_variant") or verifier_type)
+            selected_label = row.get("selected_label")
+            if not isinstance(selected_label, str) or not selected_label:
+                selected_label = f"index_{row.get('selected_index')}"
+            key = (verifier_type, verifier_variant)
+            counts[key][selected_label] += 1
+            totals[key] += 1
+
+    fieldnames = [
+        "timestamp_utc",
+        "verifier_type",
+        "verifier_variant",
+        "selected_label",
+        "count",
+        "fraction",
+        "rows_evaluated",
+        "output_jsonl",
+    ]
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not output_csv.exists() or output_csv.stat().st_size == 0
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    with output_csv.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        for verifier_type, verifier_variant in sorted(counts):
+            total = totals[(verifier_type, verifier_variant)]
+            for selected_label, count in sorted(counts[(verifier_type, verifier_variant)].items()):
+                writer.writerow(
+                    {
+                        "timestamp_utc": timestamp,
+                        "verifier_type": verifier_type,
+                        "verifier_variant": verifier_variant,
+                        "selected_label": selected_label,
+                        "count": count,
+                        "fraction": f"{count / total:.6f}" if total else "0.000000",
+                        "rows_evaluated": total,
+                        "output_jsonl": str(output_jsonl),
+                    }
+                )
+
+
 @app.command(help=__doc__)
 def main(
     input_jsonl: str = typer.Option(..., "--input-jsonl", help="Merged verifier-action JSONL file"),
     output_jsonl: str = typer.Option(..., "--output-jsonl", help="Per-row evaluation JSONL output file"),
     output_summary: str | None = typer.Option(None, "--output-summary", help="Optional summary JSON output path"),
+    output_distribution_csv: str | None = typer.Option(
+        None,
+        "--output-distribution-csv",
+        help="Optional CSV file to append predicted action distributions from the evaluation output.",
+    ),
     config_specs: list[str] = typer.Option(
         None,
         "-c",
@@ -103,6 +167,9 @@ def main(
                 failed=metrics.get("rows_failed", 0),
             )
         )
+    if output_distribution_csv:
+        append_predicted_action_distribution(Path(summary["output_jsonl"]), Path(output_distribution_csv))
+        console.print(f"[green]Appended predicted action distribution:[/green] {output_distribution_csv}")
 
 
 if __name__ == "__main__":

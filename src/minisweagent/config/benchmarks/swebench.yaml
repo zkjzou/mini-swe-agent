@@ -329,6 +329,9 @@ profiles:
     basic_reward:
       prompt_name: "basic/reward"
       prompt_dir: "prompts/verifier"
+    basic_mini_reward:
+      prompt_name: "basic_mini/reward"
+      prompt_dir: "prompts/verifier"
     domain_reward:
       prompt_name: "domain/reward"
       prompt_dir: "prompts/verifier"

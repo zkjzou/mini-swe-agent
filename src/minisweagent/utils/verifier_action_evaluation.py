@@ -148,6 +148,13 @@ _VERIFIER_VARIANTS: tuple[_VerifierVariantSpec, ...] = (
         config_overrides=_NON_CHECKLIST_OVERRIDES,
     ),
     _VerifierVariantSpec(
+        name="basic_mini_reward",
+        verifier_type="reward_model",
+        prompt_name="basic_mini/reward",
+        prompt_dir="prompts/verifier",
+        config_overrides=_NON_CHECKLIST_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
         name="domain_reward",
         verifier_type="reward_model",
         prompt_name="domain/reward",

@@ -246,3 +246,23 @@ def test_apply_prompt_overrides_loads_builtin_basic_mini_verifier_prompt():
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.system_template
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.selection_template
     assert "Candidates:" in updated.selection_template
+
+
+def test_apply_prompt_overrides_loads_builtin_basic_mini_reward_prompt():
+    config = SimpleNamespace(
+        prompt_name="basic_mini/reward",
+        prompt_dir="prompts/verifier",
+        verifier_type="reward_model",
+        reward_system_template="original reward system",
+        reward_prompt_template="original reward prompt",
+        checklist_system_template="original checklist system",
+        checklist_prompt_template="original checklist prompt",
+    )
+
+    updated = apply_prompt_overrides(config)
+
+    assert "evaluate a single candidate next action" in updated.reward_system_template.lower()
+    assert "evaluate a single candidate next action" in updated.reward_prompt_template.lower()
+    assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.reward_system_template
+    assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.reward_prompt_template
+    assert "Candidate action:" in updated.reward_prompt_template

@@ -275,6 +275,15 @@ def test_builtin_swebench_config_exposes_basic_mini_verifier_prompt_profile():
     assert verifier_prompts["basic_mini_verifier"]["prompt_dir"] == "prompts/verifier"
 
 
+def test_builtin_swebench_config_exposes_basic_mini_reward_prompt_profile():
+    config = get_config_from_spec("benchmarks/swebench.yaml")
+
+    verifier_prompts = config["profiles"]["verifier_prompts"]
+
+    assert verifier_prompts["basic_mini_reward"]["prompt_name"] == "basic_mini/reward"
+    assert verifier_prompts["basic_mini_reward"]["prompt_dir"] == "prompts/verifier"
+
+
 def test_resolve_profiled_model_config_raises_for_unknown_profile():
     config = {
         "agent_model_profile": "missing_profile",

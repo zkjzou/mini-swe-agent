@@ -42,6 +42,9 @@ class PreparedRun:
     replay_steps: list[dict[str, Any]]
 
 
+RowKey = tuple[str, str | None, str, int, int, str, str, int | None]
+
+
 def load_sampler_model_specs(path: Path) -> list[SamplerModelSpec]:
     payload = yaml.safe_load(path.read_text())
     if not isinstance(payload, dict):
@@ -288,6 +291,110 @@ def _extract_sampled_actions(response_message: dict[str, Any]) -> list[dict[str,
     return actions
 
 
+def _first_valid_action(actions: Any) -> dict[str, Any] | None:
+    if not isinstance(actions, list):
+        return None
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        command = action.get("command")
+        if not isinstance(command, str) or not command:
+            continue
+        return copy.deepcopy(action)
+    return None
+
+
+def _row_key(
+    *,
+    instance_id: str,
+    run_id: str | None,
+    trajectory_relpath: str,
+    step_index: int,
+    message_index: int,
+    candidate_source: str,
+    sampler_model_id: str,
+    sample_index: int | None,
+) -> RowKey:
+    return (
+        instance_id,
+        run_id,
+        trajectory_relpath,
+        step_index,
+        message_index,
+        candidate_source,
+        sampler_model_id,
+        sample_index,
+    )
+
+
+def _row_key_from_row(row: dict[str, Any]) -> RowKey | None:
+    instance_id = row.get("instance_id")
+    trajectory_relpath = row.get("trajectory_relpath")
+    candidate_source = row.get("candidate_source")
+    sampler_model_id = row.get("sampler_model_id")
+    if not isinstance(instance_id, str) or not instance_id:
+        return None
+    if not isinstance(trajectory_relpath, str) or not trajectory_relpath:
+        return None
+    if not isinstance(candidate_source, str) or not candidate_source:
+        return None
+    if not isinstance(sampler_model_id, str) or not sampler_model_id:
+        return None
+    try:
+        step_index = int(row.get("step_index"))
+        message_index = int(row.get("message_index"))
+    except (TypeError, ValueError):
+        return None
+
+    raw_run_id = row.get("run_id")
+    run_id = str(raw_run_id) if raw_run_id is not None else None
+    raw_sample_index = row.get("sample_index")
+    if raw_sample_index is None:
+        sample_index = None
+    else:
+        try:
+            sample_index = int(raw_sample_index)
+        except (TypeError, ValueError):
+            return None
+
+    return _row_key(
+        instance_id=instance_id,
+        run_id=run_id,
+        trajectory_relpath=trajectory_relpath,
+        step_index=step_index,
+        message_index=message_index,
+        candidate_source=candidate_source,
+        sampler_model_id=sampler_model_id,
+        sample_index=sample_index,
+    )
+
+
+def _load_existing_rows(path: Path) -> dict[RowKey, dict[str, Any]]:
+    existing_rows: dict[RowKey, dict[str, Any]] = {}
+    if not path.is_file():
+        return existing_rows
+
+    with path.open(encoding="utf-8") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            text = line.strip()
+            if not text:
+                continue
+            try:
+                row = json.loads(text)
+            except json.JSONDecodeError:
+                logger.warning("Skipping malformed JSONL row in %s:%s", path, line_no)
+                continue
+            if not isinstance(row, dict):
+                logger.warning("Skipping non-object JSONL row in %s:%s", path, line_no)
+                continue
+            key = _row_key_from_row(row)
+            if key is None:
+                logger.warning("Skipping row with incomplete key fields in %s:%s", path, line_no)
+                continue
+            existing_rows[key] = row
+    return existing_rows
+
+
 def _json_dump_line(file_obj, row: dict[str, Any]) -> None:
     file_obj.write(json.dumps(row, ensure_ascii=False, default=str))
     file_obj.write("\n")
@@ -475,6 +582,7 @@ def generate_verifier_sampling_dataset(
     show_progress: bool = True,
     print_fct: Callable[[str], None] | None = print,
     overwrite: bool = False,
+    resample_invalid_only: bool = False,
 ) -> dict[str, Any]:
     if num_samples < 1:
         raise ValueError("num_samples must be >= 1")
@@ -484,10 +592,12 @@ def generate_verifier_sampling_dataset(
     output_dir.mkdir(parents=True, exist_ok=True)
     output_jsonl = output_dir / "candidates.jsonl"
     summary_json = output_dir / "summary.json"
-    if not overwrite and output_jsonl.exists():
+    if not overwrite and not resample_invalid_only and output_jsonl.exists():
         raise FileExistsError(f"Output file already exists: {output_jsonl}")
-    if not overwrite and summary_json.exists():
+    if not overwrite and not resample_invalid_only and summary_json.exists():
         raise FileExistsError(f"Summary file already exists: {summary_json}")
+
+    existing_rows = _load_existing_rows(output_jsonl) if resample_invalid_only else {}
 
     sampler_specs = load_sampler_model_specs(sampler_config_path)
     model_instances = {
@@ -508,10 +618,13 @@ def generate_verifier_sampling_dataset(
         "runs_skipped_parallel_tool_calls": 0,
         "planned_runs": 0,
         "planned_steps": 0,
+        "planned_sample_slots": 0,
         "planned_sample_calls": 0,
         "steps_processed": 0,
         "gold_candidates": 0,
         "sample_candidates": 0,
+        "sample_candidates_preserved": 0,
+        "sample_candidates_resampled": 0,
         "sample_failures": 0,
     }
     failures_by_model: dict[str, int] = {spec.id: 0 for spec in sampler_specs}
@@ -526,7 +639,7 @@ def generate_verifier_sampling_dataset(
     )
     counts["planned_runs"] = len(prepared_runs)
     counts["planned_steps"] = sum(len(run.replay_steps) for run in prepared_runs)
-    counts["planned_sample_calls"] = counts["planned_steps"] * len(sampler_specs) * num_samples
+    counts["planned_sample_slots"] = counts["planned_steps"] * len(sampler_specs) * num_samples
     if print_fct is not None:
         print_fct(
             "Sampling plan: "
@@ -534,7 +647,7 @@ def generate_verifier_sampling_dataset(
             f"steps={counts['planned_steps']} "
             f"models={len(sampler_specs)} "
             f"num_samples={num_samples} "
-            f"total_model_calls={counts['planned_sample_calls']}"
+            f"total_sample_slots={counts['planned_sample_slots']}"
         )
 
     run_progress = None
@@ -572,8 +685,25 @@ def generate_verifier_sampling_dataset(
 
                         futures = {}
                         for sampler_spec in sampler_specs:
-                            model = model_instances[sampler_spec.id]
                             for sample_index in range(num_samples):
+                                row_key = _row_key(
+                                    instance_id=prepared_run.instance_id,
+                                    run_id=prepared_run.run_id,
+                                    trajectory_relpath=prepared_run.trajectory_relpath,
+                                    step_index=step_index,
+                                    message_index=message_index,
+                                    candidate_source="sampled",
+                                    sampler_model_id=sampler_spec.id,
+                                    sample_index=sample_index,
+                                )
+                                existing_row = existing_rows.get(row_key)
+                                if existing_row is not None and _first_valid_action(existing_row.get("actions")) is not None:
+                                    _json_dump_line(output_file, existing_row)
+                                    counts["sample_candidates"] += 1
+                                    counts["sample_candidates_preserved"] += 1
+                                    continue
+
+                                model = model_instances[sampler_spec.id]
                                 future = executor.submit(
                                     _sample_candidate,
                                     model=model,
@@ -581,6 +711,7 @@ def generate_verifier_sampling_dataset(
                                     prompt_messages=prompt_messages,
                                 )
                                 futures[future] = (sampler_spec, sample_index)
+                                counts["planned_sample_calls"] += 1
 
                         for future in as_completed(futures):
                             sampler_spec, sample_index = futures[future]
@@ -600,6 +731,7 @@ def generate_verifier_sampling_dataset(
                             )
                             _json_dump_line(output_file, row)
                             counts["sample_candidates"] += 1
+                            counts["sample_candidates_resampled"] += 1
                             if error_payload is not None:
                                 counts["sample_failures"] += 1
                                 failures_by_model[sampler_spec.id] = failures_by_model.get(sampler_spec.id, 0) + 1
@@ -635,6 +767,7 @@ def generate_verifier_sampling_dataset(
             "limit_steps_per_run": limit_steps_per_run,
             "exclude_parallel_tool_call_trajectories": exclude_parallel_tool_call_trajectories,
             "show_progress": show_progress,
+            "resample_invalid_only": resample_invalid_only,
             "sampler_models": [
                 {
                     "id": spec.id,

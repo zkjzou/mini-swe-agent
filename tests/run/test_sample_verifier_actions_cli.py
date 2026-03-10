@@ -44,6 +44,7 @@ def test_sample_verifier_actions_cli_invokes_generator(monkeypatch, tmp_path):
             "10",
             "--limit-steps-per-run",
             "8",
+            "--resample-invalid-only",
             "--overwrite",
         ],
     )
@@ -54,6 +55,7 @@ def test_sample_verifier_actions_cli_invokes_generator(monkeypatch, tmp_path):
     assert called["max_workers"] == 5
     assert called["limit_runs"] == 10
     assert called["limit_steps_per_run"] == 8
+    assert called["resample_invalid_only"] is True
     assert called["overwrite"] is True
 
 

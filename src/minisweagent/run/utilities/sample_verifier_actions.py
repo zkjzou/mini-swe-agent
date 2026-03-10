@@ -35,6 +35,11 @@ def main(
         "--show-progress/--no-show-progress",
         help="Display tqdm progress bars while sampling",
     ),
+    resample_invalid_only: bool = typer.Option(
+        False,
+        "--resample-invalid-only",
+        help="Reuse existing sampled rows with valid actions and only resample missing/invalid sample slots",
+    ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output files if they already exist"),
 ) -> None:
     try:
@@ -51,6 +56,7 @@ def main(
             show_progress=show_progress,
             print_fct=console.print,
             overwrite=overwrite,
+            resample_invalid_only=resample_invalid_only,
         )
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]Sampling failed:[/red] {exc}")

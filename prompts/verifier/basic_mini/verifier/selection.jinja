@@ -10,6 +10,11 @@ Prioritize actions that are:
 Do NOT choose actions that are vague, multi-step beyond a single command, or that alter unrelated files.
 If multiple candidates are equivalent, prefer the one with lower risk and fewer side effects.
 Always follow the output format exactly.
+When the task is complete and candidates involve final submission, prefer the action that follows the required patch workflow:
+1) Create `patch.txt` with `git diff -- path/to/file1 path/to/file2 > patch.txt` listing only modified source files.
+2) Verify `patch.txt`.
+3) Submit with the exact command `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt`.
+Do not prefer candidates that commit changes, submit test/helper/config files unnecessarily, or combine patch creation/verification/submission into one command.
 Task: {{ task }}
 
 [[[SELECTION_TEMPLATE]]]
@@ -24,6 +29,11 @@ Prioritize actions that are:
 Do NOT choose actions that are vague, multi-step beyond a single command, or that alter unrelated files.
 If multiple candidates are equivalent, prefer the one with lower risk and fewer side effects.
 Always follow the output format exactly.
+When the task is complete and candidates involve final submission, prefer the action that follows the required patch workflow:
+1) Create `patch.txt` with `git diff -- path/to/file1 path/to/file2 > patch.txt` listing only modified source files.
+2) Verify `patch.txt`.
+3) Submit with the exact command `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt`.
+Do not prefer candidates that commit changes, submit test/helper/config files unnecessarily, or combine patch creation/verification/submission into one command.
 
 Task: {{ task }}
 

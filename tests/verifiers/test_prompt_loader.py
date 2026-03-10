@@ -243,4 +243,6 @@ def test_apply_prompt_overrides_loads_builtin_basic_mini_verifier_prompt():
 
     assert "choose the single best candidate action" in updated.system_template.lower()
     assert "choose the single best candidate action" in updated.selection_template.lower()
+    assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.system_template
+    assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.selection_template
     assert "Candidates:" in updated.selection_template

@@ -811,6 +811,55 @@ def test_pair_thoughts_with_toolcalls_raises_format_error_on_count_mismatch():
     assert "matching counts of THOUGHTS sections and tool calls" in format_msg
 
 
+def test_llm_verifier_multi_turn_history_includes_tool_calls_and_outputs():
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "include_inputs_in_output": True,
+        "history_message_format": "multi_turn_chat",
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("REASONING: pick 1\nFINAL: 1", []), make_output("REASONING: pick 1\nFINAL: 1", [])],
+        },
+    }
+
+    first_tool_calls = [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "bash", "arguments": '{"command": "echo hello"}'},
+        }
+    ]
+    second_tool_calls = [
+        {
+            "id": "call_2",
+            "type": "function",
+            "function": {"name": "bash", "arguments": '{"command": "echo second"}'},
+        }
+    ]
+    actor_model = DeterministicToolcallModel(
+        outputs=[
+            make_toolcall_output("Inspect current state", first_tool_calls, [{"command": "echo hello", "tool_call_id": "call_1"}]),
+            make_toolcall_output("Continue with next action", second_tool_calls, [{"command": "echo second", "tool_call_id": "call_2"}]),
+        ]
+    )
+    agent = DefaultAgent(model=actor_model, env=LocalEnvironment(), **config)
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    agent.step()
+    second = agent.query()
+
+    messages = second.get("extra", {}).get("verifier", {}).get("verifier_output", {}).get("input", {}).get("messages", [])
+    assert [message["role"] for message in messages] == ["system", "assistant", "tool", "user"]
+    assert 'Tool calls:\n- bash[call_1]: {"command": "echo hello"}' in messages[1]["content"]
+    assert "<returncode>0</returncode>" in messages[2]["content"]
+
+
 def test_pair_thoughts_with_toolcalls_requires_exact_num_candidates():
     config = _load_default_agent_config()
     config["candidate_sampling"] = {

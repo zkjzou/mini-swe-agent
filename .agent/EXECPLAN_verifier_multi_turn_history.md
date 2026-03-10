@@ -11,6 +11,7 @@ After this change, verifier prompts can receive prior trajectory context as an a
 - [x] (2026-03-10 18:55Z) Added verifier config and shared message-building helpers for single-prompt vs multi-turn verifier history.
 - [x] (2026-03-10 19:05Z) Updated built-in verifier prompt variants to conditionally omit inline history in multi-turn mode.
 - [x] (2026-03-10 19:12Z) Added focused tests for selection, reward, checklist, agent integration, and offline evaluation paths.
+- [x] (2026-03-10 19:24Z) Extended multi-turn replay to include assistant tool-call metadata and tool output messages.
 
 ## Surprises & Discoveries
 
@@ -27,6 +28,9 @@ After this change, verifier prompts can receive prior trajectory context as an a
 - Decision: replay original `user`/`assistant` turns and append a final `user` verifier instruction, rather than synthesizing `Step N` wrappers.
   Rationale: keeps the verifier transcript closest to the original trajectory and works across model backends that already accept chat message arrays.
   Date/Author: 2026-03-10 / Codex
+- Decision: include tool-call summaries on assistant turns and replay tool outputs as `tool` messages in multi-turn history.
+  Rationale: verifier decisions often depend on the exact command invocation and resulting tool output, not just free-form assistant text.
+  Date/Author: 2026-03-10 / Codex
 - Decision: exclude verifier feedback and verifier metadata from replayed history.
   Rationale: the verifier should judge the actor trajectory itself, not its own previous outputs or injected critique text.
   Date/Author: 2026-03-10 / Codex
@@ -37,5 +41,8 @@ Implemented with focused verification:
 
 - `pytest -q tests/verifiers/test_query_path.py tests/verifiers/test_checklist.py tests/agents/test_reward_verifier.py tests/utils/test_verifier_action_evaluation.py`
 - Result: `34 passed`
+- Follow-up verification after adding tool-call/tool-output replay:
+  `pytest -q tests/verifiers/test_query_path.py tests/utils/test_verifier_action_evaluation.py tests/agents/test_verifier.py tests/agents/test_reward_verifier.py tests/verifiers/test_checklist.py`
+  Result: `57 passed`
 
 The shared message-builder path now keeps selection, reward, checklist generation, and offline evaluation behavior aligned.

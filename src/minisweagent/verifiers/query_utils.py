@@ -47,23 +47,26 @@ def build_verifier_messages(
     return sanitize_captured_verifier_messages(
         input_messages,
         allow_assistant=history_format == _MULTI_TURN_CHAT_HISTORY_FORMAT,
+        allow_tool=history_format == _MULTI_TURN_CHAT_HISTORY_FORMAT,
     )["messages"]
 
 
 def sanitize_captured_verifier_messages(
-    messages: list[dict[str, Any]], *, allow_assistant: bool = False
+    messages: list[dict[str, Any]], *, allow_assistant: bool = False, allow_tool: bool = False
 ) -> dict[str, Any]:
     allowed_roles = {"system", "user"}
     if allow_assistant:
         allowed_roles.add("assistant")
+    if allow_tool:
+        allowed_roles.add("tool")
     sanitized_messages: list[dict[str, Any]] = []
     for message in messages:
         if not isinstance(message, dict):
             continue
-        role = message.get("role")
+        role = _extract_history_role(message)
         if role not in allowed_roles:
             continue
-        content = _extract_message_text(message)
+        content = _extract_history_text(message)
         if not content:
             continue
         sanitized_messages.append({"role": role, "content": content})
@@ -82,14 +85,37 @@ def _extract_history_messages(template_vars: Mapping[str, Any]) -> list[dict[str
     for message in raw_messages:
         if not isinstance(message, dict):
             continue
-        role = message.get("role")
-        if role not in {"user", "assistant"}:
+        role = _extract_history_role(message)
+        if role not in {"user", "assistant", "tool"}:
             continue
-        content = _extract_message_text(message)
+        content = _extract_history_text(message)
         if not content:
             continue
         history_messages.append({"role": role, "content": content})
     return history_messages
+
+
+def _extract_history_role(message: Mapping[str, Any]) -> str | None:
+    role = message.get("role")
+    if role in {"system", "user", "assistant", "tool"}:
+        return role
+    if message.get("type") == "function_call_output":
+        return "tool"
+    if message.get("type") == "message":
+        typed_role = message.get("role")
+        if typed_role in {"system", "user", "assistant", "tool"}:
+            return typed_role
+    return None
+
+
+def _extract_history_text(message: Mapping[str, Any]) -> str:
+    base_text = _extract_message_text(message)
+    tool_call_text = _extract_tool_call_text(message)
+    if base_text and tool_call_text:
+        return f"{base_text}\n\nTool calls:\n{tool_call_text}"
+    if tool_call_text:
+        return f"Tool calls:\n{tool_call_text}"
+    return base_text
 
 
 def _extract_message_text(message: Mapping[str, Any]) -> str:
@@ -106,6 +132,62 @@ def _extract_message_text(message: Mapping[str, Any]) -> str:
     if isinstance(output, list):
         return _extract_text_from_output(output)
     return ""
+
+
+def _extract_tool_call_text(message: Mapping[str, Any]) -> str:
+    lines: list[str] = []
+    tool_calls = message.get("tool_calls")
+    if isinstance(tool_calls, list):
+        for tool_call in tool_calls:
+            line = _format_tool_call_line(tool_call)
+            if line:
+                lines.append(line)
+    output = message.get("output")
+    if isinstance(output, list):
+        for item in output:
+            item_dict = _to_dict(item)
+            if item_dict.get("type") == "function_call":
+                line = _format_tool_call_line(item_dict)
+                if line:
+                    lines.append(line)
+    if not lines:
+        extra = message.get("extra")
+        if isinstance(extra, Mapping):
+            actions = extra.get("actions")
+            if isinstance(actions, list):
+                for action in actions:
+                    if not isinstance(action, Mapping):
+                        continue
+                    command = action.get("command")
+                    if not isinstance(command, str) or not command:
+                        continue
+                    tool_call_id = action.get("tool_call_id")
+                    if isinstance(tool_call_id, str) and tool_call_id:
+                        lines.append(f"- bash[{tool_call_id}]: {command}")
+                    else:
+                        lines.append(f"- bash: {command}")
+    return "\n".join(lines)
+
+
+def _format_tool_call_line(tool_call: Any) -> str:
+    tool_call_dict = _to_dict(tool_call)
+    if not tool_call_dict:
+        return ""
+    function = tool_call_dict.get("function")
+    if isinstance(function, Mapping):
+        name = function.get("name")
+        arguments = function.get("arguments")
+        tool_call_id = tool_call_dict.get("id")
+    else:
+        name = tool_call_dict.get("name")
+        arguments = tool_call_dict.get("arguments")
+        tool_call_id = tool_call_dict.get("call_id") or tool_call_dict.get("id")
+    if not isinstance(name, str) or not name:
+        return ""
+    rendered_arguments = arguments if isinstance(arguments, str) else repr(arguments)
+    if isinstance(tool_call_id, str) and tool_call_id:
+        return f"- {name}[{tool_call_id}]: {rendered_arguments}"
+    return f"- {name}: {rendered_arguments}"
 
 
 def _calculate_cost(model: Any, response: Any) -> float:

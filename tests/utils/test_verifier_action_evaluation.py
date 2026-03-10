@@ -626,7 +626,9 @@ def test_evaluate_verifier_action_selection_can_use_multi_turn_verifier_history(
 
     row = json.loads(output_jsonl.read_text().splitlines()[0])
     messages = row["verifier_output"]["input"]["messages"]
-    assert [message["role"] for message in messages] == ["system", "assistant", "user"]
+    assert [message["role"] for message in messages] == ["system", "assistant", "tool", "user"]
+    assert "inspect parser first" in messages[1]["content"].lower()
+    assert messages[2]["content"] == "ok"
     assert "Recent steps" not in messages[-1]["content"]
     assert "Task: Fix the failing parser test." in messages[-1]["content"]
 

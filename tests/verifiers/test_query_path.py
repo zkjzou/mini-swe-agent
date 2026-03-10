@@ -269,8 +269,18 @@ def test_llm_verifier_can_replay_history_as_multi_turn_chat():
             "task": "Fix bug",
             "messages": [
                 {"role": "user", "content": "Previous observation"},
-                {"role": "assistant", "content": "Run rg"},
-                {"role": "user", "content": "stdout"},
+                {
+                    "role": "assistant",
+                    "content": "Run rg",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "bash", "arguments": '{"command": "rg parser"}'},
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "stdout"},
             ],
         },
     )
@@ -278,8 +288,8 @@ def test_llm_verifier_can_replay_history_as_multi_turn_chat():
     assert model.prepared_messages == [
         {"role": "system", "content": "system"},
         {"role": "user", "content": "Previous observation"},
-        {"role": "assistant", "content": "Run rg"},
-        {"role": "user", "content": "stdout"},
+        {"role": "assistant", "content": 'Run rg\n\nTool calls:\n- bash[call_1]: {"command": "rg parser"}'},
+        {"role": "tool", "content": "stdout"},
         {"role": "user", "content": "Task: Fix bug\nCandidates:\n1. Option 1\n2. Option 2\n"},
     ]
 
@@ -304,14 +314,24 @@ def test_reward_verifier_can_replay_history_as_multi_turn_chat():
         template_vars={"checklist_items": ["reproduce", "validate"]},
         task="Fix bug",
         messages=[
-            {"role": "assistant", "content": "Run rg"},
-            {"role": "user", "content": "stdout"},
+            {
+                "role": "assistant",
+                "content": "Run rg",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "bash", "arguments": '{"command": "rg parser"}'},
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "stdout"},
         ],
     )
 
     assert model.prepared_messages[0] == [
         {"role": "system", "content": "system"},
-        {"role": "assistant", "content": "Run rg"},
-        {"role": "user", "content": "stdout"},
+        {"role": "assistant", "content": 'Run rg\n\nTool calls:\n- bash[call_1]: {"command": "rg parser"}'},
+        {"role": "tool", "content": "stdout"},
         {"role": "user", "content": "Task: Fix bug\nCandidate action:\nOption 1"},
     ]

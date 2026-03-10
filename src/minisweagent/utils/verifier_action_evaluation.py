@@ -45,6 +45,8 @@ class _VerifierVariantSpec:
 _WORLD_SELECTION_SCORE_REGEX = (
     r"(?ms)Candidate\s+(\d+)\s*:\s*.*?SCORES:\s*([+-]?\d+(?:\.\d+)?)"
 )
+_FINAL_SELECTION_REGEX = r"FINAL:\s*(\d+)"
+_VERIFIER_SCORE_REGEX = r"(?ms)Candidate\s+(\d+)\s*:\s*.*?SCORE:\s*([+-]?\d+(?:\.\d+)?)"
 _CHECKLIST_STATIC_OVERRIDES = {
     "checklist_mode": "issue_progress",
     "checklist_dynamic": False,
@@ -65,6 +67,10 @@ _NON_CHECKLIST_OVERRIDES = {
     "checklist_dynamic": False,
     "checklist_update_mode": "regenerate",
 }
+_LLM_PROMPT_OVERRIDES = {
+    "selection_regex": _FINAL_SELECTION_REGEX,
+    "selection_score_regex": _VERIFIER_SCORE_REGEX,
+}
 _VERIFIER_VARIANTS: tuple[_VerifierVariantSpec, ...] = (
     _VerifierVariantSpec(name="first_valid", verifier_type="first_valid"),
     _VerifierVariantSpec(
@@ -72,63 +78,67 @@ _VERIFIER_VARIANTS: tuple[_VerifierVariantSpec, ...] = (
         verifier_type="llm",
         prompt_name="basic/verifier",
         prompt_dir="prompts/verifier",
-        config_overrides=_NON_CHECKLIST_OVERRIDES,
+        config_overrides={**_NON_CHECKLIST_OVERRIDES, **_LLM_PROMPT_OVERRIDES},
     ),
     _VerifierVariantSpec(
         name="basic_mini_verifier",
         verifier_type="llm",
         prompt_name="basic_mini/verifier",
         prompt_dir="prompts/verifier",
-        config_overrides=_NON_CHECKLIST_OVERRIDES,
+        config_overrides={**_NON_CHECKLIST_OVERRIDES, **_LLM_PROMPT_OVERRIDES},
     ),
     _VerifierVariantSpec(
         name="domain_verifier",
         verifier_type="llm",
         prompt_name="domain/verifier",
         prompt_dir="prompts/verifier",
-        config_overrides=_NON_CHECKLIST_OVERRIDES,
+        config_overrides={**_NON_CHECKLIST_OVERRIDES, **_LLM_PROMPT_OVERRIDES},
     ),
     _VerifierVariantSpec(
         name="domain_v2_verifier",
         verifier_type="llm",
         prompt_name="domain_v2/verifier",
         prompt_dir="prompts/verifier",
-        config_overrides=_NON_CHECKLIST_OVERRIDES,
+        config_overrides={**_NON_CHECKLIST_OVERRIDES, **_LLM_PROMPT_OVERRIDES},
     ),
     _VerifierVariantSpec(
         name="world_verifier",
         verifier_type="llm",
         prompt_name="world/verifier",
         prompt_dir="prompts/verifier",
-        config_overrides={**_NON_CHECKLIST_OVERRIDES, "selection_score_regex": _WORLD_SELECTION_SCORE_REGEX},
+        config_overrides={
+            **_NON_CHECKLIST_OVERRIDES,
+            "selection_regex": _FINAL_SELECTION_REGEX,
+            "selection_score_regex": _WORLD_SELECTION_SCORE_REGEX,
+        },
     ),
     _VerifierVariantSpec(
         name="checklist_verifier",
         verifier_type="llm",
         prompt_name="checklist/verifier",
         prompt_dir="prompts/verifier",
-        config_overrides=_CHECKLIST_STATIC_OVERRIDES,
+        config_overrides={**_CHECKLIST_STATIC_OVERRIDES, **_LLM_PROMPT_OVERRIDES},
     ),
     _VerifierVariantSpec(
         name="checklist_v2_verifier",
         verifier_type="llm",
         prompt_name="checklist_v2/verifier",
         prompt_dir="prompts/verifier",
-        config_overrides=_CHECKLIST_STATIC_OVERRIDES,
+        config_overrides={**_CHECKLIST_STATIC_OVERRIDES, **_LLM_PROMPT_OVERRIDES},
     ),
     _VerifierVariantSpec(
         name="dynamic_checklist_regenerate_verifier",
         verifier_type="llm",
         prompt_name="dynamic_checklist_regenerate/verifier",
         prompt_dir="prompts/verifier",
-        config_overrides=_DYNAMIC_CHECKLIST_REGENERATE_OVERRIDES,
+        config_overrides={**_DYNAMIC_CHECKLIST_REGENERATE_OVERRIDES, **_LLM_PROMPT_OVERRIDES},
     ),
     _VerifierVariantSpec(
         name="dynamic_checklist_modify_verifier",
         verifier_type="llm",
         prompt_name="dynamic_checklist_modify/verifier",
         prompt_dir="prompts/verifier",
-        config_overrides=_DYNAMIC_CHECKLIST_MODIFY_OVERRIDES,
+        config_overrides={**_DYNAMIC_CHECKLIST_MODIFY_OVERRIDES, **_LLM_PROMPT_OVERRIDES},
     ),
     _VerifierVariantSpec(
         name="basic_reward",
@@ -270,6 +280,10 @@ def _resolve_verifier_variants(
 
     resolved_types = _normalize_verifier_types(verifier_types)
     return [spec for spec in _VERIFIER_VARIANTS if spec.verifier_type in resolved_types]
+
+
+def _requires_serial_evaluation(variant_specs: list[_VerifierVariantSpec]) -> bool:
+    return any(spec.config_overrides.get("checklist_mode") == "issue_progress" for spec in variant_specs)
 
 
 def _build_verifier_session(config: dict[str, Any], variant_spec: _VerifierVariantSpec) -> _VerifierSession:
@@ -934,6 +948,8 @@ def evaluate_verifier_action_selection(
     ]
     task_count = len(tasks)
     effective_max_workers = min(requested_max_workers, task_count) if task_count > 0 else 1
+    if _requires_serial_evaluation(resolved_variants):
+        effective_max_workers = 1
 
     progress = None
     if show_progress and _tqdm is not None:

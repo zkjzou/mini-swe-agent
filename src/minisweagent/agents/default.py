@@ -994,6 +994,7 @@ class DefaultAgent:
         source_messages = self._messages_for_outbound_context(
             self.messages, include_assistant_content=include_assistant_content
         )
+        source_messages = [message for message in source_messages if not self._is_system_message(message)]
         steps: list[list[dict[str, Any]]] = []
         current_step: list[dict[str, Any]] = []
         started = False
@@ -1020,6 +1021,13 @@ class DefaultAgent:
         if message.get("object") == "response":
             return True
         if message.get("type") == "message" and message.get("role") == "assistant":
+            return True
+        return False
+
+    def _is_system_message(self, message: dict) -> bool:
+        if message.get("role") == "system":
+            return True
+        if message.get("type") == "message" and message.get("role") == "system":
             return True
         return False
 

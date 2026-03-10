@@ -658,6 +658,55 @@ def test_verifier_history_can_optionally_exclude_assistant_content(include_thoug
         assert "assistant=" in prompt
 
 
+def test_verifier_uses_task_in_system_prompt_and_excludes_actor_system_message():
+    class _CaptureVerifierModel:
+        def __init__(self):
+            self.messages = None
+
+        def query(self, messages, **kwargs):
+            self.messages = messages
+            return {"role": "assistant", "content": "FINAL: 1", "extra": {"cost": 0.0}}
+
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "history_steps": -1,
+        "include_thoughts_in_history_steps": True,
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "system_template": "Verifier system task={{ task }}",
+        "selection_template": (
+            "Messages:\n{% for msg in messages %}{{ msg.role }}={{ msg.content }}\n{% endfor %}\n"
+            "{% for c in candidates %}Candidate {{ c.index + selection_index_base }}:\n{{ c.content }}\n{% endfor %}"
+        ),
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("FINAL: 1", [])],
+        },
+    }
+
+    model = DeterministicModel(outputs=[make_output("Candidate", [{"command": "echo hi"}])])
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    capture_model = _CaptureVerifierModel()
+    agent.verifier.model = capture_model
+    agent.add_messages(
+        {"role": "system", "content": "coding agent system prompt"},
+        {"role": "user", "content": "Fix PR 123 parser issue"},
+        {"role": "assistant", "content": "inspect files"},
+        {"role": "user", "content": "obs1"},
+    )
+    agent.extra_template_vars["task"] = "Fix PR 123 parser issue"
+
+    agent.query()
+
+    assert capture_model.messages is not None
+    assert capture_model.messages[0]["content"] == "Verifier system task=Fix PR 123 parser issue"
+    assert "coding agent system prompt" not in capture_model.messages[-1]["content"]
+
+
 def test_pair_thoughts_with_toolcalls_builds_verifier_candidates_from_one_response():
     config = _load_default_agent_config()
     config["candidate_sampling"] = {

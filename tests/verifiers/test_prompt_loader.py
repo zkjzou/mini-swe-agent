@@ -243,6 +243,7 @@ def test_apply_prompt_overrides_loads_builtin_basic_mini_verifier_prompt():
 
     assert "choose the single best candidate action" in updated.system_template.lower()
     assert "choose the single best candidate action" in updated.selection_template.lower()
+    assert "Task: {{ task }}" in updated.system_template
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.system_template
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.selection_template
     assert "Candidates:" in updated.selection_template
@@ -263,6 +264,7 @@ def test_apply_prompt_overrides_loads_builtin_basic_mini_reward_prompt():
 
     assert "evaluate a single candidate next action" in updated.reward_system_template.lower()
     assert "evaluate a single candidate next action" in updated.reward_prompt_template.lower()
+    assert "Task: {{ task }}" in updated.reward_system_template
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.reward_system_template
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.reward_prompt_template
     assert "Candidate action:" in updated.reward_prompt_template

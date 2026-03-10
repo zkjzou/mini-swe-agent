@@ -496,6 +496,36 @@ def test_evaluate_verifier_action_selection_redacts_assistant_history_when_disab
     assert "SECRET_THOUGHT" in unredacted_prompt_text
 
 
+def test_evaluate_verifier_action_selection_excludes_system_history_from_verifier_input(tmp_path, monkeypatch):
+    input_jsonl = tmp_path / "merged.jsonl"
+    _write_jsonl(input_jsonl, [_make_row()])
+
+    model = _VariantAwareModel()
+    monkeypatch.setattr(
+        "minisweagent.utils.verifier_action_evaluation.get_model",
+        lambda *args, **kwargs: model,
+    )
+
+    evaluate_verifier_action_selection(
+        input_jsonl=input_jsonl,
+        output_jsonl=tmp_path / "rows_system_filtered.jsonl",
+        config_specs=[
+            "swebench.yaml",
+            'agent.verifier.model.model_name="fake/verifier"',
+            'agent.verifier.model.model_class="deterministic"',
+        ],
+        verifier_variants=["basic_mini_verifier"],
+        strict_five_actions=True,
+        show_progress=False,
+        max_workers=1,
+        overwrite=True,
+    )
+
+    prompt = "\n".join(model.prompts).lower()
+    assert "fix the failing parser test." in prompt
+    assert "you are coding agent." not in prompt
+
+
 def test_evaluate_verifier_action_selection_can_include_verifier_and_checklist_inputs(tmp_path, monkeypatch):
     input_jsonl = tmp_path / "merged.jsonl"
     output_jsonl = tmp_path / "eval_rows.jsonl"
@@ -525,15 +555,14 @@ def test_evaluate_verifier_action_selection_can_include_verifier_and_checklist_i
     row = json.loads(output_jsonl.read_text().splitlines()[0])
     verifier_output = row["verifier_output"]
     reward_messages = verifier_output["inputs"][0]["messages"]
-    assert reward_messages == [reward_messages[0]]
-    assert reward_messages[0]["role"] == "user"
+    assert [message["role"] for message in reward_messages] == ["system", "user"]
     assert "Task: Fix the failing parser test." in reward_messages[0]["content"]
-    assert "Candidate action:" in reward_messages[0]["content"]
+    assert "Candidate action:" in reward_messages[1]["content"]
     checklist_messages = verifier_output["checklist"]["input"]["messages"]
-    assert checklist_messages == [checklist_messages[0]]
-    assert checklist_messages[0]["role"] == "user"
-    assert "Issue description:" in checklist_messages[0]["content"]
-    assert "Recent steps" in checklist_messages[0]["content"]
+    assert [message["role"] for message in checklist_messages] == ["system", "user"]
+    assert "checklists" in checklist_messages[0]["content"].lower()
+    assert "Issue description:" in checklist_messages[1]["content"]
+    assert "Recent steps" in checklist_messages[1]["content"]
 
 
 def test_evaluate_verifier_action_selection_can_include_llm_verifier_inputs(tmp_path, monkeypatch):
@@ -563,8 +592,9 @@ def test_evaluate_verifier_action_selection_can_include_llm_verifier_inputs(tmp_
     )
 
     row = json.loads(output_jsonl.read_text().splitlines()[0])
-    assert row["verifier_output"]["input"]["messages"][0]["role"] == "user"
-    assert "Task: Fix the failing parser test." in row["verifier_output"]["input"]["messages"][0]["content"]
+    messages = row["verifier_output"]["input"]["messages"]
+    assert [message["role"] for message in messages] == ["system", "user"]
+    assert "Task: Fix the failing parser test." in messages[0]["content"]
 
 
 def test_world_reward_prompt_includes_task_in_captured_input(tmp_path, monkeypatch):
@@ -594,6 +624,6 @@ def test_world_reward_prompt_includes_task_in_captured_input(tmp_path, monkeypat
     )
 
     row = json.loads(output_jsonl.read_text().splitlines()[0])
-    first_candidate_input = row["verifier_output"]["inputs"][0]["messages"][0]["content"]
-    assert "Task: Fix the failing parser test." in first_candidate_input
-    assert row["verifier_output"]["inputs"][0]["messages"][0]["role"] == "user"
+    first_candidate_messages = row["verifier_output"]["inputs"][0]["messages"]
+    assert [message["role"] for message in first_candidate_messages] == ["system", "user"]
+    assert any("Task: Fix the failing parser test." in message["content"] for message in first_candidate_messages)

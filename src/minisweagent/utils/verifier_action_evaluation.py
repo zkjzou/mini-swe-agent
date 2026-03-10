@@ -427,6 +427,14 @@ def _messages_for_outbound_context(
     return sanitized_messages
 
 
+def _is_system_message(message: dict[str, Any]) -> bool:
+    if message.get("role") == "system":
+        return True
+    if message.get("type") == "message" and message.get("role") == "system":
+        return True
+    return False
+
+
 def _messages_to_steps(messages: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     steps: list[list[dict[str, Any]]] = []
     current_step: list[dict[str, Any]] = []
@@ -728,6 +736,7 @@ def _evaluate_row(
         [message for message in history_trajectory if isinstance(message, dict)],
         include_assistant_content=include_thoughts,
     )
+    outbound_messages = [message for message in outbound_messages if not _is_system_message(message)]
     all_steps = _messages_to_steps(outbound_messages)
     history_steps = int(session.config.history_steps)
     steps = _slice_steps(all_steps, history_steps)

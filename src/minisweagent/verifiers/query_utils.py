@@ -26,12 +26,12 @@ def sanitize_captured_verifier_messages(messages: list[dict[str, Any]]) -> dict[
     for message in messages:
         if not isinstance(message, dict):
             continue
-        if message.get("role") != "user":
+        if message.get("role") not in {"system", "user"}:
             continue
         content = message.get("content")
         if not isinstance(content, str):
             continue
-        sanitized_messages.append({"role": "user", "content": content})
+        sanitized_messages.append({"role": message["role"], "content": content})
     return {"messages": sanitized_messages}
 
 

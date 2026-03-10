@@ -18,6 +18,11 @@ from minisweagent.config import get_config_from_spec
 from minisweagent.models import get_model
 from minisweagent.models.utils.content_string import get_content_string
 from minisweagent.run.benchmarks.swebench import DEFAULT_CONFIG_FILE, _resolve_profiled_model_config
+from minisweagent.utils.langfuse import (
+    attach_langfuse_session_metadata,
+    enable_langfuse_tracing,
+    make_langfuse_session_id,
+)
 from minisweagent.utils.serialize import recursive_merge
 from minisweagent.verifiers.checklist import (
     generate_issue_checklist,
@@ -902,6 +907,7 @@ def evaluate_verifier_action_selection(
     limit_rows: int | None = None,
     show_progress: bool = True,
     max_workers: int = 8,
+    enable_langfuse: bool = False,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     if output_summary is None:
@@ -914,6 +920,15 @@ def evaluate_verifier_action_selection(
     resolved_variants = _resolve_verifier_variants(verifier_types, verifier_variants)
     resolved_verifier_types = list(dict.fromkeys(spec.verifier_type for spec in resolved_variants))
     resolved_config, resolved_specs = _load_resolved_config(config_specs)
+    langfuse_session_id: str | None = None
+    if enable_langfuse:
+        enable_langfuse_tracing()
+        langfuse_session_id = make_langfuse_session_id(
+            prefix="verifier_eval",
+            output_path=output_jsonl,
+            parts=[input_jsonl.stem],
+        )
+        attach_langfuse_session_metadata(resolved_config, session_id=langfuse_session_id)
     requested_max_workers = max(1, int(max_workers))
 
     counts = {
@@ -1075,6 +1090,7 @@ def evaluate_verifier_action_selection(
         "show_progress": show_progress,
         "max_workers": requested_max_workers,
         "effective_max_workers": effective_max_workers,
+        "langfuse_session_id": langfuse_session_id,
         "counts": counts,
         "per_variant": per_variant_metrics,
         "per_verifier": per_type_metrics,

@@ -113,6 +113,11 @@ def main(
     ),
     max_workers: int = typer.Option(8, "--max-workers", min=1, help="Max concurrent verifier-evaluation workers"),
     limit_rows: int | None = typer.Option(None, "--limit-rows", min=1, help="Optional cap on parsed rows to evaluate"),
+    enable_langfuse: bool = typer.Option(
+        False,
+        "--enable-langfuse",
+        help='Enable LiteLLM Langfuse tracing by adding "langfuse_otel" to litellm.callbacks',
+    ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output files if they already exist"),
 ) -> None:
     try:
@@ -127,6 +132,7 @@ def main(
             limit_rows=limit_rows,
             show_progress=show_progress,
             max_workers=max_workers,
+            enable_langfuse=enable_langfuse,
             overwrite=overwrite,
         )
     except Exception as exc:  # noqa: BLE001
@@ -136,6 +142,8 @@ def main(
     counts = summary.get("counts", {})
     console.print(f"[green]Wrote per-row output:[/green] {summary.get('output_jsonl')}")
     console.print(f"[green]Wrote summary:[/green] {summary.get('output_summary')}")
+    if summary.get("langfuse_session_id"):
+        console.print(f"[green]Using Langfuse session_id:[/green] {summary['langfuse_session_id']}")
     console.print(
         "rows_considered={rows_considered} rows_written={rows_written} invalid_rows={invalid_rows}".format(
             rows_considered=counts.get("rows_considered", 0),

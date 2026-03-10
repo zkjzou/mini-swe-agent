@@ -23,6 +23,11 @@ from minisweagent.config import builtin_config_dir, get_config_from_spec
 from minisweagent.environments import get_environment
 from minisweagent.models import get_model
 from minisweagent.run.benchmarks.utils.batch_progress import RunBatchProgressManager
+from minisweagent.utils.langfuse import (
+    attach_langfuse_session_metadata as _attach_shared_langfuse_session_metadata,
+    enable_langfuse_tracing as _enable_shared_langfuse_tracing,
+    make_langfuse_session_id as _make_shared_langfuse_session_id,
+)
 from minisweagent.utils.log import add_file_handler, logger
 from minisweagent.utils.serialize import UNSET, recursive_merge
 
@@ -66,40 +71,15 @@ _OUTPUT_FILE_LOCK = threading.Lock()
 
 
 def _enable_langfuse_tracing() -> None:
-    callbacks = getattr(litellm, "callbacks", None)
-    if isinstance(callbacks, list):
-        if "langfuse_otel" not in callbacks:
-            callbacks.append("langfuse_otel")
-        return
-    litellm.callbacks = ["langfuse_otel"]
+    _enable_shared_langfuse_tracing()
 
 
 def _make_langfuse_session_id(*, subset: str, split: str, output_path: Path) -> str:
-    return f"swebench:{subset}:{split}:{output_path.name or 'run'}:{int(time.time())}"
+    return _make_shared_langfuse_session_id(prefix="swebench", output_path=output_path, parts=[subset, split])
 
 
 def _attach_langfuse_session_metadata(config: dict, *, session_id: str) -> None:
-    def _apply_to_model_config(model_config: dict | None) -> None:
-        if not isinstance(model_config, dict):
-            return
-        model_kwargs = model_config.setdefault("model_kwargs", {})
-        if not isinstance(model_kwargs, dict):
-            return
-        metadata = model_kwargs.get("metadata")
-        if metadata is None:
-            metadata = {}
-            model_kwargs["metadata"] = metadata
-        if not isinstance(metadata, dict):
-            return
-        metadata["session_id"] = session_id
-        model_kwargs["litellm_session_id"] = session_id
-
-    _apply_to_model_config(config.get("model"))
-    agent_config = config.get("agent")
-    if isinstance(agent_config, dict):
-        verifier_config = agent_config.get("verifier")
-        if isinstance(verifier_config, dict):
-            _apply_to_model_config(verifier_config.get("model"))
+    _attach_shared_langfuse_session_metadata(config, session_id=session_id)
 
 
 def _resolve_profiled_model_config(config: dict) -> dict:

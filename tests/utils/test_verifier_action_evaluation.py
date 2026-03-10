@@ -268,6 +268,58 @@ def test_requires_serial_evaluation_when_prompt_name_implies_checklist_mode():
     assert _requires_serial_evaluation(config, [variant]) is True
 
 
+def test_evaluate_verifier_action_selection_can_enable_langfuse(tmp_path, monkeypatch):
+    input_jsonl = tmp_path / "merged.jsonl"
+    output_jsonl = tmp_path / "eval_rows.jsonl"
+    _write_jsonl(input_jsonl, [_make_row()])
+
+    calls: dict[str, object] = {}
+
+    def _fake_make_langfuse_session_id(**kwargs):
+        calls["session_kwargs"] = kwargs
+        return "session-123"
+
+    monkeypatch.setattr(
+        "minisweagent.utils.verifier_action_evaluation.get_model",
+        lambda *args, **kwargs: _VariantAwareModel(),
+    )
+    monkeypatch.setattr(
+        "minisweagent.utils.verifier_action_evaluation.enable_langfuse_tracing",
+        lambda: calls.setdefault("enabled", True),
+    )
+    monkeypatch.setattr(
+        "minisweagent.utils.verifier_action_evaluation.make_langfuse_session_id",
+        _fake_make_langfuse_session_id,
+    )
+    monkeypatch.setattr(
+        "minisweagent.utils.verifier_action_evaluation.attach_langfuse_session_metadata",
+        lambda config, *, session_id: calls.update({"session_id": session_id, "config": config}),
+    )
+
+    summary = evaluate_verifier_action_selection(
+        input_jsonl=input_jsonl,
+        output_jsonl=output_jsonl,
+        config_specs=[
+            "swebench.yaml",
+            'agent.verifier.model.model_name="fake/verifier"',
+            'agent.verifier.model.model_class="deterministic"',
+        ],
+        verifier_variants=["basic_verifier"],
+        strict_five_actions=True,
+        show_progress=False,
+        max_workers=1,
+        enable_langfuse=True,
+        overwrite=True,
+    )
+
+    assert calls["enabled"] is True
+    assert calls["session_kwargs"]["prefix"] == "verifier_eval"
+    assert calls["session_kwargs"]["output_path"] == output_jsonl
+    assert calls["session_kwargs"]["parts"] == [input_jsonl.stem]
+    assert calls["session_id"] == "session-123"
+    assert summary["langfuse_session_id"] == "session-123"
+
+
 def test_evaluate_verifier_action_selection_defaults_to_all_variants(tmp_path, monkeypatch):
     input_jsonl = tmp_path / "merged.jsonl"
     output_jsonl = tmp_path / "eval_rows.jsonl"

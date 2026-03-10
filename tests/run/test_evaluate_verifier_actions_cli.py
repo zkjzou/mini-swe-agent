@@ -70,6 +70,7 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
             "3",
             "--limit-rows",
             "5",
+            "--enable-langfuse",
             "--overwrite",
         ],
     )
@@ -85,6 +86,7 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
     assert called["show_progress"] is False
     assert called["max_workers"] == 3
     assert called["limit_rows"] == 5
+    assert called["enable_langfuse"] is True
     assert called["overwrite"] is True
     assert appended["output_jsonl"] == Path(tmp_path / "rows.jsonl")
     assert appended["output_csv"] == Path(tmp_path / "predicted_action_distribution.csv")

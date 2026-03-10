@@ -17,6 +17,7 @@ The goal is to let a user take a merged verifier-action dataset row from `merged
 - [x] (2026-03-08 18:45Z) Added `--redo-existing` and `--redo-errors` semantics plus tests so reruns can skip or selectively recompute existing rollout tasks.
 - [x] (2026-03-08 19:05Z) Added SWE-bench-style live progress reporting so rollout tasks show instance/step/action status during replay and continuation.
 - [x] (2026-03-10 16:10Z) Added resume backfill from saved rollout `*.traj.json` files so reruns can detect prior work even when `results.jsonl` is missing or partial.
+- [x] (2026-03-10 16:35Z) Added `--redo-exit-status` filtering so reruns can target specific existing rollout exit statuses like `BadRequestError` and `InternalServerError`.
 - [ ] (2026-03-08 18:25Z) Documentation page for the new command remains to be written if user-facing docs are desired.
 
 ## Surprises & Discoveries
@@ -57,6 +58,10 @@ The goal is to let a user take a merged verifier-action dataset row from `merged
 
 - Decision: Treat `results.jsonl` as the primary resume index but backfill missing task records from saved `*.traj.json` files under the rollout output directory.
   Rationale: Existing trajectory files already embed enough rollout metadata to reconstruct skip records, and `results.jsonl` alone is not reliable when a directory has been partially copied, filtered, or resumed across multiple runs.
+  Date/Author: 2026-03-10 / Codex
+
+- Decision: Add a dedicated exit-status rerun filter instead of overloading `--redo-errors`.
+  Rationale: Many rollout failures are encoded only in `rollout_exit_status` with no `error` payload, so users need direct control over which terminal statuses should be retried.
   Date/Author: 2026-03-10 / Codex
 
 ## Outcomes & Retrospective
@@ -179,3 +184,5 @@ Update (2026-03-09): `preds.json` now exports one patch per sampled rollout, whi
 Update (2026-03-09): Added `--row-start` and `--row-end` so Monte Carlo runs can target an exact 1-based inclusive row slice after `--instance` and `--step-index` filtering.
 
 Update (2026-03-10): Existing rollout detection now backfills from saved `*.traj.json` files when `results.jsonl` is incomplete, while keeping explicit `results.jsonl` records authoritative on key collisions.
+
+Update (2026-03-10): Added `--redo-exit-status` so reruns can selectively target prior terminal statuses without rerunning all existing tasks.

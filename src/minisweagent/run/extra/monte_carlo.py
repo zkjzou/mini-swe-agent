@@ -372,6 +372,11 @@ def _existing_record_is_error(record: dict[str, Any]) -> bool:
     return False
 
 
+def _existing_record_has_exit_status(record: dict[str, Any], exit_statuses: set[str]) -> bool:
+    status = str(record.get("rollout_exit_status") or "").strip()
+    return bool(status) and status in exit_statuses
+
+
 def _write_rollout_preds_file(results: list[dict[str, Any]], *, output_dir: Path, model_name: str) -> Path:
     preds_payload: dict[str, dict[str, Any]] = {}
     for record in sorted(
@@ -593,6 +598,7 @@ def generate_monte_carlo_rollouts(
     environment_class: str | None = None,
     redo_existing: bool = False,
     redo_errors: bool = False,
+    redo_exit_status: list[str] | None = None,
     show_progress: bool = True,
 ) -> dict[str, Any]:
     if samples_per_action < 1:
@@ -607,6 +613,9 @@ def generate_monte_carlo_rollouts(
         raise ValueError("row_end must be >= 1")
     if row_start is not None and row_end is not None and row_start > row_end:
         raise ValueError("row_start must be <= row_end")
+
+    normalized_redo_exit_status = sorted({str(status).strip() for status in (redo_exit_status or []) if str(status).strip()})
+    redo_exit_status_set = set(normalized_redo_exit_status)
 
     resolved_config = _apply_overrides(
         _load_resolved_config(config_specs),
@@ -633,8 +642,13 @@ def generate_monte_carlo_rollouts(
     skipped_rows = Counter()
     skipped_tasks = Counter()
     preserved_records: list[dict[str, Any]] = []
-    if redo_existing and redo_errors:
-        console.print("--redo-existing overrides --redo-errors; rerunning all rollout tasks.")
+    if redo_existing and (redo_errors or normalized_redo_exit_status):
+        override_targets: list[str] = []
+        if redo_errors:
+            override_targets.append("--redo-errors")
+        if normalized_redo_exit_status:
+            override_targets.append("--redo-exit-status")
+        console.print(f"--redo-existing overrides {' and '.join(override_targets)}; rerunning all rollout tasks.")
     for line_no, row in filtered_rows:
         instance_id = row.get("instance_id")
         if not isinstance(instance_id, str) or instance_id not in instance_lookup:
@@ -657,10 +671,15 @@ def generate_monte_carlo_rollouts(
                 )
                 existing_record = existing_results.get(task_key)
                 if existing_record is not None and not redo_existing:
-                    if redo_errors:
-                        if not _existing_record_is_error(existing_record):
+                    should_redo_for_error = redo_errors and _existing_record_is_error(existing_record)
+                    should_redo_for_status = bool(redo_exit_status_set) and _existing_record_has_exit_status(
+                        existing_record,
+                        redo_exit_status_set,
+                    )
+                    if redo_errors or normalized_redo_exit_status:
+                        if not (should_redo_for_error or should_redo_for_status):
                             preserved_records.append(existing_record)
-                            skipped_tasks["existing_non_error"] += 1
+                            skipped_tasks["existing_non_target"] += 1
                             continue
                     else:
                         preserved_records.append(existing_record)
@@ -748,6 +767,7 @@ def generate_monte_carlo_rollouts(
         "step_index": step_index,
         "redo_existing": redo_existing,
         "redo_errors": redo_errors,
+        "redo_exit_status": normalized_redo_exit_status,
         "preds_json": str(preds_path),
         "preds_by_instance_json": str(preds_by_instance_path),
         "counts": {
@@ -794,6 +814,11 @@ def main(
     environment_class: str | None = typer.Option(None, "--environment-class", help="Optional environment class override"),
     redo_existing: bool = typer.Option(False, "--redo-existing", help="Redo existing rollout tasks"),
     redo_errors: bool = typer.Option(False, "--redo-errors", help="Redo only existing rollout tasks whose prior result was an error"),
+    redo_exit_status: list[str] | None = typer.Option(
+        None,
+        "--redo-exit-status",
+        help="Redo only existing rollout tasks whose prior rollout_exit_status matches one of these values",
+    ),
     show_progress: bool = typer.Option(True, "--show-progress/--no-show-progress", help="Display tqdm progress if available"),
 ) -> None:
     # fmt: on
@@ -817,6 +842,7 @@ def main(
             environment_class=environment_class,
             redo_existing=redo_existing,
             redo_errors=redo_errors,
+            redo_exit_status=redo_exit_status,
             show_progress=show_progress,
         )
     except Exception as exc:  # noqa: BLE001

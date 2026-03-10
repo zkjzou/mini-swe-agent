@@ -503,6 +503,91 @@ def test_generate_monte_carlo_rollouts_redo_errors_only(tmp_path, monkeypatch):
     assert rerun["submission"] == "new_patch"
 
 
+def test_generate_monte_carlo_rollouts_redo_exit_status_only(tmp_path, monkeypatch):
+    row = _make_row()
+    input_jsonl = tmp_path / "merged.jsonl"
+    input_jsonl.write_text(json.dumps(row) + "\n")
+    config_path = tmp_path / "mc.yaml"
+    _write_config(config_path, tmp_path)
+
+    status_record = {
+        "task_key": "repo__issue-1::1::0::0",
+        "instance_id": "repo__issue-1",
+        "step_index": 1,
+        "action_index": 0,
+        "sample_index": 0,
+        "action_label": "gold",
+        "is_gold": True,
+        "submission": "",
+        "rollout_exit_status": "InternalServerError",
+        "replay_status": "ok",
+        "trajectory_path": str(tmp_path / "out" / "status.traj.json"),
+        "error": None,
+    }
+    ok_record = {
+        "task_key": "repo__issue-1::1::1::0",
+        "instance_id": "repo__issue-1",
+        "step_index": 1,
+        "action_index": 1,
+        "sample_index": 0,
+        "action_label": "alt",
+        "is_gold": False,
+        "submission": "old_patch",
+        "rollout_exit_status": "Submitted",
+        "replay_status": "ok",
+        "trajectory_path": str(tmp_path / "out" / "ok.traj.json"),
+        "error": None,
+    }
+    _write_placeholder_file(Path(status_record["trajectory_path"]))
+    _write_placeholder_file(Path(ok_record["trajectory_path"]))
+    _write_existing_results(tmp_path / "out" / "results.jsonl", [status_record, ok_record])
+
+    monkeypatch.setattr(
+        "minisweagent.run.extra.monte_carlo.load_dataset",
+        lambda *args, **kwargs: [{"instance_id": "repo__issue-1", "problem_statement": "Fix the issue"}],
+    )
+
+    called = {"count": 0}
+
+    def _fake_run_single_rollout(**kwargs):
+        called["count"] += 1
+        return {
+            "task_key": "repo__issue-1::1::0::0",
+            "instance_id": "repo__issue-1",
+            "step_index": 1,
+            "action_index": 0,
+            "sample_index": 0,
+            "action_label": "gold",
+            "is_gold": True,
+            "submission": "rerun_patch",
+            "rollout_exit_status": "Submitted",
+            "replay_status": "ok",
+            "trajectory_path": str(tmp_path / "out" / "rerun.traj.json"),
+            "error": None,
+        }
+
+    monkeypatch.setattr("minisweagent.run.extra.monte_carlo._run_single_rollout", _fake_run_single_rollout)
+
+    summary = generate_monte_carlo_rollouts(
+        input_jsonl=input_jsonl,
+        subset="verified",
+        split="dev",
+        config_specs=[str(config_path)],
+        output_dir=tmp_path / "out",
+        samples_per_action=1,
+        max_rollout_steps=1,
+        max_workers=1,
+        redo_exit_status=["InternalServerError", "BadRequestError"],
+        show_progress=False,
+    )
+
+    assert called["count"] == 1
+    assert summary["counts"]["tasks_skipped_existing"] == 1
+    rows = [json.loads(line) for line in (tmp_path / "out" / "results.jsonl").read_text().splitlines()]
+    rerun = next(row for row in rows if row["action_index"] == 0)
+    assert rerun["submission"] == "rerun_patch"
+
+
 def test_generate_monte_carlo_rollouts_redo_existing_reruns_all(tmp_path, monkeypatch):
     row = _make_row()
     input_jsonl = tmp_path / "merged.jsonl"
@@ -774,3 +859,37 @@ def test_mini_extra_dispatch_exposes_monte_carlo(monkeypatch):
 
     assert called["args"] == ["--help"]
     assert called["prog_name"] == "mini-extra monte-carlo-rollout"
+
+
+def test_monte_carlo_cli_passes_redo_exit_status(monkeypatch, tmp_path):
+    called = {}
+
+    def _fake_generate(**kwargs):
+        called.update(kwargs)
+        return {
+            "results_jsonl": str(tmp_path / "out" / "results.jsonl"),
+            "counts": {
+                "rows_loaded": 1,
+                "tasks_planned": 2,
+                "tasks_completed": 2,
+                "solved": 1,
+                "replay_failures": 0,
+            },
+        }
+
+    monkeypatch.setattr("minisweagent.run.extra.monte_carlo.generate_monte_carlo_rollouts", _fake_generate)
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            str(tmp_path / "merged.jsonl"),
+            "--redo-exit-status",
+            "BadRequestError",
+            "--redo-exit-status",
+            "InternalServerError",
+            "--no-show-progress",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert called["redo_exit_status"] == ["BadRequestError", "InternalServerError"]

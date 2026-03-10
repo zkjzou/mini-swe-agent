@@ -9,6 +9,7 @@ from minisweagent import package_dir
 from minisweagent.config import get_config_from_spec
 from minisweagent.models.test_models import DeterministicModel, make_output
 from minisweagent.run.benchmarks.swebench import (
+    _enable_langfuse_tracing,
     _resolve_profiled_model_config,
     filter_instances,
     get_swebench_docker_image_name,
@@ -186,6 +187,15 @@ def test_filter_instances_no_matches():
     instances = [{"instance_id": "django__test1"}, {"instance_id": "flask__test2"}]
     result = filter_instances(instances, filter_spec=r"nonexistent__.*", slice_spec="")
     assert result == []
+
+
+def test_enable_langfuse_tracing_adds_callback_once():
+    with patch("minisweagent.run.benchmarks.swebench.litellm.callbacks", []):
+        _enable_langfuse_tracing()
+        _enable_langfuse_tracing()
+        from minisweagent.run.benchmarks import swebench as swebench_module
+
+        assert swebench_module.litellm.callbacks == ["langfuse_otel"]
 
 
 def test_resolve_profiled_model_config_applies_actor_verifier_and_prompt_profiles():
@@ -424,6 +434,33 @@ def test_remove_from_preds_file_no_file(tmp_path):
 
     # File should still not exist
     assert not output_path.exists()
+
+
+def test_swebench_main_can_enable_langfuse_tracing(tmp_path):
+    with (
+        patch("datasets.load_dataset", return_value=[]),
+        patch("minisweagent.run.benchmarks.swebench._enable_langfuse_tracing") as mock_enable_langfuse,
+        patch("minisweagent.run.benchmarks.swebench.Live") as mock_live,
+    ):
+        mock_live.return_value.__enter__.return_value = mock_live.return_value
+        mock_live.return_value.__exit__.return_value = False
+
+        main(
+            subset="_test",
+            split="test",
+            slice_spec="",
+            output=str(tmp_path),
+            workers=1,
+            filter_spec="",
+            shuffle=False,
+            redo_existing=False,
+            redo_errors=False,
+            config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
+            environment_class="docker",
+            enable_langfuse=True,
+        )
+
+    mock_enable_langfuse.assert_called_once_with()
 
 
 @pytest.mark.slow

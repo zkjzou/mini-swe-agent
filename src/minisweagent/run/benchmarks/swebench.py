@@ -12,6 +12,7 @@ import time
 import traceback
 from pathlib import Path
 
+import litellm
 import typer
 from jinja2 import StrictUndefined, Template
 from rich.live import Live
@@ -62,6 +63,15 @@ DATASET_MAPPING = {
 
 app = typer.Typer(rich_markup_mode="rich", add_completion=False)
 _OUTPUT_FILE_LOCK = threading.Lock()
+
+
+def _enable_langfuse_tracing() -> None:
+    callbacks = getattr(litellm, "callbacks", None)
+    if isinstance(callbacks, list):
+        if "langfuse_otel" not in callbacks:
+            callbacks.append("langfuse_otel")
+        return
+    litellm.callbacks = ["langfuse_otel"]
 
 
 def _resolve_profiled_model_config(config: dict) -> dict:
@@ -349,12 +359,22 @@ def main(
     redo_errors: bool = typer.Option(False, "--redo-errors", help="Redo existing instances with error trajectories", rich_help_panel="Data selection"),
     config_spec: list[str] = typer.Option([str(DEFAULT_CONFIG_FILE)], "-c", "--config", help=_CONFIG_SPEC_HELP_TEXT, rich_help_panel="Basic"),
     environment_class: str | None = typer.Option(None, "--environment-class", help="Environment type to use. Recommended are docker or singularity", rich_help_panel="Advanced"),
+    enable_langfuse: bool = typer.Option(
+        False,
+        "--enable-langfuse",
+        help='Enable LiteLLM Langfuse tracing by adding "langfuse_otel" to litellm.callbacks',
+        rich_help_panel="Advanced",
+    ),
 ) -> None:
     # fmt: on
     output_path = Path(output)
     output_path.mkdir(parents=True, exist_ok=True)
     logger.info(f"Results will be saved to {output_path}")
     add_file_handler(output_path / "minisweagent.log")
+
+    if enable_langfuse is True:
+        _enable_langfuse_tracing()
+        logger.info('Enabled LiteLLM Langfuse tracing via litellm.callbacks=["langfuse_otel"]')
 
     from datasets import load_dataset
 

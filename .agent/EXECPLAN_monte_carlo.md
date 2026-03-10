@@ -16,6 +16,7 @@ The goal is to let a user take a merged verifier-action dataset row from `merged
 - [x] (2026-03-08 18:25Z) Added targeted tests in `tests/run/test_monte_carlo_rollout.py` covering replay, branch message construction, end-to-end rollout generation, CLI invocation, dispatcher wiring, and rollout prediction export.
 - [x] (2026-03-08 18:45Z) Added `--redo-existing` and `--redo-errors` semantics plus tests so reruns can skip or selectively recompute existing rollout tasks.
 - [x] (2026-03-08 19:05Z) Added SWE-bench-style live progress reporting so rollout tasks show instance/step/action status during replay and continuation.
+- [x] (2026-03-10 16:10Z) Added resume backfill from saved rollout `*.traj.json` files so reruns can detect prior work even when `results.jsonl` is missing or partial.
 - [ ] (2026-03-08 18:25Z) Documentation page for the new command remains to be written if user-facing docs are desired.
 
 ## Surprises & Discoveries
@@ -28,6 +29,9 @@ The goal is to let a user take a merged verifier-action dataset row from `merged
 
 - Observation: The observed merged dataset shape uses at most one tool call per assistant step, which allows the first implementation to reject parallel replay safely instead of supporting it partially.
   Evidence: A scan over sampled rows found `max_tool_calls == 1` in `history_trajectory` assistant messages.
+
+- Observation: In real experiment directories, saved rollout trajectories can outnumber `results.jsonl` rows by a large margin because the directory accumulates work across runs while `results.jsonl` may only reflect a narrower or newer slice.
+  Evidence: The `qwen3_5_35b` output directory contained 9420 `*.traj.json` files but only 2495 indexed rows in `results.jsonl`.
 
 ## Decision Log
 
@@ -50,6 +54,10 @@ The goal is to let a user take a merged verifier-action dataset row from `merged
 - Decision: Save one full rollout trajectory per `(row, action, sample)` and emit a compact `results.jsonl` plus `summary.json`.
   Rationale: The trajectories are needed for qualitative inspection, while the JSONL/summary outputs are needed for aggregate experiment analysis.
   Date/Author: 2026-03-08 / Codex
+
+- Decision: Treat `results.jsonl` as the primary resume index but backfill missing task records from saved `*.traj.json` files under the rollout output directory.
+  Rationale: Existing trajectory files already embed enough rollout metadata to reconstruct skip records, and `results.jsonl` alone is not reliable when a directory has been partially copied, filtered, or resumed across multiple runs.
+  Date/Author: 2026-03-10 / Codex
 
 ## Outcomes & Retrospective
 
@@ -169,3 +177,5 @@ Update (2026-03-08): Added SWE-bench-style live progress output for Monte Carlo 
 Update (2026-03-09): `preds.json` now exports one patch per sampled rollout, while `preds_by_instance.json` preserves the single-patch-per-instance view. This matches Monte Carlo evaluation needs where all sampled terminal patches must remain visible.
 
 Update (2026-03-09): Added `--row-start` and `--row-end` so Monte Carlo runs can target an exact 1-based inclusive row slice after `--instance` and `--step-index` filtering.
+
+Update (2026-03-10): Existing rollout detection now backfills from saved `*.traj.json` files when `results.jsonl` is incomplete, while keeping explicit `results.jsonl` records authoritative on key collisions.

@@ -284,6 +284,83 @@ def _load_existing_results(results_path: Path) -> dict[str, dict[str, Any]]:
     return existing
 
 
+def _record_from_saved_trajectory(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text())
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    instance_id = payload.get("instance_id")
+    info = payload.get("info")
+    if not isinstance(instance_id, str) or not instance_id:
+        return None
+    if not isinstance(info, dict):
+        return None
+
+    rollout = info.get("rollout")
+    if not isinstance(rollout, dict):
+        return None
+
+    try:
+        step_index = int(rollout.get("source_step_index") or 0)
+        action_index = int(rollout.get("action_index") or 0)
+        sample_index = int(rollout.get("sample_index") or 0)
+    except (TypeError, ValueError):
+        return None
+
+    record = {
+        "task_key": _task_key(
+            instance_id=instance_id,
+            step_index=step_index,
+            action_index=action_index,
+            sample_index=sample_index,
+        ),
+        "line_no": rollout.get("source_jsonl_line"),
+        "instance_id": instance_id,
+        "step_index": step_index,
+        "message_index": rollout.get("source_message_index"),
+        "trajectory_relpath": rollout.get("trajectory_relpath"),
+        "action_index": action_index,
+        "action_label": rollout.get("action_label"),
+        "candidate_source": rollout.get("candidate_source"),
+        "is_gold": bool(rollout.get("is_gold")),
+        "sample_index": sample_index,
+        "forced_command": rollout.get("forced_command"),
+        "forced_thought": rollout.get("forced_thought"),
+        "replay_status": rollout.get("replay_status"),
+        "replayed_prefix_steps": rollout.get("replayed_prefix_steps"),
+        "rollout_exit_status": rollout.get("rollout_exit_status") or info.get("exit_status"),
+        "rollout_executed_steps": rollout.get("rollout_executed_steps"),
+        "submission": str(info.get("submission") or ""),
+        "cost": rollout.get("cost"),
+        "agent_api_calls": rollout.get("agent_api_calls"),
+        "verifier_api_calls": rollout.get("verifier_api_calls"),
+        "duration_seconds": rollout.get("duration_seconds"),
+        "trajectory_path": str(path),
+        "error": None,
+    }
+    return record
+
+
+def _backfill_existing_results_from_trajectories(
+    output_dir: Path,
+    existing: dict[str, dict[str, Any]],
+) -> int:
+    backfilled = 0
+    for trajectory_path in sorted(output_dir.rglob("*.traj.json")):
+        record = _record_from_saved_trajectory(trajectory_path)
+        if record is None:
+            continue
+        key = record["task_key"]
+        if key in existing:
+            continue
+        existing[key] = record
+        backfilled += 1
+    return backfilled
+
+
 def _existing_record_is_error(record: dict[str, Any]) -> bool:
     if record.get("error") not in (None, {}):
         return True
@@ -550,6 +627,7 @@ def generate_monte_carlo_rollouts(
     output_dir.mkdir(parents=True, exist_ok=True)
     results_path = output_dir / "results.jsonl"
     existing_results = _load_existing_results(results_path)
+    backfilled_existing_results = _backfill_existing_results_from_trajectories(output_dir, existing_results)
 
     tasks: list[dict[str, Any]] = []
     skipped_rows = Counter()
@@ -679,6 +757,7 @@ def generate_monte_carlo_rollouts(
             "tasks_skipped_existing": sum(skipped_tasks.values()),
             "tasks_completed": len(results),
             "tasks_total_in_results": len(all_results),
+            "existing_results_backfilled": backfilled_existing_results,
             "replay_failures": sum(1 for record in all_results if record.get("replay_status") == "error"),
             "solved": exit_counts.get("Submitted", 0),
             "pred_rollouts": len(json.loads(preds_path.read_text())),

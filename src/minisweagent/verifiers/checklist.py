@@ -33,6 +33,33 @@ def resolve_checklist_output_format(config: Any) -> str:
     return "list"
 
 
+def infer_checklist_prompt_settings(prompt_name: str | None) -> dict[str, Any] | None:
+    if not isinstance(prompt_name, str):
+        return None
+    name = prompt_name.strip()
+    if not name:
+        return None
+    if name.startswith("dynamic_checklist_modify/"):
+        return {
+            "checklist_mode": "issue_progress",
+            "checklist_dynamic": True,
+            "checklist_update_mode": "modify",
+        }
+    if name.startswith("dynamic_checklist_regenerate/"):
+        return {
+            "checklist_mode": "issue_progress",
+            "checklist_dynamic": True,
+            "checklist_update_mode": "regenerate",
+        }
+    if name.startswith("checklist/") or name.startswith("checklist_v2/"):
+        return {
+            "checklist_mode": "issue_progress",
+            "checklist_dynamic": False,
+            "checklist_update_mode": "regenerate",
+        }
+    return None
+
+
 def generate_issue_checklist(
     model: Any,
     config: Any,

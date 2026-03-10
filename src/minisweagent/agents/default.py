@@ -25,7 +25,11 @@ from minisweagent.utils.serialize import recursive_merge
 from minisweagent.verifiers.first_valid import FirstValidVerifier
 from minisweagent.verifiers.llm import LLMVerifier
 from minisweagent.verifiers.action_similarity import analyze_action_similarity
-from minisweagent.verifiers.checklist import generate_issue_checklist, resolve_checklist_output_format
+from minisweagent.verifiers.checklist import (
+    generate_issue_checklist,
+    infer_checklist_prompt_settings,
+    resolve_checklist_output_format,
+)
 from minisweagent.verifiers.prompt_loader import apply_prompt_overrides
 from minisweagent.verifiers.reward_model import RewardModelVerifier
 
@@ -466,6 +470,11 @@ class DefaultAgent:
         ):
             suffix = "verifier" if verifier_config.verifier_type == "llm" else "reward"
             verifier_config.prompt_name = f"dynamic_checklist_{verifier_config.checklist_update_mode}/{suffix}"
+        inferred_checklist_settings = infer_checklist_prompt_settings(verifier_config.prompt_name)
+        if inferred_checklist_settings is not None:
+            verifier_config.checklist_mode = inferred_checklist_settings["checklist_mode"]
+            verifier_config.checklist_dynamic = inferred_checklist_settings["checklist_dynamic"]
+            verifier_config.checklist_update_mode = inferred_checklist_settings["checklist_update_mode"]
         verifier_config = apply_prompt_overrides(verifier_config)
         if verifier_config.model:
             verifier_config.model = _normalize_verifier_model_config(verifier_config.model)
@@ -757,11 +766,10 @@ class DefaultAgent:
         return updated_vars, checklist_metadata
 
     def _should_use_checklist_mode(self) -> bool:
-        if not self.verifier:
+        checklist_config = self._get_checklist_config()
+        if checklist_config.checklist_mode != "issue_progress":
             return False
-        if self.config.verifier.checklist_mode != "issue_progress":
-            return False
-        return self.config.verifier.verifier_type in {"llm", "reward_model"}
+        return checklist_config.verifier_type in {"llm", "reward_model"}
 
     def _get_checklist_model(self) -> Model:
         verifier_model = getattr(self.verifier, "model", None)

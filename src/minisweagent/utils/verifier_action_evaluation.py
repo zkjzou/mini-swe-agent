@@ -19,7 +19,11 @@ from minisweagent.models import get_model
 from minisweagent.models.utils.content_string import get_content_string
 from minisweagent.run.benchmarks.swebench import DEFAULT_CONFIG_FILE, _resolve_profiled_model_config
 from minisweagent.utils.serialize import recursive_merge
-from minisweagent.verifiers.checklist import generate_issue_checklist, resolve_checklist_output_format
+from minisweagent.verifiers.checklist import (
+    generate_issue_checklist,
+    infer_checklist_prompt_settings,
+    resolve_checklist_output_format,
+)
 from minisweagent.verifiers.first_valid import FirstValidVerifier
 from minisweagent.verifiers.llm import LLMVerifier
 from minisweagent.verifiers.prompt_loader import apply_prompt_overrides
@@ -325,6 +329,11 @@ def _build_verifier_session(config: dict[str, Any], variant_spec: _VerifierVaria
 
     if variant_spec.verifier_type != "first_valid":
         verifier_config.prompt_name = _align_prompt_name(verifier_config.prompt_name, variant_spec.verifier_type)
+        inferred_checklist_settings = infer_checklist_prompt_settings(verifier_config.prompt_name)
+        if inferred_checklist_settings is not None:
+            verifier_config.checklist_mode = inferred_checklist_settings["checklist_mode"]
+            verifier_config.checklist_dynamic = inferred_checklist_settings["checklist_dynamic"]
+            verifier_config.checklist_update_mode = inferred_checklist_settings["checklist_update_mode"]
         verifier_config = apply_prompt_overrides(verifier_config)
 
     if variant_spec.verifier_type == "first_valid":

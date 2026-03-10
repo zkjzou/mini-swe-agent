@@ -13,6 +13,7 @@ After this change, verifier prompts can receive prior trajectory context as an a
 - [x] (2026-03-10 19:12Z) Added focused tests for selection, reward, checklist, agent integration, and offline evaluation paths.
 - [x] (2026-03-10 19:24Z) Extended multi-turn replay to include assistant tool-call metadata and tool output messages.
 - [x] (2026-03-10 19:39Z) Preserved assistant tool calls in structured chat format (`tool_calls`) instead of flattening them into content text.
+- [x] (2026-03-10 19:50Z) Auto-enabled checklist mode when checklist prompt variants are selected directly by `prompt_name`.
 
 ## Surprises & Discoveries
 
@@ -34,6 +35,9 @@ After this change, verifier prompts can receive prior trajectory context as an a
   Date/Author: 2026-03-10 / Codex
 - Decision: preserve assistant tool calls as structured `tool_calls` fields when available, matching the original chat transcript shape.
   Rationale: this keeps replayed history closer to the source trajectory and matches downstream expectations for tool-using assistant messages.
+  Date/Author: 2026-03-10 / Codex
+- Decision: infer checklist mode/settings from checklist prompt names (`checklist/*`, `checklist_v2/*`, `dynamic_checklist_*/*`) even when scripts set only `prompt_name`.
+  Rationale: checklist prompt variants require `checklist_text`, so direct prompt selection should not require redundant manual checklist-mode config to avoid runtime failures.
   Date/Author: 2026-03-10 / Codex
 - Decision: exclude verifier feedback and verifier metadata from replayed history.
   Rationale: the verifier should judge the actor trajectory itself, not its own previous outputs or injected critique text.

@@ -331,6 +331,49 @@ def test_checklist_mode_generates_once_and_reuses_across_queries():
     assert stats["api_calls"] == 7
 
 
+def test_checklist_prompt_name_enables_checklist_mode_automatically():
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "prompt_name": "checklist/verifier",
+        "prompt_dir": "prompts/verifier",
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [
+                make_output("CHECKLIST:\n- Reproduce issue\n- Implement fix\n- Validate behavior", []),
+                make_output(
+                    "REASONING: choose 1\n"
+                    "CHECKLIST_ITEM_SCORES:\n- Item 1: 0.8\n- REASONING: helpful\n- Item 2: 0.4\n- REASONING: partial\n- Item 3: 0.2\n- REASONING: weak\n"
+                    "PROGRESS: Yes + useful\n"
+                    "SCORE: 0.9\nFINAL: 1",
+                    [],
+                ),
+            ],
+        },
+    }
+
+    model = DeterministicModel(
+        outputs=[
+            make_output("Candidate 1", [{"command": "echo first"}]),
+            make_output("Candidate 2", [{"command": "echo second"}]),
+        ]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    response = agent.query()
+
+    verifier_output = response.get("extra", {}).get("verifier", {}).get("verifier_output", {})
+    checklist = verifier_output.get("checklist", {})
+    assert checklist.get("generated_this_step") is True
+    assert checklist.get("items") == ["Reproduce issue", "Implement fix", "Validate behavior"]
+
+
 def test_dynamic_checklist_regenerate_mode_refreshes_each_query():
     config = _load_default_agent_config()
     config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}

@@ -557,3 +557,34 @@ def test_evaluate_verifier_action_selection_can_include_llm_verifier_inputs(tmp_
     row = json.loads(output_jsonl.read_text().splitlines()[0])
     assert row["verifier_output"]["input"]["messages"][0]["role"] == "system"
     assert row["verifier_output"]["input"]["messages"][1]["role"] == "user"
+
+
+def test_world_reward_prompt_includes_task_in_captured_input(tmp_path, monkeypatch):
+    input_jsonl = tmp_path / "merged.jsonl"
+    output_jsonl = tmp_path / "eval_rows.jsonl"
+    _write_jsonl(input_jsonl, [_make_row()])
+
+    monkeypatch.setattr(
+        "minisweagent.utils.verifier_action_evaluation.get_model",
+        lambda *args, **kwargs: _VariantAwareModel(),
+    )
+
+    evaluate_verifier_action_selection(
+        input_jsonl=input_jsonl,
+        output_jsonl=output_jsonl,
+        config_specs=[
+            "swebench.yaml",
+            'agent.verifier.model.model_name="fake/verifier"',
+            'agent.verifier.model.model_class="deterministic"',
+            "agent.verifier.include_inputs_in_output=true",
+        ],
+        verifier_variants=["world_reward"],
+        strict_five_actions=True,
+        show_progress=False,
+        max_workers=1,
+        overwrite=True,
+    )
+
+    row = json.loads(output_jsonl.read_text().splitlines()[0])
+    first_candidate_input = row["verifier_output"]["inputs"][0]["messages"][1]["content"]
+    assert "Task: Fix the failing parser test." in first_candidate_input

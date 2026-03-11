@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
@@ -464,6 +465,20 @@ def _slice_steps(steps: list[list[dict[str, Any]]], history_steps: int) -> list[
     return steps[-history_steps:]
 
 
+def _extract_task_from_user_message(content: str) -> str:
+    text = str(content or "").strip()
+    if not text:
+        return ""
+
+    pr_description_match = re.search(r"<pr_description>\s*(.*?)\s*</pr_description>", text, re.DOTALL | re.IGNORECASE)
+    if pr_description_match is not None:
+        extracted = pr_description_match.group(1).strip()
+        extracted = re.sub(r"^\s*Consider the following PR description:\s*", "", extracted, count=1, flags=re.IGNORECASE)
+        if extracted:
+            return extracted
+    return text
+
+
 def _extract_task(history_trajectory: list[dict[str, Any]], row: dict[str, Any]) -> str:
     for message in history_trajectory:
         if not isinstance(message, dict):
@@ -472,7 +487,7 @@ def _extract_task(history_trajectory: list[dict[str, Any]], row: dict[str, Any])
             continue
         text = get_content_string(message)
         if isinstance(text, str) and text.strip():
-            return text
+            return _extract_task_from_user_message(text)
 
     for fallback_key in ("problem_id", "instance_id"):
         value = row.get(fallback_key)

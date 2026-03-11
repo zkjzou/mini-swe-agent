@@ -216,6 +216,19 @@ def _make_row(*, run_id: str = "run-1", trajectory_relpath: str = "repo__issue-1
     }
 
 
+def _make_swebench_instance_prompt(task: str) -> str:
+    return (
+        "<pr_description>\n"
+        "Consider the following PR description:\n"
+        f"{task}\n"
+        "</pr_description>\n\n"
+        "<instructions>\n"
+        "# Task Instructions\n"
+        "You are a coding agent.\n"
+        "</instructions>"
+    )
+
+
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
@@ -637,6 +650,39 @@ def test_evaluate_verifier_action_selection_excludes_system_history_from_verifie
     prompt = "\n".join(model.prompts).lower()
     assert "fix the failing parser test." in prompt
     assert "you are coding agent." not in prompt
+
+
+def test_evaluate_verifier_action_selection_extracts_task_from_swebench_instance_prompt(tmp_path, monkeypatch):
+    input_jsonl = tmp_path / "merged.jsonl"
+    row = _make_row()
+    row["history_trajectory"][1]["content"] = _make_swebench_instance_prompt("Fix the failing parser test.")
+    _write_jsonl(input_jsonl, [row])
+
+    model = _VariantAwareModel()
+    monkeypatch.setattr(
+        "minisweagent.utils.verifier_action_evaluation.get_model",
+        lambda *args, **kwargs: model,
+    )
+
+    evaluate_verifier_action_selection(
+        input_jsonl=input_jsonl,
+        output_jsonl=tmp_path / "rows_task_extracted.jsonl",
+        config_specs=[
+            "swebench.yaml",
+            'agent.verifier.model.model_name="fake/verifier"',
+            'agent.verifier.model.model_class="deterministic"',
+        ],
+        verifier_variants=["basic_verifier"],
+        strict_five_actions=True,
+        show_progress=False,
+        max_workers=1,
+        overwrite=True,
+    )
+
+    prompt = "\n".join(model.prompts)
+    assert "Task: Fix the failing parser test." in prompt
+    assert "Consider the following PR description:" not in prompt
+    assert "# Task Instructions" not in prompt
 
 
 def test_evaluate_verifier_action_selection_can_include_verifier_and_checklist_inputs(tmp_path, monkeypatch):

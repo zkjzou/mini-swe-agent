@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 import litellm
 import weave
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from minisweagent.models import GLOBAL_MODEL_STATS
 from minisweagent.models.utils.actions_toolcall import (
@@ -23,12 +23,13 @@ from minisweagent.models.utils.retry import retry
 
 logger = logging.getLogger("litellm_model")
 #weave.init('weave_litellm_integration')
+DEFAULT_LITELLM_TIMEOUT_SECONDS = 600
 
 
 class LitellmModelConfig(BaseModel):
     model_name: str
     """Model name. Highly recommended to include the provider in the model name, e.g., `anthropic/claude-sonnet-4-5-20250929`."""
-    model_kwargs: dict[str, Any] = {}
+    model_kwargs: dict[str, Any] = Field(default_factory=dict)
     """Additional arguments passed to the API."""
     litellm_model_registry: Path | str | None = os.getenv("LITELLM_MODEL_REGISTRY_PATH")
     """Model registry for cost tracking and model metadata. See the local model guide (https://mini-swe-agent.com/latest/models/local_models/) for more details."""
@@ -59,6 +60,8 @@ class LitellmModel:
 
     def __init__(self, *, config_class: Callable = LitellmModelConfig, **kwargs):
         self.config = config_class(**kwargs)
+        self.config.model_kwargs = dict(self.config.model_kwargs)
+        self.config.model_kwargs.setdefault("timeout", DEFAULT_LITELLM_TIMEOUT_SECONDS)
         if self.config.litellm_model_registry and Path(self.config.litellm_model_registry).is_file():
             litellm.utils.register_model(json.loads(Path(self.config.litellm_model_registry).read_text()))
 

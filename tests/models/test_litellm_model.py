@@ -3,7 +3,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from minisweagent.exceptions import FormatError
-from minisweagent.models.litellm_model import LitellmModel, LitellmModelConfig
+from minisweagent.models.litellm_model import (
+    DEFAULT_LITELLM_TIMEOUT_SECONDS,
+    LitellmModel,
+    LitellmModelConfig,
+)
 from minisweagent.models.utils.actions_toolcall import BASH_TOOL
 
 
@@ -37,6 +41,36 @@ class TestLitellmModel:
 
         mock_completion.assert_called_once()
         assert mock_completion.call_args.kwargs["tools"] == [BASH_TOOL]
+
+    @patch("minisweagent.models.litellm_model.litellm.completion")
+    @patch("minisweagent.models.litellm_model.litellm.cost_calculator.completion_cost")
+    def test_query_uses_default_timeout_when_unspecified(self, mock_cost, mock_completion):
+        tool_call = MagicMock()
+        tool_call.function.name = "bash"
+        tool_call.function.arguments = '{"command": "echo test"}'
+        tool_call.id = "call_timeout_default"
+        mock_completion.return_value = _mock_litellm_response([tool_call])
+        mock_cost.return_value = 0.001
+
+        model = LitellmModel(model_name="gpt-4")
+        model.query([{"role": "user", "content": "test"}])
+
+        assert mock_completion.call_args.kwargs["timeout"] == DEFAULT_LITELLM_TIMEOUT_SECONDS
+
+    @patch("minisweagent.models.litellm_model.litellm.completion")
+    @patch("minisweagent.models.litellm_model.litellm.cost_calculator.completion_cost")
+    def test_query_preserves_explicit_timeout(self, mock_cost, mock_completion):
+        tool_call = MagicMock()
+        tool_call.function.name = "bash"
+        tool_call.function.arguments = '{"command": "echo test"}'
+        tool_call.id = "call_timeout_custom"
+        mock_completion.return_value = _mock_litellm_response([tool_call])
+        mock_cost.return_value = 0.001
+
+        model = LitellmModel(model_name="gpt-4", model_kwargs={"timeout": 42})
+        model.query([{"role": "user", "content": "test"}])
+
+        assert mock_completion.call_args.kwargs["timeout"] == 42
 
     @patch("minisweagent.models.litellm_model.litellm.completion")
     @patch("minisweagent.models.litellm_model.litellm.cost_calculator.completion_cost")

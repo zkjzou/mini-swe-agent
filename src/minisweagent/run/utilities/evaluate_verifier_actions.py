@@ -4,6 +4,7 @@
 
 import csv
 import json
+import re
 from collections import Counter, defaultdict
 from datetime import datetime, UTC
 from pathlib import Path
@@ -15,6 +16,23 @@ from minisweagent.utils.verifier_action_evaluation import evaluate_verifier_acti
 
 app = typer.Typer(rich_markup_mode="rich", add_completion=False)
 console = Console(highlight=False)
+
+
+def _sanitize_distribution_label(label: str) -> str:
+    sanitized = re.sub(r"[^0-9A-Za-z]+", "_", str(label or "").strip()).strip("_").lower()
+    return sanitized or "unknown"
+
+
+def _make_distribution_column_names(labels: list[str]) -> dict[str, tuple[str, str]]:
+    columns: dict[str, tuple[str, str]] = {}
+    seen: Counter[str] = Counter()
+    for label in labels:
+        base = _sanitize_distribution_label(label)
+        seen[base] += 1
+        suffix = f"_{seen[base]}" if seen[base] > 1 else ""
+        key = f"{base}{suffix}"
+        columns[label] = (f"count__{key}", f"fraction__{key}")
+    return columns
 
 
 def append_predicted_action_distribution(output_jsonl: Path, output_csv: Path) -> None:
@@ -37,39 +55,50 @@ def append_predicted_action_distribution(output_jsonl: Path, output_csv: Path) -
             counts[key][selected_label] += 1
             totals[key] += 1
 
-    fieldnames = [
+    labels = sorted({label for label_counts in counts.values() for label in label_counts})
+    label_columns = _make_distribution_column_names(labels)
+    metadata_fieldnames = [
         "timestamp_utc",
         "verifier_type",
         "verifier_variant",
-        "selected_label",
-        "count",
-        "fraction",
         "rows_evaluated",
         "output_jsonl",
     ]
+    fieldnames = metadata_fieldnames + [
+        column_name
+        for label in labels
+        for column_name in label_columns[label]
+    ]
     output_csv.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not output_csv.exists() or output_csv.stat().st_size == 0
     timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    existing_rows: list[dict[str, str]] = []
+    existing_fieldnames: list[str] = []
+    if output_csv.exists() and output_csv.stat().st_size > 0:
+        with output_csv.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            existing_fieldnames = list(reader.fieldnames or [])
+            existing_rows = [dict(row) for row in reader]
+    fieldnames = list(dict.fromkeys(existing_fieldnames + fieldnames))
 
-    with output_csv.open("a", encoding="utf-8", newline="") as handle:
+    with output_csv.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        if write_header:
-            writer.writeheader()
+        writer.writeheader()
+        for existing_row in existing_rows:
+            writer.writerow({field: existing_row.get(field, "") for field in fieldnames})
         for verifier_type, verifier_variant in sorted(counts):
             total = totals[(verifier_type, verifier_variant)]
+            row = {
+                "timestamp_utc": timestamp,
+                "verifier_type": verifier_type,
+                "verifier_variant": verifier_variant,
+                "rows_evaluated": total,
+                "output_jsonl": str(output_jsonl),
+            }
             for selected_label, count in sorted(counts[(verifier_type, verifier_variant)].items()):
-                writer.writerow(
-                    {
-                        "timestamp_utc": timestamp,
-                        "verifier_type": verifier_type,
-                        "verifier_variant": verifier_variant,
-                        "selected_label": selected_label,
-                        "count": count,
-                        "fraction": f"{count / total:.6f}" if total else "0.000000",
-                        "rows_evaluated": total,
-                        "output_jsonl": str(output_jsonl),
-                    }
-                )
+                count_column, fraction_column = label_columns[selected_label]
+                row[count_column] = count
+                row[fraction_column] = f"{count / total:.6f}" if total else "0.000000"
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
 
 
 @app.command(help=__doc__)

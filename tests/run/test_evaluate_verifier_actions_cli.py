@@ -1,10 +1,49 @@
 from __future__ import annotations
 
+import csv
+import json
 from pathlib import Path
 
 from typer.testing import CliRunner
 
-from minisweagent.run.utilities.evaluate_verifier_actions import app
+from minisweagent.run.utilities.evaluate_verifier_actions import app, append_predicted_action_distribution
+
+
+def test_append_predicted_action_distribution_writes_wide_rows(tmp_path):
+    output_jsonl = tmp_path / "rows.jsonl"
+    output_csv = tmp_path / "predicted_action_distribution.csv"
+    rows = [
+        {"status": "evaluated", "verifier_type": "llm", "verifier_variant": "basic_verifier", "selected_label": "qwen3_coder"},
+        {"status": "evaluated", "verifier_type": "llm", "verifier_variant": "basic_verifier", "selected_label": "qwen3_coder"},
+        {"status": "evaluated", "verifier_type": "llm", "verifier_variant": "basic_verifier", "selected_label": "gold"},
+        {"status": "evaluated", "verifier_type": "reward_model", "verifier_variant": "world_reward", "selected_label": "gold"},
+        {"status": "skipped", "verifier_type": "reward_model", "verifier_variant": "world_reward", "selected_label": "ignored"},
+    ]
+    output_jsonl.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+    append_predicted_action_distribution(output_jsonl, output_csv)
+
+    with output_csv.open("r", encoding="utf-8", newline="") as handle:
+        csv_rows = list(csv.DictReader(handle))
+
+    assert len(csv_rows) == 2
+    basic_row = next(row for row in csv_rows if row["verifier_variant"] == "basic_verifier")
+    reward_row = next(row for row in csv_rows if row["verifier_variant"] == "world_reward")
+
+    assert basic_row["verifier_type"] == "llm"
+    assert basic_row["rows_evaluated"] == "3"
+    assert basic_row["count__gold"] == "1"
+    assert basic_row["fraction__gold"] == "0.333333"
+    assert basic_row["count__qwen3_coder"] == "2"
+    assert basic_row["fraction__qwen3_coder"] == "0.666667"
+    assert basic_row["output_jsonl"] == str(output_jsonl)
+
+    assert reward_row["verifier_type"] == "reward_model"
+    assert reward_row["rows_evaluated"] == "1"
+    assert reward_row["count__gold"] == "1"
+    assert reward_row["fraction__gold"] == "1.000000"
+    assert reward_row["count__qwen3_coder"] == ""
+    assert reward_row["fraction__qwen3_coder"] == ""
 
 
 def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):

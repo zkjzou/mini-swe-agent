@@ -35,25 +35,65 @@ def _make_distribution_column_names(labels: list[str]) -> dict[str, tuple[str, s
     return columns
 
 
-def append_predicted_action_distribution(output_jsonl: Path, output_csv: Path) -> None:
-    counts: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
-    totals: Counter[tuple[str, str]] = Counter()
-    with output_jsonl.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line:
-                continue
-            row = json.loads(line)
-            if row.get("status") != "evaluated":
-                continue
-            verifier_type = str(row.get("verifier_type") or "")
-            verifier_variant = str(row.get("verifier_variant") or verifier_type)
-            selected_label = row.get("selected_label")
-            if not isinstance(selected_label, str) or not selected_label:
-                selected_label = f"index_{row.get('selected_index')}"
-            key = (verifier_type, verifier_variant)
-            counts[key][selected_label] += 1
-            totals[key] += 1
+def _selected_label(row: dict) -> str:
+    selected_label = row.get("selected_label")
+    if isinstance(selected_label, str) and selected_label:
+        return selected_label
+    return f"index_{row.get('selected_index')}"
+
+
+def _n_candidates(row: dict) -> int | None:
+    n_actions = row.get("n_actions")
+    if isinstance(n_actions, int) and n_actions > 0:
+        return n_actions
+    candidate_labels = row.get("candidate_labels")
+    if isinstance(candidate_labels, list) and candidate_labels:
+        return len(candidate_labels)
+    return None
+
+
+def _has_parser_failure(row: dict) -> bool:
+    if row.get("verifier_type") != "llm":
+        return False
+    verifier_output = row.get("verifier_output")
+    if not isinstance(verifier_output, dict):
+        return False
+    raw_index = verifier_output.get("raw_index")
+    if raw_index is None:
+        return True
+    try:
+        parsed_raw_index = int(raw_index)
+    except (TypeError, ValueError):
+        return True
+    n_candidates = _n_candidates(row)
+    if n_candidates is not None and not (1 <= parsed_raw_index <= n_candidates):
+        return True
+    return False
+
+
+def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> list[dict[str, str]]:
+    counts: dict[tuple[str, str, str], Counter[str]] = defaultdict(Counter)
+    parser_failure_counts: dict[tuple[str, str, str], Counter[str]] = defaultdict(Counter)
+    totals: Counter[tuple[str, str, str]] = Counter()
+    parser_failures: Counter[tuple[str, str, str]] = Counter()
+    for output_jsonl in output_jsonls:
+        with output_jsonl.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if row.get("status") != "evaluated":
+                    continue
+                verifier_type = str(row.get("verifier_type") or "")
+                verifier_variant = str(row.get("verifier_variant") or verifier_type)
+                selected_label = _selected_label(row)
+                key = (verifier_type, verifier_variant, str(output_jsonl))
+                counts[key][selected_label] += 1
+                totals[key] += 1
+                if _has_parser_failure(row):
+                    parser_failures[key] += 1
+                    parser_failure_counts[key][selected_label] += 1
 
     labels = sorted({label for label_counts in counts.values() for label in label_counts})
     label_columns = _make_distribution_column_names(labels)
@@ -62,6 +102,8 @@ def append_predicted_action_distribution(output_jsonl: Path, output_csv: Path) -
         "verifier_type",
         "verifier_variant",
         "rows_evaluated",
+        "rows_parser_failed",
+        "fraction_parser_failed",
         "output_jsonl",
     ]
     fieldnames = metadata_fieldnames + [
@@ -69,8 +111,50 @@ def append_predicted_action_distribution(output_jsonl: Path, output_csv: Path) -
         for label in labels
         for column_name in label_columns[label]
     ]
-    output_csv.parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    parser_failure_fieldnames = [
+        column_name
+        for label in labels
+        for column_name in (
+            f"parser_failure_count__{_sanitize_distribution_label(label)}",
+            f"parser_failure_fraction__{_sanitize_distribution_label(label)}",
+        )
+    ]
+    fieldnames = metadata_fieldnames + [
+        column_name
+        for label in labels
+        for column_name in label_columns[label]
+    ] + parser_failure_fieldnames
+    rows: list[dict[str, str]] = []
+    for verifier_type, verifier_variant, output_jsonl in sorted(counts):
+        key = (verifier_type, verifier_variant, output_jsonl)
+        total = totals[key]
+        parser_failed = parser_failures[key]
+        row = {
+            "timestamp_utc": timestamp,
+            "verifier_type": verifier_type,
+            "verifier_variant": verifier_variant,
+            "rows_evaluated": str(total),
+            "rows_parser_failed": str(parser_failed),
+            "fraction_parser_failed": f"{parser_failed / total:.6f}" if total else "0.000000",
+            "output_jsonl": output_jsonl,
+        }
+        for selected_label, count in sorted(counts[key].items()):
+            count_column, fraction_column = label_columns[selected_label]
+            row[count_column] = str(count)
+            row[fraction_column] = f"{count / total:.6f}" if total else "0.000000"
+        for selected_label, count in sorted(parser_failure_counts[key].items()):
+            label_key = _sanitize_distribution_label(selected_label)
+            row[f"parser_failure_count__{label_key}"] = str(count)
+            row[f"parser_failure_fraction__{label_key}"] = (
+                f"{count / parser_failed:.6f}" if parser_failed else "0.000000"
+            )
+        rows.append({field: row.get(field, "") for field in fieldnames})
+    return rows
+
+
+def append_predicted_action_distribution(output_jsonl: Path, output_csv: Path) -> None:
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
     existing_rows: list[dict[str, str]] = []
     existing_fieldnames: list[str] = []
     if output_csv.exists() and output_csv.stat().st_size > 0:
@@ -78,26 +162,16 @@ def append_predicted_action_distribution(output_jsonl: Path, output_csv: Path) -
             reader = csv.DictReader(handle)
             existing_fieldnames = list(reader.fieldnames or [])
             existing_rows = [dict(row) for row in reader]
-    fieldnames = list(dict.fromkeys(existing_fieldnames + fieldnames))
+    new_rows = _collect_predicted_action_distribution_rows([output_jsonl])
+    new_fieldnames = list(new_rows[0].keys()) if new_rows else []
+    fieldnames = list(dict.fromkeys(existing_fieldnames + new_fieldnames))
 
     with output_csv.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for existing_row in existing_rows:
             writer.writerow({field: existing_row.get(field, "") for field in fieldnames})
-        for verifier_type, verifier_variant in sorted(counts):
-            total = totals[(verifier_type, verifier_variant)]
-            row = {
-                "timestamp_utc": timestamp,
-                "verifier_type": verifier_type,
-                "verifier_variant": verifier_variant,
-                "rows_evaluated": total,
-                "output_jsonl": str(output_jsonl),
-            }
-            for selected_label, count in sorted(counts[(verifier_type, verifier_variant)].items()):
-                count_column, fraction_column = label_columns[selected_label]
-                row[count_column] = count
-                row[fraction_column] = f"{count / total:.6f}" if total else "0.000000"
+        for row in new_rows:
             writer.writerow({field: row.get(field, "") for field in fieldnames})
 
 

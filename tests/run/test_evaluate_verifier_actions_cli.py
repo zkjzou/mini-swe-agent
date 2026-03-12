@@ -7,15 +7,37 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from minisweagent.run.utilities.evaluate_verifier_actions import app, append_predicted_action_distribution
+from minisweagent.run.utilities.reanalyze_verifier_predictions import app as reanalyze_app
 
 
 def test_append_predicted_action_distribution_writes_wide_rows(tmp_path):
     output_jsonl = tmp_path / "rows.jsonl"
     output_csv = tmp_path / "predicted_action_distribution.csv"
     rows = [
-        {"status": "evaluated", "verifier_type": "llm", "verifier_variant": "basic_verifier", "selected_label": "qwen3_coder"},
-        {"status": "evaluated", "verifier_type": "llm", "verifier_variant": "basic_verifier", "selected_label": "qwen3_coder"},
-        {"status": "evaluated", "verifier_type": "llm", "verifier_variant": "basic_verifier", "selected_label": "gold"},
+        {
+            "status": "evaluated",
+            "verifier_type": "llm",
+            "verifier_variant": "basic_verifier",
+            "selected_label": "qwen3_coder",
+            "n_actions": 5,
+            "verifier_output": {"raw_index": 4},
+        },
+        {
+            "status": "evaluated",
+            "verifier_type": "llm",
+            "verifier_variant": "basic_verifier",
+            "selected_label": "qwen3_coder",
+            "n_actions": 5,
+            "verifier_output": {"raw_index": None},
+        },
+        {
+            "status": "evaluated",
+            "verifier_type": "llm",
+            "verifier_variant": "basic_verifier",
+            "selected_label": "gold",
+            "n_actions": 5,
+            "verifier_output": {"raw_index": 1},
+        },
         {"status": "evaluated", "verifier_type": "reward_model", "verifier_variant": "world_reward", "selected_label": "gold"},
         {"status": "skipped", "verifier_type": "reward_model", "verifier_variant": "world_reward", "selected_label": "ignored"},
     ]
@@ -32,18 +54,30 @@ def test_append_predicted_action_distribution_writes_wide_rows(tmp_path):
 
     assert basic_row["verifier_type"] == "llm"
     assert basic_row["rows_evaluated"] == "3"
+    assert basic_row["rows_parser_failed"] == "1"
+    assert basic_row["fraction_parser_failed"] == "0.333333"
     assert basic_row["count__gold"] == "1"
     assert basic_row["fraction__gold"] == "0.333333"
     assert basic_row["count__qwen3_coder"] == "2"
     assert basic_row["fraction__qwen3_coder"] == "0.666667"
+    assert basic_row["parser_failure_count__gold"] == ""
+    assert basic_row["parser_failure_fraction__gold"] == ""
+    assert basic_row["parser_failure_count__qwen3_coder"] == "1"
+    assert basic_row["parser_failure_fraction__qwen3_coder"] == "1.000000"
     assert basic_row["output_jsonl"] == str(output_jsonl)
 
     assert reward_row["verifier_type"] == "reward_model"
     assert reward_row["rows_evaluated"] == "1"
+    assert reward_row["rows_parser_failed"] == "0"
+    assert reward_row["fraction_parser_failed"] == "0.000000"
     assert reward_row["count__gold"] == "1"
     assert reward_row["fraction__gold"] == "1.000000"
     assert reward_row["count__qwen3_coder"] == ""
     assert reward_row["fraction__qwen3_coder"] == ""
+    assert reward_row["parser_failure_count__gold"] == ""
+    assert reward_row["parser_failure_fraction__gold"] == ""
+    assert reward_row["parser_failure_count__qwen3_coder"] == ""
+    assert reward_row["parser_failure_fraction__qwen3_coder"] == ""
 
 
 def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
@@ -152,3 +186,64 @@ def test_evaluate_verifier_actions_cli_returns_error_code_on_failure(monkeypatch
     )
 
     assert result.exit_code == 1
+
+
+def test_reanalyze_verifier_predictions_cli_writes_combined_csv(tmp_path):
+    rows_dir = tmp_path / "rows"
+    rows_dir.mkdir()
+    (rows_dir / "world_verifier_rows.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "status": "evaluated",
+                        "verifier_type": "llm",
+                        "verifier_variant": "world_verifier",
+                        "selected_label": "gold",
+                        "n_actions": 5,
+                        "verifier_output": {"raw_index": None},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "status": "evaluated",
+                        "verifier_type": "llm",
+                        "verifier_variant": "world_verifier",
+                        "selected_label": "qwen3_coder",
+                        "n_actions": 5,
+                        "verifier_output": {"raw_index": 4},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_csv = tmp_path / "combined.csv"
+
+    runner = CliRunner()
+    result = runner.invoke(
+        reanalyze_app,
+        [
+            "--input-dir",
+            str(rows_dir),
+            "--output-csv",
+            str(output_csv),
+            "--overwrite",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    with output_csv.open("r", encoding="utf-8", newline="") as handle:
+        csv_rows = list(csv.DictReader(handle))
+
+    assert len(csv_rows) == 1
+    row = csv_rows[0]
+    assert row["verifier_variant"] == "world_verifier"
+    assert row["rows_evaluated"] == "2"
+    assert row["rows_parser_failed"] == "1"
+    assert row["fraction_parser_failed"] == "0.500000"
+    assert row["count__gold"] == "1"
+    assert row["count__qwen3_coder"] == "1"
+    assert row["parser_failure_count__gold"] == "1"
+    assert row["parser_failure_fraction__gold"] == "1.000000"

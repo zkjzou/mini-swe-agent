@@ -36,6 +36,11 @@ subcommands = [
         ["evaluate-verifier-actions", "eval-verifier-actions"],
         "Evaluate verifier gold-action selection on merged candidate rows",
     ),
+    (
+        "minisweagent.run.utilities.reanalyze_verifier_predictions",
+        ["reanalyze-verifier-predictions"],
+        "Reanalyze existing verifier prediction rows and write combined label distributions",
+    ),
 ]
 
 

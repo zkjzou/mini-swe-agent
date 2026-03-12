@@ -45,8 +45,32 @@ def _make_distribution_column_names(labels: list[str]) -> dict[str, tuple[str, s
     columns: dict[str, tuple[str, str]] = {}
     for label in labels:
         key = _display_label_name(label)
-        columns[label] = (f"count__{key}", f"fraction__{key}")
+        columns[label] = (f"count__{key}", key)
     return columns
+
+
+def _display_model_name(output_jsonl: Path, verifier_type: str) -> str:
+    if output_jsonl.is_relative_to(Path("/tmp")):
+        return verifier_type
+    raw_name = output_jsonl.parent.name
+    if raw_name == "verifier_samples":
+        raw_name = output_jsonl.stem.removesuffix("_rows")
+        if raw_name.startswith("verifier_eval_"):
+            raw_name = raw_name.removeprefix("verifier_eval_")
+    if not raw_name or raw_name.startswith("tmp"):
+        return verifier_type
+    display_name = raw_name
+    for source, target in (
+        ("qwen3_5_27b", "qwen3.5-27b"),
+        ("qwen3_5_35b", "qwen3.5-35b"),
+        ("qwen3_5_instruct", "qwen3.5-27b"),
+        ("gpt5_mini", "gpt5-mini"),
+        ("gpt5mini", "gpt5-mini"),
+        ("qwen3_coder_next", "qwen3-coder-next"),
+        ("qwen3_coder", "qwen3-coder-instruct"),
+    ):
+        display_name = display_name.replace(source, target)
+    return display_name.replace("_", "-")
 
 
 def _selected_label(row: dict) -> str:
@@ -123,30 +147,36 @@ def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> li
         }
     )
     label_columns = _make_distribution_column_names(labels)
+    front_fieldnames = ["model", "verifier_variant"]
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fraction_fieldnames = [label_columns[label][1] for label in labels]
     metadata_fieldnames = [
-        "model",
-        "verifier_variant",
         "rows_evaluated",
         "rows_non_parser_failed",
         "rows_parser_failed",
         "fraction_parser_failed",
+        "timestamp_utc",
+        "output_jsonl",
     ]
-    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    label_fieldnames = [
+    count_fieldnames = [label_columns[label][0] for label in labels]
+    parser_failure_fraction_fieldnames = [
         column_name
         for label in labels
-        for column_name in label_columns[label]
+        for column_name in (f"parser_failure_fraction__{_display_label_name(label)}",)
     ]
-    parser_failure_fieldnames = [
+    parser_failure_count_fieldnames = [
         column_name
         for label in labels
-        for column_name in (
-            f"parser_failure_count__{_display_label_name(label)}",
-            f"parser_failure_fraction__{_display_label_name(label)}",
-        )
+        for column_name in (f"parser_failure_count__{_display_label_name(label)}",)
     ]
-    trailing_fieldnames = ["timestamp_utc", "output_jsonl"]
-    fieldnames = metadata_fieldnames + label_fieldnames + parser_failure_fieldnames + trailing_fieldnames
+    fieldnames = (
+        front_fieldnames
+        + fraction_fieldnames
+        + metadata_fieldnames
+        + count_fieldnames
+        + parser_failure_fraction_fieldnames
+        + parser_failure_count_fieldnames
+    )
     rows: list[dict[str, str]] = []
     all_keys = sorted(set(totals))
     for verifier_type, verifier_variant, output_jsonl in all_keys:
@@ -155,7 +185,7 @@ def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> li
         parsed_total = parsed_totals[key]
         parser_failed = parser_failures[key]
         row = {
-            "model": verifier_type,
+            "model": _display_model_name(Path(output_jsonl), verifier_type),
             "verifier_variant": verifier_variant,
             "rows_evaluated": str(total),
             "rows_non_parser_failed": str(parsed_total),

@@ -48,25 +48,29 @@ def test_append_predicted_action_distribution_writes_wide_rows(tmp_path):
     with output_csv.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         assert reader.fieldnames is not None
-        assert reader.fieldnames[:14] == [
+        assert reader.fieldnames[:7] == [
             "model",
             "verifier_variant",
+            "gold",
+            "qwen3-coder-next",
+            "qwen3.5-27b",
+            "gpt5-mini",
+            "qwen3-coder-instruct",
+        ]
+        assert reader.fieldnames[7:13] == [
             "rows_evaluated",
             "rows_non_parser_failed",
             "rows_parser_failed",
             "fraction_parser_failed",
-            "count__gold",
-            "fraction__gold",
-            "count__qwen3-coder-next",
-            "fraction__qwen3-coder-next",
-            "count__qwen3.5-27b",
-            "fraction__qwen3.5-27b",
-            "count__gpt5-mini",
-            "fraction__gpt5-mini",
+            "timestamp_utc",
+            "output_jsonl",
         ]
-        assert reader.fieldnames[14:16] == [
+        assert reader.fieldnames[13:18] == [
+            "count__gold",
+            "count__qwen3-coder-next",
+            "count__qwen3.5-27b",
+            "count__gpt5-mini",
             "count__qwen3-coder-instruct",
-            "fraction__qwen3-coder-instruct",
         ]
         csv_rows = list(reader)
 
@@ -75,14 +79,20 @@ def test_append_predicted_action_distribution_writes_wide_rows(tmp_path):
     reward_row = next(row for row in csv_rows if row["verifier_variant"] == "world_reward")
 
     assert basic_row["model"] == "llm"
+    assert basic_row["gold"] == "0.500000"
+    assert basic_row["qwen3-coder-instruct"] == "0.500000"
+    assert basic_row["qwen3-coder-next"] == ""
+    assert basic_row["qwen3.5-27b"] == ""
+    assert basic_row["gpt5-mini"] == ""
     assert basic_row["rows_evaluated"] == "3"
     assert basic_row["rows_non_parser_failed"] == "2"
     assert basic_row["rows_parser_failed"] == "1"
     assert basic_row["fraction_parser_failed"] == "0.333333"
     assert basic_row["count__gold"] == "1"
-    assert basic_row["fraction__gold"] == "0.500000"
+    assert basic_row["count__qwen3-coder-next"] == ""
+    assert basic_row["count__qwen3.5-27b"] == ""
+    assert basic_row["count__gpt5-mini"] == ""
     assert basic_row["count__qwen3-coder-instruct"] == "1"
-    assert basic_row["fraction__qwen3-coder-instruct"] == "0.500000"
     assert basic_row["parser_failure_count__gold"] == ""
     assert basic_row["parser_failure_fraction__gold"] == ""
     assert basic_row["parser_failure_count__qwen3-coder-instruct"] == "1"
@@ -90,14 +100,20 @@ def test_append_predicted_action_distribution_writes_wide_rows(tmp_path):
     assert basic_row["output_jsonl"] == str(output_jsonl)
 
     assert reward_row["model"] == "reward_model"
+    assert reward_row["gold"] == "1.000000"
+    assert reward_row["qwen3-coder-next"] == ""
+    assert reward_row["qwen3.5-27b"] == ""
+    assert reward_row["gpt5-mini"] == ""
+    assert reward_row["qwen3-coder-instruct"] == ""
     assert reward_row["rows_evaluated"] == "1"
     assert reward_row["rows_non_parser_failed"] == "1"
     assert reward_row["rows_parser_failed"] == "0"
     assert reward_row["fraction_parser_failed"] == "0.000000"
     assert reward_row["count__gold"] == "1"
-    assert reward_row["fraction__gold"] == "1.000000"
+    assert reward_row["count__qwen3-coder-next"] == ""
+    assert reward_row["count__qwen3.5-27b"] == ""
+    assert reward_row["count__gpt5-mini"] == ""
     assert reward_row["count__qwen3-coder-instruct"] == ""
-    assert reward_row["fraction__qwen3-coder-instruct"] == ""
     assert reward_row["parser_failure_count__gold"] == ""
     assert reward_row["parser_failure_fraction__gold"] == ""
     assert reward_row["parser_failure_count__qwen3-coder-instruct"] == ""
@@ -268,8 +284,12 @@ def test_reanalyze_verifier_predictions_cli_writes_combined_csv(tmp_path):
     assert row["rows_non_parser_failed"] == "1"
     assert row["rows_parser_failed"] == "1"
     assert row["fraction_parser_failed"] == "0.500000"
+    assert row["gold"] == ""
+    assert row["qwen3-coder-instruct"] == "1.000000"
     assert row["count__gold"] == ""
+    assert row["count__qwen3-coder-next"] == ""
+    assert row["count__qwen3.5-27b"] == ""
+    assert row["count__gpt5-mini"] == ""
     assert row["count__qwen3-coder-instruct"] == "1"
-    assert row["fraction__qwen3-coder-instruct"] == "1.000000"
     assert row["parser_failure_count__gold"] == "1"
     assert row["parser_failure_fraction__gold"] == "1.000000"

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+import math
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,13 @@ def _safe_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _population_std(values: list[int]) -> float:
+    if not values:
+        return 0.0
+    mean = sum(values) / len(values)
+    return math.sqrt(sum((value - mean) ** 2 for value in values) / len(values))
 
 
 def _load_rollout_step_averages(results_jsonl: Path) -> dict[tuple[str, int, int], dict[str, float | int]]:
@@ -42,7 +50,9 @@ def _load_rollout_step_averages(results_jsonl: Path) -> dict[tuple[str, int, int
     averages: dict[tuple[str, int, int], dict[str, float | int]] = {}
     for key, values in steps_by_action.items():
         averages[key] = {
+            "rollout_executed_steps_values": values,
             "avg_rollout_executed_steps": sum(values) / len(values),
+            "rollout_executed_steps_std": _population_std(values),
             "rollout_samples": len(values),
         }
     return averages

@@ -35,9 +35,13 @@ def test_add_rollout_steps_to_action_summary_adds_per_action_average(tmp_path: P
 
     updated = add_rollout_steps_to_action_summary(summary, results_jsonl=results_jsonl)
 
+    assert updated["instance_a"]["step_0000"]["action_00"]["rollout_executed_steps_values"] == [10, 14]
     assert updated["instance_a"]["step_0000"]["action_00"]["avg_rollout_executed_steps"] == 12.0
+    assert updated["instance_a"]["step_0000"]["action_00"]["rollout_executed_steps_std"] == 2.0
     assert updated["instance_a"]["step_0000"]["action_00"]["rollout_samples"] == 2
+    assert updated["instance_a"]["step_0000"]["action_01"]["rollout_executed_steps_values"] == [7]
     assert updated["instance_a"]["step_0000"]["action_01"]["avg_rollout_executed_steps"] == 7.0
+    assert updated["instance_a"]["step_0000"]["action_01"]["rollout_executed_steps_std"] == 0.0
     assert updated["instance_a"]["step_0000"]["action_01"]["rollout_samples"] == 1
 
 
@@ -70,4 +74,6 @@ def test_add_rollout_steps_to_action_summary_cli_writes_output(tmp_path: Path):
 
     assert result.exit_code == 0, result.output
     written = json.loads(output_json.read_text(encoding="utf-8"))
+    assert written["instance_a"]["step_0000"]["action_00"]["rollout_executed_steps_values"] == [9]
     assert written["instance_a"]["step_0000"]["action_00"]["avg_rollout_executed_steps"] == 9.0
+    assert written["instance_a"]["step_0000"]["action_00"]["rollout_executed_steps_std"] == 0.0

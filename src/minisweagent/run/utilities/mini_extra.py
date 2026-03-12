@@ -41,6 +41,11 @@ subcommands = [
         ["reanalyze-verifier-predictions"],
         "Reanalyze existing verifier prediction rows and write combined label distributions",
     ),
+    (
+        "minisweagent.run.utilities.enrich_action_summary",
+        ["enrich-action-summary"],
+        "Enrich action_summary JSON with step/action variability and critical-point metrics",
+    ),
 ]
 
 

@@ -48,7 +48,35 @@ def test_build_critical_step_report_marks_only_both_gap_steps():
         }
     }
 
-    report = build_critical_step_report(payload)
+    results_jsonl = Path("/tmp/test_critical_steps_results.jsonl")
+    results_jsonl.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "instance_id": "instance_a",
+                        "step_index": 0,
+                        "action_index": 0,
+                        "forced_command": "run gold",
+                        "forced_thought": "gold thought",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "instance_id": "instance_a",
+                        "step_index": 0,
+                        "action_index": 1,
+                        "forced_command": "run other",
+                        "forced_thought": "other thought",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    report = build_critical_step_report(payload, results_jsonl=results_jsonl)
 
     assert report["n_steps"] == 3
     assert report["n_critical_steps"] == 1
@@ -56,13 +84,17 @@ def test_build_critical_step_report_marks_only_both_gap_steps():
     assert report["steps"][0]["critical_point"] is True
     assert report["steps"][0]["winner_disagreement"] is True
     assert report["steps"][0]["candidate_actions"][0]["action_key"] == "action_00"
+    assert report["steps"][0]["candidate_actions"][0]["command"] == "run gold"
+    assert report["steps"][0]["candidate_actions"][0]["thought"] == "gold thought"
     assert report["steps"][0]["candidate_actions"][1]["label"] == "other"
+    assert report["steps"][0]["candidate_actions"][1]["command"] == "run other"
     assert report["steps"][1]["critical_point"] is False
     assert report["steps"][2]["critical_point"] is False
 
 
 def test_critical_steps_from_action_summary_cli_writes_output(tmp_path: Path):
     input_json = tmp_path / "input.json"
+    results_jsonl = tmp_path / "results.jsonl"
     output_json = tmp_path / "critical_steps.json"
     input_json.write_text(
         json.dumps(
@@ -77,6 +109,32 @@ def test_critical_steps_from_action_summary_cli_writes_output(tmp_path: Path):
         ),
         encoding="utf-8",
     )
+    results_jsonl.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "instance_id": "instance_a",
+                        "step_index": 0,
+                        "action_index": 0,
+                        "forced_command": "gold cmd",
+                        "forced_thought": "gold thought",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "instance_id": "instance_a",
+                        "step_index": 0,
+                        "action_index": 1,
+                        "forced_command": "other cmd",
+                        "forced_thought": "other thought",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     runner = CliRunner()
     result = runner.invoke(
@@ -84,6 +142,8 @@ def test_critical_steps_from_action_summary_cli_writes_output(tmp_path: Path):
         [
             "--input-json",
             str(input_json),
+            "--results-jsonl",
+            str(results_jsonl),
             "--output-json",
             str(output_json),
             "--overwrite",
@@ -94,3 +154,5 @@ def test_critical_steps_from_action_summary_cli_writes_output(tmp_path: Path):
     written = json.loads(output_json.read_text(encoding="utf-8"))
     assert written["n_critical_steps"] == 1
     assert written["steps"][0]["critical_point"] is True
+    assert written["steps"][0]["candidate_actions"][0]["command"] == "gold cmd"
+    assert written["steps"][0]["candidate_actions"][1]["thought"] == "other thought"

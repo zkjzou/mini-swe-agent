@@ -42,9 +42,9 @@ subcommands = [
         "Reanalyze existing verifier prediction rows and write combined label distributions",
     ),
     (
-        "minisweagent.run.utilities.enrich_action_summary",
-        ["enrich-action-summary"],
-        "Enrich action_summary JSON with step/action variability and critical-point metrics",
+        "minisweagent.run.utilities.add_rollout_steps_to_action_summary",
+        ["add-rollout-steps-to-action-summary"],
+        "Add average rollout_executed_steps from Monte Carlo results to action_summary JSON",
     ),
 ]
 

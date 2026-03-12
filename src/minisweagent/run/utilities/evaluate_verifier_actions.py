@@ -72,9 +72,10 @@ def _has_parser_failure(row: dict) -> bool:
 
 
 def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> list[dict[str, str]]:
-    counts: dict[tuple[str, str, str], Counter[str]] = defaultdict(Counter)
+    parsed_counts: dict[tuple[str, str, str], Counter[str]] = defaultdict(Counter)
     parser_failure_counts: dict[tuple[str, str, str], Counter[str]] = defaultdict(Counter)
     totals: Counter[tuple[str, str, str]] = Counter()
+    parsed_totals: Counter[tuple[str, str, str]] = Counter()
     parser_failures: Counter[tuple[str, str, str]] = Counter()
     for output_jsonl in output_jsonls:
         with output_jsonl.open("r", encoding="utf-8") as handle:
@@ -89,29 +90,36 @@ def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> li
                 verifier_variant = str(row.get("verifier_variant") or verifier_type)
                 selected_label = _selected_label(row)
                 key = (verifier_type, verifier_variant, str(output_jsonl))
-                counts[key][selected_label] += 1
                 totals[key] += 1
                 if _has_parser_failure(row):
                     parser_failures[key] += 1
                     parser_failure_counts[key][selected_label] += 1
+                else:
+                    parsed_counts[key][selected_label] += 1
+                    parsed_totals[key] += 1
 
-    labels = sorted({label for label_counts in counts.values() for label in label_counts})
+    labels = sorted(
+        {
+            label
+            for label_counts in [*parsed_counts.values(), *parser_failure_counts.values()]
+            for label in label_counts
+        }
+    )
     label_columns = _make_distribution_column_names(labels)
     metadata_fieldnames = [
-        "timestamp_utc",
         "verifier_type",
         "verifier_variant",
         "rows_evaluated",
+        "rows_non_parser_failed",
         "rows_parser_failed",
         "fraction_parser_failed",
-        "output_jsonl",
     ]
-    fieldnames = metadata_fieldnames + [
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    label_fieldnames = [
         column_name
         for label in labels
         for column_name in label_columns[label]
     ]
-    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     parser_failure_fieldnames = [
         column_name
         for label in labels
@@ -120,29 +128,29 @@ def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> li
             f"parser_failure_fraction__{_sanitize_distribution_label(label)}",
         )
     ]
-    fieldnames = metadata_fieldnames + [
-        column_name
-        for label in labels
-        for column_name in label_columns[label]
-    ] + parser_failure_fieldnames
+    trailing_fieldnames = ["timestamp_utc", "output_jsonl"]
+    fieldnames = metadata_fieldnames + label_fieldnames + parser_failure_fieldnames + trailing_fieldnames
     rows: list[dict[str, str]] = []
-    for verifier_type, verifier_variant, output_jsonl in sorted(counts):
+    all_keys = sorted(set(totals))
+    for verifier_type, verifier_variant, output_jsonl in all_keys:
         key = (verifier_type, verifier_variant, output_jsonl)
         total = totals[key]
+        parsed_total = parsed_totals[key]
         parser_failed = parser_failures[key]
         row = {
-            "timestamp_utc": timestamp,
             "verifier_type": verifier_type,
             "verifier_variant": verifier_variant,
             "rows_evaluated": str(total),
+            "rows_non_parser_failed": str(parsed_total),
             "rows_parser_failed": str(parser_failed),
             "fraction_parser_failed": f"{parser_failed / total:.6f}" if total else "0.000000",
+            "timestamp_utc": timestamp,
             "output_jsonl": output_jsonl,
         }
-        for selected_label, count in sorted(counts[key].items()):
+        for selected_label, count in sorted(parsed_counts[key].items()):
             count_column, fraction_column = label_columns[selected_label]
             row[count_column] = str(count)
-            row[fraction_column] = f"{count / total:.6f}" if total else "0.000000"
+            row[fraction_column] = f"{count / parsed_total:.6f}" if parsed_total else "0.000000"
         for selected_label, count in sorted(parser_failure_counts[key].items()):
             label_key = _sanitize_distribution_label(selected_label)
             row[f"parser_failure_count__{label_key}"] = str(count)

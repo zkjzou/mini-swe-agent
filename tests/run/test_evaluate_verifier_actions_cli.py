@@ -46,40 +46,62 @@ def test_append_predicted_action_distribution_writes_wide_rows(tmp_path):
     append_predicted_action_distribution(output_jsonl, output_csv)
 
     with output_csv.open("r", encoding="utf-8", newline="") as handle:
-        csv_rows = list(csv.DictReader(handle))
+        reader = csv.DictReader(handle)
+        assert reader.fieldnames is not None
+        assert reader.fieldnames[:14] == [
+            "model",
+            "verifier_variant",
+            "rows_evaluated",
+            "rows_non_parser_failed",
+            "rows_parser_failed",
+            "fraction_parser_failed",
+            "count__gold",
+            "fraction__gold",
+            "count__qwen3-coder-next",
+            "fraction__qwen3-coder-next",
+            "count__qwen3.5-27b",
+            "fraction__qwen3.5-27b",
+            "count__gpt5-mini",
+            "fraction__gpt5-mini",
+        ]
+        assert reader.fieldnames[14:16] == [
+            "count__qwen3-coder-instruct",
+            "fraction__qwen3-coder-instruct",
+        ]
+        csv_rows = list(reader)
 
     assert len(csv_rows) == 2
     basic_row = next(row for row in csv_rows if row["verifier_variant"] == "basic_verifier")
     reward_row = next(row for row in csv_rows if row["verifier_variant"] == "world_reward")
 
-    assert basic_row["verifier_type"] == "llm"
+    assert basic_row["model"] == "llm"
     assert basic_row["rows_evaluated"] == "3"
     assert basic_row["rows_non_parser_failed"] == "2"
     assert basic_row["rows_parser_failed"] == "1"
     assert basic_row["fraction_parser_failed"] == "0.333333"
     assert basic_row["count__gold"] == "1"
     assert basic_row["fraction__gold"] == "0.500000"
-    assert basic_row["count__qwen3_coder"] == "1"
-    assert basic_row["fraction__qwen3_coder"] == "0.500000"
+    assert basic_row["count__qwen3-coder-instruct"] == "1"
+    assert basic_row["fraction__qwen3-coder-instruct"] == "0.500000"
     assert basic_row["parser_failure_count__gold"] == ""
     assert basic_row["parser_failure_fraction__gold"] == ""
-    assert basic_row["parser_failure_count__qwen3_coder"] == "1"
-    assert basic_row["parser_failure_fraction__qwen3_coder"] == "1.000000"
+    assert basic_row["parser_failure_count__qwen3-coder-instruct"] == "1"
+    assert basic_row["parser_failure_fraction__qwen3-coder-instruct"] == "1.000000"
     assert basic_row["output_jsonl"] == str(output_jsonl)
 
-    assert reward_row["verifier_type"] == "reward_model"
+    assert reward_row["model"] == "reward_model"
     assert reward_row["rows_evaluated"] == "1"
     assert reward_row["rows_non_parser_failed"] == "1"
     assert reward_row["rows_parser_failed"] == "0"
     assert reward_row["fraction_parser_failed"] == "0.000000"
     assert reward_row["count__gold"] == "1"
     assert reward_row["fraction__gold"] == "1.000000"
-    assert reward_row["count__qwen3_coder"] == ""
-    assert reward_row["fraction__qwen3_coder"] == ""
+    assert reward_row["count__qwen3-coder-instruct"] == ""
+    assert reward_row["fraction__qwen3-coder-instruct"] == ""
     assert reward_row["parser_failure_count__gold"] == ""
     assert reward_row["parser_failure_fraction__gold"] == ""
-    assert reward_row["parser_failure_count__qwen3_coder"] == ""
-    assert reward_row["parser_failure_fraction__qwen3_coder"] == ""
+    assert reward_row["parser_failure_count__qwen3-coder-instruct"] == ""
+    assert reward_row["parser_failure_fraction__qwen3-coder-instruct"] == ""
 
 
 def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
@@ -247,7 +269,7 @@ def test_reanalyze_verifier_predictions_cli_writes_combined_csv(tmp_path):
     assert row["rows_parser_failed"] == "1"
     assert row["fraction_parser_failed"] == "0.500000"
     assert row["count__gold"] == ""
-    assert row["count__qwen3_coder"] == "1"
-    assert row["fraction__qwen3_coder"] == "1.000000"
+    assert row["count__qwen3-coder-instruct"] == "1"
+    assert row["fraction__qwen3-coder-instruct"] == "1.000000"
     assert row["parser_failure_count__gold"] == "1"
     assert row["parser_failure_fraction__gold"] == "1.000000"

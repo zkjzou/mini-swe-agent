@@ -4,7 +4,6 @@
 
 import csv
 import json
-import re
 from collections import Counter, defaultdict
 from datetime import datetime, UTC
 from pathlib import Path
@@ -17,20 +16,35 @@ from minisweagent.utils.verifier_action_evaluation import evaluate_verifier_acti
 app = typer.Typer(rich_markup_mode="rich", add_completion=False)
 console = Console(highlight=False)
 
+_PREFERRED_LABEL_ORDER = (
+    "gold",
+    "qwen3_coder_next",
+    "qwen3_5_instruct",
+    "gpt5mini",
+    "qwen3_coder",
+)
+_DISPLAY_LABEL_NAMES = {
+    "gold": "gold",
+    "qwen3_coder_next": "qwen3-coder-next",
+    "qwen3_5_instruct": "qwen3.5-27b",
+    "gpt5mini": "gpt5-mini",
+    "qwen3_coder": "qwen3-coder-instruct",
+}
 
-def _sanitize_distribution_label(label: str) -> str:
-    sanitized = re.sub(r"[^0-9A-Za-z]+", "_", str(label or "").strip()).strip("_").lower()
-    return sanitized or "unknown"
+
+def _display_label_name(label: str) -> str:
+    return _DISPLAY_LABEL_NAMES.get(label, label)
+
+
+def _ordered_labels(labels: set[str]) -> list[str]:
+    preferred_rank = {label: index for index, label in enumerate(_PREFERRED_LABEL_ORDER)}
+    return sorted(labels, key=lambda label: (preferred_rank.get(label, len(preferred_rank)), _display_label_name(label)))
 
 
 def _make_distribution_column_names(labels: list[str]) -> dict[str, tuple[str, str]]:
     columns: dict[str, tuple[str, str]] = {}
-    seen: Counter[str] = Counter()
     for label in labels:
-        base = _sanitize_distribution_label(label)
-        seen[base] += 1
-        suffix = f"_{seen[base]}" if seen[base] > 1 else ""
-        key = f"{base}{suffix}"
+        key = _display_label_name(label)
         columns[label] = (f"count__{key}", f"fraction__{key}")
     return columns
 
@@ -98,16 +112,19 @@ def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> li
                     parsed_counts[key][selected_label] += 1
                     parsed_totals[key] += 1
 
-    labels = sorted(
+    labels = _ordered_labels(
         {
-            label
-            for label_counts in [*parsed_counts.values(), *parser_failure_counts.values()]
-            for label in label_counts
+            *_PREFERRED_LABEL_ORDER,
+            *(
+                label
+                for label_counts in [*parsed_counts.values(), *parser_failure_counts.values()]
+                for label in label_counts
+            ),
         }
     )
     label_columns = _make_distribution_column_names(labels)
     metadata_fieldnames = [
-        "verifier_type",
+        "model",
         "verifier_variant",
         "rows_evaluated",
         "rows_non_parser_failed",
@@ -124,8 +141,8 @@ def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> li
         column_name
         for label in labels
         for column_name in (
-            f"parser_failure_count__{_sanitize_distribution_label(label)}",
-            f"parser_failure_fraction__{_sanitize_distribution_label(label)}",
+            f"parser_failure_count__{_display_label_name(label)}",
+            f"parser_failure_fraction__{_display_label_name(label)}",
         )
     ]
     trailing_fieldnames = ["timestamp_utc", "output_jsonl"]
@@ -138,7 +155,7 @@ def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> li
         parsed_total = parsed_totals[key]
         parser_failed = parser_failures[key]
         row = {
-            "verifier_type": verifier_type,
+            "model": verifier_type,
             "verifier_variant": verifier_variant,
             "rows_evaluated": str(total),
             "rows_non_parser_failed": str(parsed_total),
@@ -152,7 +169,7 @@ def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> li
             row[count_column] = str(count)
             row[fraction_column] = f"{count / parsed_total:.6f}" if parsed_total else "0.000000"
         for selected_label, count in sorted(parser_failure_counts[key].items()):
-            label_key = _sanitize_distribution_label(selected_label)
+            label_key = _display_label_name(selected_label)
             row[f"parser_failure_count__{label_key}"] = str(count)
             row[f"parser_failure_fraction__{label_key}"] = (
                 f"{count / parser_failed:.6f}" if parser_failed else "0.000000"

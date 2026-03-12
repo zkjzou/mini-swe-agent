@@ -46,6 +46,11 @@ subcommands = [
         ["add-rollout-steps-to-action-summary"],
         "Add average rollout_executed_steps from Monte Carlo results to action_summary JSON",
     ),
+    (
+        "minisweagent.run.utilities.critical_steps_from_action_summary",
+        ["critical-steps-from-action-summary"],
+        "Rank critical steps from action_summary-with-rollout-steps JSON",
+    ),
 ]
 
 

@@ -839,7 +839,9 @@ def _init_metric_bucket() -> dict[str, Any]:
         "gold_pick_count": 0,
         "accuracy": 0.0,
         "total_cost": 0.0,
+        "average_cost": 0.0,
         "total_api_calls": 0,
+        "average_api_calls": 0.0,
         "skip_reasons": {},
         "failure_reasons": {},
     }
@@ -906,6 +908,10 @@ def _finalize_metric_bucket(metric: dict[str, Any], skip_counter: Counter, failu
     evaluated = _safe_int(metric.get("rows_evaluated"))
     gold_pick_count = _safe_int(metric.get("gold_pick_count"))
     metric["accuracy"] = (gold_pick_count / evaluated) if evaluated > 0 else 0.0
+    total_cost = _safe_float(metric.get("total_cost"))
+    total_api_calls = _safe_int(metric.get("total_api_calls"))
+    metric["average_cost"] = (total_cost / evaluated) if evaluated > 0 else 0.0
+    metric["average_api_calls"] = (total_api_calls / evaluated) if evaluated > 0 else 0.0
     metric["skip_reasons"] = dict(skip_counter)
     metric["failure_reasons"] = dict(failure_counter)
 
@@ -959,6 +965,9 @@ def evaluate_verifier_action_selection(
     per_type_metrics = {verifier_type: _init_metric_bucket() for verifier_type in resolved_verifier_types}
     per_type_skip_counters = {verifier_type: Counter() for verifier_type in resolved_verifier_types}
     per_type_failure_counters = {verifier_type: Counter() for verifier_type in resolved_verifier_types}
+    overall_metrics = _init_metric_bucket()
+    overall_skip_counters: Counter = Counter()
+    overall_failure_counters: Counter = Counter()
 
     rows_to_evaluate: list[tuple[int, int, dict[str, Any]]] = []
     with input_jsonl.open("r", encoding="utf-8") as input_handle:
@@ -1076,6 +1085,12 @@ def evaluate_verifier_action_selection(
             if verifier_variant not in per_variant_metrics or verifier_type not in per_type_metrics:
                 continue
             _record_metric_row(
+                metric=overall_metrics,
+                skip_counter=overall_skip_counters,
+                failure_counter=overall_failure_counters,
+                row_result=row_result,
+            )
+            _record_metric_row(
                 metric=per_variant_metrics[verifier_variant],
                 skip_counter=per_variant_skip_counters[verifier_variant],
                 failure_counter=per_variant_failure_counters[verifier_variant],
@@ -1088,6 +1103,7 @@ def evaluate_verifier_action_selection(
                 row_result=row_result,
             )
 
+    _finalize_metric_bucket(overall_metrics, overall_skip_counters, overall_failure_counters)
     for variant_name, metric in per_variant_metrics.items():
         _finalize_metric_bucket(metric, per_variant_skip_counters[variant_name], per_variant_failure_counters[variant_name])
     for verifier_type, metric in per_type_metrics.items():
@@ -1107,6 +1123,7 @@ def evaluate_verifier_action_selection(
         "effective_max_workers": effective_max_workers,
         "langfuse_session_id": langfuse_session_id,
         "counts": counts,
+        "overall": overall_metrics,
         "per_variant": per_variant_metrics,
         "per_verifier": per_type_metrics,
     }

@@ -130,6 +130,16 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
             "output_jsonl": str(tmp_path / "rows.jsonl"),
             "output_summary": str(tmp_path / "summary.json"),
             "counts": {"rows_considered": 12, "rows_written": 24, "invalid_rows": 0},
+            "overall": {
+                "rows_evaluated": 12,
+                "gold_pick_count": 9,
+                "accuracy": 0.75,
+                "rows_skipped": 0,
+                "rows_failed": 0,
+                "total_cost": 1.25,
+                "average_cost": 1.25 / 12,
+                "total_api_calls": 18,
+            },
             "per_variant": {
                 "world_reward": {
                     "rows_evaluated": 12,
@@ -137,10 +147,22 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
                     "accuracy": 0.75,
                     "rows_skipped": 0,
                     "rows_failed": 0,
+                    "total_cost": 1.25,
+                    "average_cost": 1.25 / 12,
+                    "total_api_calls": 18,
                 }
             },
             "per_verifier": {
-                "llm": {"rows_evaluated": 12, "gold_pick_count": 9, "accuracy": 0.75, "rows_skipped": 0, "rows_failed": 0}
+                "llm": {
+                    "rows_evaluated": 12,
+                    "gold_pick_count": 9,
+                    "accuracy": 0.75,
+                    "rows_skipped": 0,
+                    "rows_failed": 0,
+                    "total_cost": 1.25,
+                    "average_cost": 1.25 / 12,
+                    "total_api_calls": 18,
+                }
             },
         }
 
@@ -203,6 +225,11 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
     assert called["overwrite"] is True
     assert appended["output_jsonl"] == Path(tmp_path / "rows.jsonl")
     assert appended["output_csv"] == Path(tmp_path / "predicted_action_distribution.csv")
+    assert "overall: evaluated=12 gold_picks=9 accuracy=0.7500" in result.output
+    assert "world_reward: evaluated=12 gold_picks=9 accuracy=0.7500" in result.output
+    assert "aggregate[llm]: evaluated=12 gold_picks=9 accuracy=0.7500" in result.output
+    assert result.output.count("cost=$1.2500") >= 3
+    assert result.output.count("avg_cost=$0.1042") >= 3
 
 
 def test_evaluate_verifier_actions_cli_returns_error_code_on_failure(monkeypatch, tmp_path):

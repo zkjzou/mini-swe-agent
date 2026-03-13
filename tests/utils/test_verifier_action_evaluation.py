@@ -460,6 +460,11 @@ def test_evaluate_verifier_action_selection_basic_verifier_parses_final_and_scor
     assert row["verifier_output"]["raw_index"] == row["gold_index"] + 1
     assert row["verifier_output"]["scores"][row["gold_index"]] == 0.95
     assert summary["effective_max_workers"] == 1
+    assert summary["overall"]["rows_evaluated"] == 1
+    assert summary["overall"]["total_cost"] == 0.2
+    assert summary["overall"]["average_cost"] == 0.2
+    assert summary["per_variant"]["basic_verifier"]["total_cost"] == 0.2
+    assert summary["per_variant"]["basic_verifier"]["average_cost"] == 0.2
 
 
 def test_evaluate_verifier_action_selection_dynamic_checklist_metadata(tmp_path, monkeypatch):

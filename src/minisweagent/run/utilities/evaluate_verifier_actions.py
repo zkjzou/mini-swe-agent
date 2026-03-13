@@ -32,6 +32,20 @@ _DISPLAY_LABEL_NAMES = {
 }
 
 
+def _safe_float(value: object) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _safe_int(value: object) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _display_label_name(label: str) -> str:
     return _DISPLAY_LABEL_NAMES.get(label, label)
 
@@ -230,6 +244,29 @@ def append_predicted_action_distribution(output_jsonl: Path, output_csv: Path) -
             writer.writerow({field: row.get(field, "") for field in fieldnames})
 
 
+def _print_metric_summary(prefix: str, metrics: dict[str, object]) -> None:
+    evaluated = _safe_int(metrics.get("rows_evaluated"))
+    total_cost = _safe_float(metrics.get("total_cost"))
+    average_cost = _safe_float(metrics.get("average_cost"))
+    if average_cost <= 0.0 and evaluated > 0:
+        average_cost = total_cost / evaluated
+    console.print(
+        "{prefix}: evaluated={evaluated} gold_picks={gold_picks} accuracy={accuracy:.4f} "
+        "skipped={skipped} failed={failed} cost=${cost:.4f} avg_cost=${avg_cost:.4f} api_calls={api_calls}".format(
+            prefix=prefix,
+            evaluated=evaluated,
+            gold_picks=_safe_int(metrics.get("gold_pick_count")),
+            accuracy=_safe_float(metrics.get("accuracy")),
+            skipped=_safe_int(metrics.get("rows_skipped")),
+            failed=_safe_int(metrics.get("rows_failed")),
+            cost=total_cost,
+            avg_cost=average_cost,
+            api_calls=_safe_int(metrics.get("total_api_calls")),
+        ),
+        markup=False,
+    )
+
+
 @app.command(help=__doc__)
 def main(
     input_jsonl: str = typer.Option(..., "--input-jsonl", help="Merged verifier-action JSONL file"),
@@ -309,30 +346,15 @@ def main(
             invalid_rows=counts.get("invalid_rows", 0),
         )
     )
+    overall_metrics = summary.get("overall")
+    if isinstance(overall_metrics, dict):
+        _print_metric_summary("overall", overall_metrics)
     for verifier_variant, metrics in (summary.get("per_variant") or {}).items():
-        console.print(
-            "{name}: evaluated={evaluated} gold_picks={gold_picks} accuracy={accuracy:.4f} "
-            "skipped={skipped} failed={failed}".format(
-                name=verifier_variant,
-                evaluated=metrics.get("rows_evaluated", 0),
-                gold_picks=metrics.get("gold_pick_count", 0),
-                accuracy=float(metrics.get("accuracy", 0.0) or 0.0),
-                skipped=metrics.get("rows_skipped", 0),
-                failed=metrics.get("rows_failed", 0),
-            )
-        )
+        if isinstance(metrics, dict):
+            _print_metric_summary(verifier_variant, metrics)
     for verifier_type, metrics in (summary.get("per_verifier") or {}).items():
-        console.print(
-            "aggregate[{name}]: evaluated={evaluated} gold_picks={gold_picks} accuracy={accuracy:.4f} "
-            "skipped={skipped} failed={failed}".format(
-                name=verifier_type,
-                evaluated=metrics.get("rows_evaluated", 0),
-                gold_picks=metrics.get("gold_pick_count", 0),
-                accuracy=float(metrics.get("accuracy", 0.0) or 0.0),
-                skipped=metrics.get("rows_skipped", 0),
-                failed=metrics.get("rows_failed", 0),
-            )
-        )
+        if isinstance(metrics, dict):
+            _print_metric_summary(f"aggregate[{verifier_type}]", metrics)
     if output_distribution_csv:
         append_predicted_action_distribution(Path(summary["output_jsonl"]), Path(output_distribution_csv))
         console.print(f"[green]Appended predicted action distribution:[/green] {output_distribution_csv}")

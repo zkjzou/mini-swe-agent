@@ -28,7 +28,9 @@ def resolve_checklist_output_format(config: Any) -> str:
         return configured_mode
 
     prompt_name = getattr(config, "prompt_name", None)
-    if isinstance(prompt_name, str) and prompt_name.startswith("checklist_v2/"):
+    if isinstance(prompt_name, str) and (
+        prompt_name.startswith("checklist_v2/") or prompt_name.startswith("ultimate_v2/")
+    ):
         return "rubric_yaml"
     return "list"
 

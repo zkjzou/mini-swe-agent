@@ -353,3 +353,9 @@ profiles:
     dynamic_checklist_modify_reward:
       prompt_name: "dynamic_checklist_modify/reward"
       prompt_dir: "prompts/verifier"
+    ultimate_v2_verifier:
+      prompt_name: "ultimate_v2/verifier"
+      prompt_dir: "prompts/verifier"
+    ultimate_v2_reward:
+      prompt_name: "ultimate_v2/reward"
+      prompt_dir: "prompts/verifier"

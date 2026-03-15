@@ -430,6 +430,36 @@ def test_evaluate_verifier_action_selection_world_verifier_parses_scores(tmp_pat
     assert row["verifier_output"]["scores"][row["gold_index"]] == 0.95
 
 
+def test_evaluate_verifier_action_selection_ultimate_v2_verifier_parses_scores(tmp_path, monkeypatch):
+    input_jsonl = tmp_path / "merged.jsonl"
+    output_jsonl = tmp_path / "eval_rows.jsonl"
+    _write_jsonl(input_jsonl, [_make_row()])
+
+    monkeypatch.setattr(
+        "minisweagent.utils.verifier_action_evaluation.get_model",
+        lambda *args, **kwargs: _VariantAwareModel(),
+    )
+
+    evaluate_verifier_action_selection(
+        input_jsonl=input_jsonl,
+        output_jsonl=output_jsonl,
+        config_specs=[
+            "swebench.yaml",
+            'agent.verifier.model.model_name="fake/verifier"',
+            'agent.verifier.model.model_class="deterministic"',
+        ],
+        verifier_variants=["ultimate_v2_verifier"],
+        strict_five_actions=True,
+        show_progress=False,
+        max_workers=1,
+        overwrite=True,
+    )
+
+    row = json.loads(output_jsonl.read_text().splitlines()[0])
+    assert row["selected_is_gold"] is True
+    assert row["verifier_output"]["scores"][row["gold_index"]] == 0.95
+
+
 def test_evaluate_verifier_action_selection_basic_verifier_parses_final_and_scores(tmp_path, monkeypatch):
     input_jsonl = tmp_path / "merged.jsonl"
     output_jsonl = tmp_path / "eval_rows.jsonl"

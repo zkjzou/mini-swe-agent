@@ -61,6 +61,10 @@ _CHECKLIST_STATIC_OVERRIDES = {
     "checklist_dynamic": False,
     "checklist_update_mode": "regenerate",
 }
+_CHECKLIST_RUBRIC_V2_OVERRIDES = {
+    **_CHECKLIST_STATIC_OVERRIDES,
+    "checklist_output_format": "rubric_yaml",
+}
 _DYNAMIC_CHECKLIST_REGENERATE_OVERRIDES = {
     "checklist_mode": "issue_progress",
     "checklist_dynamic": True,
@@ -133,7 +137,18 @@ _VERIFIER_VARIANTS: tuple[_VerifierVariantSpec, ...] = (
         verifier_type="llm",
         prompt_name="checklist_v2/verifier",
         prompt_dir="prompts/verifier",
-        config_overrides={**_CHECKLIST_STATIC_OVERRIDES, **_LLM_PROMPT_OVERRIDES},
+        config_overrides={**_CHECKLIST_RUBRIC_V2_OVERRIDES, **_LLM_PROMPT_OVERRIDES},
+    ),
+    _VerifierVariantSpec(
+        name="ultimate_v2_verifier",
+        verifier_type="llm",
+        prompt_name="ultimate_v2/verifier",
+        prompt_dir="prompts/verifier",
+        config_overrides={
+            **_CHECKLIST_RUBRIC_V2_OVERRIDES,
+            "selection_regex": _FINAL_SELECTION_REGEX,
+            "selection_score_regex": _WORLD_SELECTION_SCORE_REGEX,
+        },
     ),
     _VerifierVariantSpec(
         name="dynamic_checklist_regenerate_verifier",
@@ -196,7 +211,14 @@ _VERIFIER_VARIANTS: tuple[_VerifierVariantSpec, ...] = (
         verifier_type="reward_model",
         prompt_name="checklist_v2/reward",
         prompt_dir="prompts/verifier",
-        config_overrides=_CHECKLIST_STATIC_OVERRIDES,
+        config_overrides=_CHECKLIST_RUBRIC_V2_OVERRIDES,
+    ),
+    _VerifierVariantSpec(
+        name="ultimate_v2_reward",
+        verifier_type="reward_model",
+        prompt_name="ultimate_v2/reward",
+        prompt_dir="prompts/verifier",
+        config_overrides=_CHECKLIST_RUBRIC_V2_OVERRIDES,
     ),
     _VerifierVariantSpec(
         name="dynamic_checklist_regenerate_reward",

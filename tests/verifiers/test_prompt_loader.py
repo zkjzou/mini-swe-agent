@@ -134,6 +134,8 @@ def test_apply_prompt_overrides_llm_single_file_legacy_prompt_only(tmp_path):
         "prompts/verifier/checklist_v2/reward/reward.jinja",
         "prompts/verifier/ultimate_v2/verifier/selection.jinja",
         "prompts/verifier/ultimate_v2/reward/reward.jinja",
+        "prompts/verifier/ultimate_v2_dynamic_checklist_regenerate/verifier/selection.jinja",
+        "prompts/verifier/ultimate_v2_dynamic_checklist_regenerate/reward/reward.jinja",
         "prompts/verifier/dynamic_checklist_modify/verifier/selection.jinja",
         "prompts/verifier/dynamic_checklist_modify/reward/reward.jinja",
         "prompts/verifier/dynamic_checklist_regenerate/verifier/selection.jinja",

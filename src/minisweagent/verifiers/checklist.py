@@ -29,7 +29,9 @@ def resolve_checklist_output_format(config: Any) -> str:
 
     prompt_name = getattr(config, "prompt_name", None)
     if isinstance(prompt_name, str) and (
-        prompt_name.startswith("checklist_v2/") or prompt_name.startswith("ultimate_v2/")
+        prompt_name.startswith("checklist_v2/")
+        or prompt_name.startswith("ultimate_v2/")
+        or prompt_name.startswith("ultimate_v2_dynamic_checklist_regenerate/")
     ):
         return "rubric_yaml"
     return "list"
@@ -48,6 +50,12 @@ def infer_checklist_prompt_settings(prompt_name: str | None) -> dict[str, Any] |
             "checklist_update_mode": "modify",
         }
     if name.startswith("dynamic_checklist_regenerate/"):
+        return {
+            "checklist_mode": "issue_progress",
+            "checklist_dynamic": True,
+            "checklist_update_mode": "regenerate",
+        }
+    if name.startswith("ultimate_v2_dynamic_checklist_regenerate/"):
         return {
             "checklist_mode": "issue_progress",
             "checklist_dynamic": True,

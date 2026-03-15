@@ -79,6 +79,14 @@ def test_resolve_checklist_output_format_autodetects_ultimate_v2():
     assert resolve_checklist_output_format(config) == "rubric_yaml"
 
 
+def test_resolve_checklist_output_format_autodetects_dynamic_ultimate_v2():
+    config = SimpleNamespace(
+        prompt_name="ultimate_v2_dynamic_checklist_regenerate/verifier",
+        checklist_output_format="auto",
+    )
+    assert resolve_checklist_output_format(config) == "rubric_yaml"
+
+
 def test_generate_issue_checklist_uses_model_query_and_parses_items():
     class _QueryOnlyModel:
         def query(self, messages, **kwargs):

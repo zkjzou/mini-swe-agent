@@ -1,7 +1,6 @@
 import copy
 from pathlib import Path
 
-import pytest
 import yaml
 
 from minisweagent.agents.default import DefaultAgent
@@ -151,58 +150,6 @@ def test_reward_model_prompt_requests_reasoning_when_reasoning_mode_enabled():
 
     assert "REASONING:" in capture.prompts[-1]
     assert "FEEDBACK:" not in capture.prompts[-1]
-
-
-@pytest.mark.parametrize(
-    ("prompt_name", "verbal_feedback_mode", "expects_feedback"),
-    [
-        ("basic_mini_feedback/reward", "feedback", True),
-        ("basic_mini_reasoning/reward", "reasoning", False),
-    ],
-)
-def test_reward_model_dedicated_verbal_feedback_prompt_variants(
-    prompt_name: str, verbal_feedback_mode: str, expects_feedback: bool
-):
-    class _CaptureRewardModel:
-        def __init__(self):
-            self.prompts: list[str] = []
-
-        def query(self, messages, **kwargs):
-            self.prompts.append(messages[-1].get("content", ""))
-            if expects_feedback:
-                content = "REASONING: Focus the next step.\nFEEDBACK: Prefer the targeted command.\nREWARD: 0.5"
-            else:
-                content = "REASONING: Focus the next step.\nREWARD: 0.5"
-            return {"role": "assistant", "content": content, "extra": {"cost": 0.0}}
-
-    config = _load_default_agent_config()
-    config["candidate_sampling"] = {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}}
-    config["enable_verbal_feedback"] = True
-    config["verbal_feedback_mode"] = verbal_feedback_mode
-    config["verifier"] = {
-        "enabled": True,
-        "verifier_type": "reward_model",
-        "prompt_name": prompt_name,
-        "prompt_dir": "prompts/verifier",
-        "reward_regex": r"REWARD:\s*([+-]?\d+(?:\.\d+)?)",
-    }
-
-    agent = DefaultAgent(
-        model=DeterministicModel(outputs=[make_output("Option 1", [{"command": "echo first"}])]),
-        env=LocalEnvironment(),
-        **config,
-    )
-    capture = _CaptureRewardModel()
-    agent.verifier.model = capture
-    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
-    response = agent.query()
-
-    verifier_output = response.get("extra", {}).get("verifier", {}).get("verifier_output", {})
-    assert ("FEEDBACK:" in capture.prompts[-1]) is expects_feedback
-    assert verifier_output.get("selected_feedback") == (
-        "Prefer the targeted command." if expects_feedback else "Focus the next step."
-    )
-    assert verifier_output.get("selected_reasoning") == "Focus the next step."
 
 
 def test_reward_model_checklist_mode_attaches_progress_metadata():

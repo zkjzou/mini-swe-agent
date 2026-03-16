@@ -43,7 +43,7 @@ Assign a scalar score in the range **[0.0, 1.0]** reflecting how appropriate the
 
 Output format:
 REASONING: <2–5 sentences>
-{% if enable_verbal_feedback %}
+{% if enable_verbal_feedback and verbal_feedback_mode == "feedback" %}
 FEEDBACK: <one-line critique for the coding model's next step>
 {% endif %}
 FINAL: <scalar value between 0.0 and 1.0>

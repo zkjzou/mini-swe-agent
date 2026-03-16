@@ -64,7 +64,7 @@ Evaluate how appropriate the candidate action is given the recent steps, and ass
 
 Output format:
 REASONING: <2-5 sentences summarizing key issues and why this candidate is good/bad given the trajectory>
-{% if enable_verbal_feedback %}
+{% if enable_verbal_feedback and verbal_feedback_mode == "feedback" %}
 FEEDBACK: <one-line critique for the coding model's next step>
 {% endif %}
 FINAL: <scalar value between 0.0 and 1.0>

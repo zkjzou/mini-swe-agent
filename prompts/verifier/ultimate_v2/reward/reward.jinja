@@ -96,7 +96,7 @@ DOMAIN_ANALYSIS:
   Reasoning: <brief note on any reasoning errors or none>
   Coordination: <brief note on any coordination errors or none>
 REASONING: <2-5 sentences integrating the checklist, domain, and world-model views>
-{% if enable_verbal_feedback %}
+{% if enable_verbal_feedback and verbal_feedback_mode == "feedback" %}
 FEEDBACK: <one-line critique for the coding model's next step>
 {% endif %}
 REWARD: <scalar value between 0.0 and 1.0>

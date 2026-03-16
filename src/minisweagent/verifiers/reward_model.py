@@ -33,6 +33,7 @@ class RewardModelVerifier:
         template_vars = template_vars or {}
         verifier_vars = dict(template_vars)
         verifier_vars.setdefault("enable_verbal_feedback", False)
+        verifier_vars.setdefault("verbal_feedback_mode", getattr(self.config, "verbal_feedback_mode", "feedback"))
         verifier_vars.setdefault("history_message_format", resolve_verifier_history_message_format(self.config))
         verifier_vars["task"] = task or ""
         if messages is not None:
@@ -47,6 +48,7 @@ class RewardModelVerifier:
             float | None,
             float | None,
             list[float | None],
+            str | None,
             str | None,
             str,
             dict[str, Any],
@@ -87,11 +89,13 @@ class RewardModelVerifier:
                     reward = self._parse_reward(content)
                     progress_score = self._parse_progress_score(content)
                     checklist_item_scores = self._parse_checklist_item_scores(content, n_checklist_items)
-                    feedback = self._parse_feedback(content)
+                    reasoning = self._parse_reasoning(content)
+                    feedback = self._parse_verbal_feedback(content, reasoning)
                     return (
                         reward,
                         progress_score,
                         checklist_item_scores,
+                        reasoning,
                         feedback,
                         content,
                         response,
@@ -110,6 +114,7 @@ class RewardModelVerifier:
         responses: list[dict[str, Any]] = [{} for _ in candidates]
         response_costs: list[float] = [0.0] * len(candidates)
         progress_scores: list[float | None] = [None] * len(candidates)
+        reasoning_by_candidate: list[str | None] = [None] * len(candidates)
         feedback_by_candidate: list[str | None] = [None] * len(candidates)
         checklist_item_scores_by_candidate: list[list[float | None]] = [[] for _ in candidates]
         candidate_api_calls: list[int] = [0] * len(candidates)
@@ -124,6 +129,7 @@ class RewardModelVerifier:
                     reward,
                     progress_score,
                     checklist_item_scores,
+                    reasoning,
                     feedback,
                     content,
                     response,
@@ -133,6 +139,7 @@ class RewardModelVerifier:
                 ) = future.result()
                 rewards[idx] = reward
                 progress_scores[idx] = progress_score
+                reasoning_by_candidate[idx] = reasoning
                 feedback_by_candidate[idx] = feedback
                 checklist_item_scores_by_candidate[idx] = checklist_item_scores
                 raw_outputs[idx] = content
@@ -145,14 +152,17 @@ class RewardModelVerifier:
             "verifier_type": "reward_model",
             "rewards": rewards,
             "candidate_progress_scores": progress_scores,
+            "candidate_reasoning": reasoning_by_candidate,
             "candidate_feedback": feedback_by_candidate,
             "candidate_checklist_item_scores": checklist_item_scores_by_candidate,
             "raw_outputs": raw_outputs,
             "responses": responses,
             "response_costs": response_costs,
             "candidate_api_calls": candidate_api_calls,
+            "selected_reasoning": reasoning_by_candidate[selected_index] if reasoning_by_candidate else None,
             "selected_feedback": feedback_by_candidate[selected_index] if feedback_by_candidate else None,
             "selected_reward": rewards[selected_index] if rewards else None,
+            "verbal_feedback_mode": getattr(self.config, "verbal_feedback_mode", "feedback"),
             "api_calls": sum(candidate_api_calls),
         }
         if getattr(self.config, "include_inputs_in_output", False):
@@ -241,6 +251,28 @@ class RewardModelVerifier:
                 scores[idx] = score
         return scores
 
+    def _parse_reasoning(self, content: str) -> str | None:
+        patterns: list[str] = []
+        configured_pattern = getattr(self.config, "reasoning_regex", None)
+        if isinstance(configured_pattern, str) and configured_pattern.strip():
+            patterns.append(configured_pattern)
+        if r"(?m)^REASONING:\s*(.+)" not in patterns:
+            patterns.append(r"(?m)^REASONING:\s*(.+)")
+
+        for pattern in patterns:
+            matches = re.findall(pattern, content, re.MULTILINE)
+            if not matches:
+                continue
+            raw = matches[-1]
+            if isinstance(raw, tuple):
+                raw = raw[0]
+            if not isinstance(raw, str):
+                continue
+            reasoning = raw.strip()
+            if reasoning:
+                return reasoning
+        return None
+
     def _parse_feedback(self, content: str) -> str | None:
         patterns: list[str] = []
         configured_pattern = getattr(self.config, "feedback_regex", None)
@@ -263,6 +295,11 @@ class RewardModelVerifier:
             if feedback:
                 return feedback
         return None
+
+    def _parse_verbal_feedback(self, content: str, reasoning: str | None) -> str | None:
+        if getattr(self.config, "verbal_feedback_mode", "feedback") == "reasoning":
+            return reasoning
+        return self._parse_feedback(content)
 
     def _count_checklist_items(self, template_vars: dict[str, Any]) -> int:
         checklist_items = template_vars.get("checklist_items")

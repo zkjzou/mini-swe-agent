@@ -49,7 +49,7 @@ CHECKLIST_ITEM_SCORES:
 {% endfor %}
 PROGRESS: <Yes/No + short reason>
 REASONING: <2-3 sentences>
-{% if enable_verbal_feedback %}
+{% if enable_verbal_feedback and verbal_feedback_mode == "feedback" %}
 FEEDBACK: <one-line critique for the coding model's next step>
 {% endif %}
 SCORE: <scalar 0.0-1.0>

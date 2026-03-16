@@ -146,16 +146,25 @@ class VerifierConfig(BaseModel):
     reward_prompt_template: str = (
         "Score the candidate action for how well it advances the task safely and correctly. "
         "Return the score"
-        "{% if enable_verbal_feedback %} and concise feedback{% endif %}.\n\n"
+        "{% if enable_verbal_feedback %}"
+        " and {% if verbal_feedback_mode == 'reasoning' %}reasoning{% else %}concise feedback{% endif %}"
+        "{% endif %}.\n\n"
         "Task: {{ task }}\n"
         "Candidate:\n"
         "{{ candidate.content }}\n"
         "Output format:\n"
-        "{% if enable_verbal_feedback %}FEEDBACK: <one-line critique for the coding model>\n{% endif %}"
+        "{% if enable_verbal_feedback and verbal_feedback_mode == 'reasoning' %}"
+        "REASONING: <2-5 sentences>\n"
+        "{% elif enable_verbal_feedback %}"
+        "FEEDBACK: <one-line critique for the coding model>\n"
+        "{% endif %}"
         "REWARD: <number>\n"
     )
     reward_regex: str = r"REWARD:\s*([+-]?\d+(?:\.\d+)?)"
     feedback_regex: str = r"FEEDBACK:\s*(.+)"
+    reasoning_regex: str = r"(?m)^REASONING:\s*(.+)"
+    verbal_feedback_mode: Literal["feedback", "reasoning"] = "feedback"
+    """Whether reward-model verbal output should parse FEEDBACK or top-level REASONING."""
     fallback: Literal["first_candidate", "first_valid"] = "first_candidate"
     checklist_mode: Literal["off", "issue_progress"] = "off"
     """Whether to generate and use an issue-derived verifier checklist."""
@@ -222,6 +231,8 @@ class AgentConfig(BaseModel):
     """Save the trajectory to this path."""
     enable_verbal_feedback: bool = False
     """Whether verifier feedback is injected back into the actor on the next step."""
+    verbal_feedback_mode: Literal["feedback", "reasoning"] = "feedback"
+    """Whether verbal verifier feedback should use concise FEEDBACK or top-level REASONING."""
     verifier_feedback_role: Literal["user", "system"] = "user"
     """Role used for the outbound actor feedback prompt message."""
     verifier_feedback_template: str = ""
@@ -362,6 +373,7 @@ class DefaultAgent:
             "all_steps": all_verifier_steps,
             "history_steps": configured_history_steps,
             "enable_verbal_feedback": self.config.enable_verbal_feedback,
+            "verbal_feedback_mode": self.config.verbal_feedback_mode,
         }
 
         selected_index = 0
@@ -461,6 +473,7 @@ class DefaultAgent:
         if not self.config.verifier.enabled:
             return None
         verifier_config = self.config.verifier.model_copy(deep=True)
+        verifier_config.verbal_feedback_mode = self.config.verbal_feedback_mode
         verifier_config = resolve_verifier_runtime_config(verifier_config)
         if verifier_config.model:
             verifier_config.model = _normalize_verifier_model_config(verifier_config.model)
@@ -930,6 +943,7 @@ class DefaultAgent:
         selected_feedback = verifier_output.get("selected_feedback")
         if selected_reward is None and not selected_feedback:
             return None
+        selected_reasoning = verifier_output.get("selected_reasoning")
 
         action = candidate_info.get("action")
         if not action:
@@ -945,6 +959,8 @@ class DefaultAgent:
             "action": action,
             "score": selected_reward,
             "critique": selected_feedback,
+            "reasoning": selected_reasoning,
+            "mode": self.config.verbal_feedback_mode,
             "verifier_type": verifier_metadata.get("type"),
             "selected_index": verifier_metadata.get("selected_index"),
             "step_index": self.step_count,

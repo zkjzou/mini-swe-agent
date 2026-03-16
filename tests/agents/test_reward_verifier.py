@@ -119,6 +119,39 @@ def test_reward_model_prompt_only_requests_feedback_when_enabled():
     assert "FEEDBACK:" in enabled_capture.prompts[-1]
 
 
+def test_reward_model_prompt_requests_reasoning_when_reasoning_mode_enabled():
+    class _CaptureRewardModel:
+        def __init__(self):
+            self.prompts: list[str] = []
+
+        def query(self, messages, **kwargs):
+            self.prompts.append(messages[-1].get("content", ""))
+            return {"role": "assistant", "content": "REASONING: Focus the next step.\nREWARD: 0.5", "extra": {"cost": 0.0}}
+
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}}
+    config["enable_verbal_feedback"] = True
+    config["verbal_feedback_mode"] = "reasoning"
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "reward_model",
+        "reward_regex": r"REWARD:\s*([+-]?\d+(?:\.\d+)?)",
+    }
+
+    agent = DefaultAgent(
+        model=DeterministicModel(outputs=[make_output("Option 1", [{"command": "echo first"}])]),
+        env=LocalEnvironment(),
+        **config,
+    )
+    capture = _CaptureRewardModel()
+    agent.verifier.model = capture
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+    agent.query()
+
+    assert "REASONING:" in capture.prompts[-1]
+    assert "FEEDBACK:" not in capture.prompts[-1]
+
+
 def test_reward_model_checklist_mode_attaches_progress_metadata():
     class _ChecklistAwareRewardModel:
         def query(self, messages, **kwargs):
@@ -352,6 +385,90 @@ def test_reward_model_feedback_is_injected_into_next_actor_query():
         assert "Executed action: echo second" in prompt[-1]["content"]
         assert "Verifier score: 0.900" in prompt[-1]["content"]
         assert "Critique: Prefer the targeted command that narrows the search." in prompt[-1]["content"]
+
+
+def test_reward_model_reasoning_mode_is_injected_into_next_actor_query():
+    reasoning_template = (
+        "Verifier feedback from the previous step:\n"
+        "{% if previous_verifier_feedback.action %}"
+        "Executed action: {{ previous_verifier_feedback.action }}\n"
+        "{% endif %}"
+        "{% if previous_verifier_feedback.score is not none %}"
+        "Verifier score: {{ '%.3f'|format(previous_verifier_feedback.score) }}\n"
+        "{% endif %}"
+        "{% if previous_verifier_feedback.critique %}"
+        "{% if previous_verifier_feedback.mode == 'reasoning' %}"
+        "Reasoning: {{ previous_verifier_feedback.critique }}\n"
+        "{% else %}"
+        "Critique: {{ previous_verifier_feedback.critique }}\n"
+        "{% endif %}"
+        "{% endif %}"
+    )
+
+    class _CaptureActorModel(DeterministicModel):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.seen_queries: list[list[dict]] = []
+
+        def query(self, messages, **kwargs):
+            self.seen_queries.append(copy.deepcopy(messages))
+            return super().query(messages, **kwargs)
+
+    class _ReasoningAwareRewardModel:
+        def query(self, messages, **kwargs):
+            prompt = messages[-1].get("content", "")
+            if "Option 2" in prompt or "Second round option 2" in prompt:
+                return {
+                    "role": "assistant",
+                    "content": "REASONING: Prefer the targeted command that narrows the search.\nREWARD: 0.9",
+                }
+            return {
+                "role": "assistant",
+                "content": "REASONING: This command is too broad for the current blocker.\nREWARD: 0.2",
+            }
+
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["enable_verbal_feedback"] = True
+    config["verbal_feedback_mode"] = "reasoning"
+    config["verifier_feedback_template"] = reasoning_template
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "reward_model",
+        "reward_regex": r"REWARD:\s*([+-]?\d+(?:\.\d+)?)",
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("REWARD: 0.0", [])],
+        },
+    }
+
+    model = _CaptureActorModel(
+        outputs=[
+            make_output("Option 1", [{"command": "echo first"}]),
+            make_output("Option 2", [{"command": "echo second"}]),
+            make_output("Second round option 1", [{"command": "echo round-two-first"}]),
+            make_output("Second round option 2", [{"command": "echo round-two-second"}]),
+        ]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    agent.verifier.model = _ReasoningAwareRewardModel()
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    first = agent.query()
+    second = agent.query()
+
+    first_output = first.get("extra", {}).get("verifier", {}).get("verifier_output", {})
+    second_output = second.get("extra", {}).get("verifier", {}).get("verifier_output", {})
+    assert first_output.get("selected_reasoning") == "Prefer the targeted command that narrows the search."
+    assert first_output.get("selected_feedback") == "Prefer the targeted command that narrows the search."
+    assert second_output.get("selected_feedback") == "Prefer the targeted command that narrows the search."
+
+    second_round_prompts = model.seen_queries[2:]
+    assert second_round_prompts
+    for prompt in second_round_prompts:
+        assert "Reasoning: Prefer the targeted command that narrows the search." in prompt[-1]["content"]
+        assert "Critique:" not in prompt[-1]["content"]
 
 
 def test_reward_model_multi_turn_history_excludes_feedback_from_verifier_inputs():

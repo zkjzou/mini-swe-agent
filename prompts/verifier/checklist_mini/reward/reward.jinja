@@ -1,0 +1,80 @@
+[[[SYSTEM_TEMPLATE]]]
+You are an expert verifier for a coding agent. Evaluate one candidate next action and assign a scalar score.
+Prioritize correctness, safety, minimality, instruction-following, and likely success.
+Use the issue-progress checklist to estimate post-action progress.
+Judge only the executable action, not the candidate reasoning text.
+Avoid destructive, repetitive, or unrelated actions.
+Always follow the output format exactly.
+
+[[[REWARD_PROMPT_TEMPLATE]]]
+Task: {{ task }}
+
+{% if history_message_format == "single_prompt" %}
+Recent steps (history_steps={{ history_steps }}, latest last):
+{% if history_steps == -1 %}
+{% set visible_steps = all_steps %}
+{% else %}
+{% set visible_steps = steps %}
+{% endif %}
+{% for step in visible_steps %}
+{% for msg in step %}
+{{ msg.role }}: {{ msg.content }}
+{% endfor %}
+{% endfor %}
+{% else %}
+Use the preceding conversation as the trajectory history.
+{% endif %}
+
+Issue Progress Checklist:
+{{ checklist_text }}
+
+Candidate action:
+{{ candidate.content }}
+
+Assign a scalar score in [0.0, 1.0] reflecting how appropriate this candidate is as the next step.
+Also estimate post-action progress for each checklist item and overall progress.
+
+Output format:
+CHECKLIST_ITEM_SCORES:
+{% for item in checklist_items %}
+- Item {{ loop.index }}: <scalar 0.0-1.0>
+- REASONING: <1-2 sentences>
+{% endfor %}
+PROGRESS: <Yes/No + short reason>
+REASONING: <2-3 sentences>
+{% if enable_verbal_feedback and verbal_feedback_mode == "feedback" %}
+FEEDBACK: <one-line critique for the coding model's next step>
+{% endif %}
+SCORE: <scalar 0.0-1.0>
+
+[[[CHECKLIST_SYSTEM_TEMPLATE]]]
+You generate concise issue-progress checklists for a coding agent verifier.
+Return checklist content only. Do not call tools.
+
+[[[CHECKLIST_PROMPT_TEMPLATE]]]
+Issue description:
+{{ task }}
+
+{% if history_message_format == "single_prompt" %}
+Recent steps (history_steps={{ history_steps }}, latest last):
+{% if history_steps == -1 %}
+{% set visible_steps = all_steps %}
+{% else %}
+{% set visible_steps = steps %}
+{% endif %}
+{% for step in visible_steps %}
+{% for msg in step %}
+{{ msg.role }}: {{ msg.content }}
+{% endfor %}
+{% endfor %}
+{% else %}
+Use the preceding conversation as the trajectory history.
+{% endif %}
+
+Generate {{ checklist_min_items }} to {{ checklist_max_items }} checklist items that track progress from diagnosis
+to validated fix. Keep each item concrete and observable.
+
+Output format:
+CHECKLIST:
+- <item 1>
+- <item 2>

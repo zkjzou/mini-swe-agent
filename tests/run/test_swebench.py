@@ -315,6 +315,26 @@ def test_builtin_swebench_config_exposes_basic_mini_reward_prompt_profile():
     assert verifier_prompts["basic_mini_reward"]["prompt_dir"] == "prompts/verifier"
 
 
+@pytest.mark.parametrize(
+    ("profile_name", "prompt_name"),
+    [
+        ("checklist_mini_verifier", "checklist_mini/verifier"),
+        ("checklist_mini_reward", "checklist_mini/reward"),
+        ("world_mini_verifier", "world_mini/verifier"),
+        ("world_mini_reward", "world_mini/reward"),
+        ("ultimate_v2_mini_verifier", "ultimate_v2_mini/verifier"),
+        ("ultimate_v2_mini_reward", "ultimate_v2_mini/reward"),
+    ],
+)
+def test_builtin_swebench_config_exposes_new_mini_verifier_prompt_profiles(profile_name: str, prompt_name: str):
+    config = get_config_from_spec("benchmarks/swebench.yaml")
+
+    verifier_prompts = config["profiles"]["verifier_prompts"]
+
+    assert verifier_prompts[profile_name]["prompt_name"] == prompt_name
+    assert verifier_prompts[profile_name]["prompt_dir"] == "prompts/verifier"
+
+
 def test_resolve_profiled_model_config_raises_for_unknown_profile():
     config = {
         "agent_model_profile": "missing_profile",

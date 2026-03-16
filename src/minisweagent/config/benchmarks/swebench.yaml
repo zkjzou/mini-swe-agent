@@ -314,8 +314,14 @@ profiles:
     world_verifier:
       prompt_name: "world/verifier"
       prompt_dir: "prompts/verifier"
+    world_mini_verifier:
+      prompt_name: "world_mini/verifier"
+      prompt_dir: "prompts/verifier"
     checklist_verifier:
       prompt_name: "checklist/verifier"
+      prompt_dir: "prompts/verifier"
+    checklist_mini_verifier:
+      prompt_name: "checklist_mini/verifier"
       prompt_dir: "prompts/verifier"
     checklist_v2_verifier:
       prompt_name: "checklist_v2/verifier"
@@ -341,8 +347,14 @@ profiles:
     world_reward:
       prompt_name: "world/reward"
       prompt_dir: "prompts/verifier"
+    world_mini_reward:
+      prompt_name: "world_mini/reward"
+      prompt_dir: "prompts/verifier"
     checklist_reward:
       prompt_name: "checklist/reward"
+      prompt_dir: "prompts/verifier"
+    checklist_mini_reward:
+      prompt_name: "checklist_mini/reward"
       prompt_dir: "prompts/verifier"
     checklist_v2_reward:
       prompt_name: "checklist_v2/reward"
@@ -356,8 +368,14 @@ profiles:
     ultimate_v2_verifier:
       prompt_name: "ultimate_v2/verifier"
       prompt_dir: "prompts/verifier"
+    ultimate_v2_mini_verifier:
+      prompt_name: "ultimate_v2_mini/verifier"
+      prompt_dir: "prompts/verifier"
     ultimate_v2_reward:
       prompt_name: "ultimate_v2/reward"
+      prompt_dir: "prompts/verifier"
+    ultimate_v2_mini_reward:
+      prompt_name: "ultimate_v2_mini/reward"
       prompt_dir: "prompts/verifier"
     ultimate_v2_dynamic_checklist_regenerate_verifier:
       prompt_name: "ultimate_v2_dynamic_checklist_regenerate/verifier"

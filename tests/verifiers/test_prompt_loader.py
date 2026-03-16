@@ -130,16 +130,22 @@ def test_apply_prompt_overrides_llm_single_file_legacy_prompt_only(tmp_path):
         "prompts/verifier/basic_mini/reward/reward.jinja",
         "prompts/verifier/checklist/verifier/selection.jinja",
         "prompts/verifier/checklist/reward/reward.jinja",
+        "prompts/verifier/checklist_mini/verifier/selection.jinja",
+        "prompts/verifier/checklist_mini/reward/reward.jinja",
         "prompts/verifier/checklist_v2/verifier/selection.jinja",
         "prompts/verifier/checklist_v2/reward/reward.jinja",
         "prompts/verifier/ultimate_v2/verifier/selection.jinja",
         "prompts/verifier/ultimate_v2/reward/reward.jinja",
+        "prompts/verifier/ultimate_v2_mini/verifier/selection.jinja",
+        "prompts/verifier/ultimate_v2_mini/reward/reward.jinja",
         "prompts/verifier/ultimate_v2_dynamic_checklist_regenerate/verifier/selection.jinja",
         "prompts/verifier/ultimate_v2_dynamic_checklist_regenerate/reward/reward.jinja",
         "prompts/verifier/dynamic_checklist_modify/verifier/selection.jinja",
         "prompts/verifier/dynamic_checklist_modify/reward/reward.jinja",
         "prompts/verifier/dynamic_checklist_regenerate/verifier/selection.jinja",
         "prompts/verifier/dynamic_checklist_regenerate/reward/reward.jinja",
+        "prompts/verifier/world_mini/verifier/selection.jinja",
+        "prompts/verifier/world_mini/reward/reward.jinja",
     ],
 )
 def test_core_verifier_prompts_keep_task_out_of_system_section(path: str) -> None:
@@ -170,10 +176,14 @@ def test_core_verifier_prompts_keep_task_out_of_system_section(path: str) -> Non
         "prompts/verifier/basic_mini/reward/reward.jinja",
         "prompts/verifier/checklist/verifier/selection.jinja",
         "prompts/verifier/checklist/reward/reward.jinja",
+        "prompts/verifier/checklist_mini/verifier/selection.jinja",
+        "prompts/verifier/checklist_mini/reward/reward.jinja",
         "prompts/verifier/checklist_v2/verifier/selection.jinja",
         "prompts/verifier/checklist_v2/reward/reward.jinja",
         "prompts/verifier/ultimate_v2/verifier/selection.jinja",
         "prompts/verifier/ultimate_v2/reward/reward.jinja",
+        "prompts/verifier/ultimate_v2_mini/verifier/selection.jinja",
+        "prompts/verifier/ultimate_v2_mini/reward/reward.jinja",
         "prompts/verifier/ultimate_v2_dynamic_checklist_regenerate/verifier/selection.jinja",
         "prompts/verifier/ultimate_v2_dynamic_checklist_regenerate/reward/reward.jinja",
         "prompts/verifier/dynamic_checklist_modify/verifier/selection.jinja",
@@ -186,6 +196,8 @@ def test_core_verifier_prompts_keep_task_out_of_system_section(path: str) -> Non
         "prompts/verifier/domain_v2/reward/reward.jinja",
         "prompts/verifier/world/verifier/selection.jinja",
         "prompts/verifier/world/reward/reward.jinja",
+        "prompts/verifier/world_mini/verifier/selection.jinja",
+        "prompts/verifier/world_mini/reward/reward.jinja",
     ],
 )
 def test_core_verifier_prompts_do_not_repeat_system_section_verbatim(path: str) -> None:
@@ -359,3 +371,41 @@ def test_apply_prompt_overrides_loads_builtin_basic_mini_reward_prompt():
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.reward_system_template
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.reward_prompt_template
     assert "Candidate action:" in updated.reward_prompt_template
+
+
+def test_apply_prompt_overrides_loads_builtin_world_mini_reward_prompt():
+    config = SimpleNamespace(
+        prompt_name="world_mini/reward",
+        prompt_dir="prompts/verifier",
+        verifier_type="reward_model",
+        reward_system_template="original reward system",
+        reward_prompt_template="original reward prompt",
+        checklist_system_template="original checklist system",
+        checklist_prompt_template="original checklist prompt",
+    )
+
+    updated = apply_prompt_overrides(config)
+
+    assert "predictive world model" in updated.reward_system_template.lower()
+    assert "Task: {{ task }}" in updated.reward_prompt_template
+    assert "Candidate action:" in updated.reward_prompt_template
+    assert "NEXT_STATE:" in updated.reward_prompt_template
+
+
+def test_apply_prompt_overrides_loads_builtin_ultimate_v2_mini_verifier_prompt():
+    config = SimpleNamespace(
+        prompt_name="ultimate_v2_mini/verifier",
+        prompt_dir="prompts/verifier",
+        verifier_type="llm",
+        system_template="original system",
+        selection_template="original selection prompt",
+        checklist_system_template="original checklist system",
+        checklist_prompt_template="original checklist prompt",
+    )
+
+    updated = apply_prompt_overrides(config)
+
+    assert "ultimate verifier" in updated.system_template.lower()
+    assert "Issue Progress Checklist:" in updated.selection_template
+    assert "DOMAIN_ANALYSIS:" in updated.selection_template
+    assert "NEXT_STATE:" in updated.selection_template

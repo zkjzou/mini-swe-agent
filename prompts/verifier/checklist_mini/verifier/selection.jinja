@@ -1,0 +1,89 @@
+[[[SYSTEM_TEMPLATE]]]
+You are an expert verifier for a coding agent. Choose the single best next action.
+Prioritize correctness, safety, minimality, instruction-following, and likely success.
+Use the issue-progress checklist to estimate post-action progress.
+Judge only the executable action, not the candidate reasoning text.
+Avoid destructive, repetitive, or unrelated actions.
+Always follow the output format exactly.
+
+[[[SELECTION_TEMPLATE]]]
+Task: {{ task }}
+
+{% if history_message_format == "single_prompt" %}
+Recent steps (history_steps={{ history_steps }}, latest last):
+{% if history_steps == -1 %}
+{% set visible_steps = all_steps %}
+{% else %}
+{% set visible_steps = steps %}
+{% endif %}
+{% for step in visible_steps %}
+{% for msg in step %}
+{{ msg.role }}: {{ msg.content }}
+{% endfor %}
+{% endfor %}
+{% else %}
+Use the preceding conversation as the trajectory history.
+{% endif %}
+
+Issue Progress Checklist:
+{{ checklist_text }}
+
+Candidates:
+{% for c in candidates %}
+Candidate {{ c.index + selection_index_base }}:
+{{ c.content }}
+{% endfor %}
+
+Choose the single best candidate action.
+Rules:
+- Prefer safe, minimal, high-signal actions.
+- Avoid destructive operations unless clearly required.
+- Estimate post-action progress for every checklist item and overall progress.
+- Give every candidate a parseable scalar score.
+
+Output format:
+{% for c in candidates %}
+- Candidate {{ c.index + selection_index_base }}:
+  CHECKLIST_ITEM_SCORES:
+  {% for item in checklist_items %}
+  - Item {{ loop.index }}: <scalar 0.0-1.0>
+  - REASONING: <1-2 sentences>
+  {% endfor %}
+  PROGRESS: <Yes/No + short reason>
+  REASONING: <2-3 sentences>
+  SCORE: <scalar 0.0-1.0>
+{% endfor %}
+REASONING: <2-5 sentences>
+FINAL: <best candidate number>
+
+[[[CHECKLIST_SYSTEM_TEMPLATE]]]
+You generate concise issue-progress checklists for a coding agent verifier.
+Return checklist content only. Do not call tools.
+
+[[[CHECKLIST_PROMPT_TEMPLATE]]]
+Issue description:
+{{ task }}
+
+{% if history_message_format == "single_prompt" %}
+Recent steps (history_steps={{ history_steps }}, latest last):
+{% if history_steps == -1 %}
+{% set visible_steps = all_steps %}
+{% else %}
+{% set visible_steps = steps %}
+{% endif %}
+{% for step in visible_steps %}
+{% for msg in step %}
+{{ msg.role }}: {{ msg.content }}
+{% endfor %}
+{% endfor %}
+{% else %}
+Use the preceding conversation as the trajectory history.
+{% endif %}
+
+Generate {{ checklist_min_items }} to {{ checklist_max_items }} checklist items that track progress from diagnosis
+to validated fix. Keep each item concrete and observable.
+
+Output format:
+CHECKLIST:
+- <item 1>
+- <item 2>

@@ -4,6 +4,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from minisweagent.utils.verifier_action_evaluation import (
     _VERIFIER_VARIANTS,
     _VerifierVariantSpec,
@@ -365,7 +367,9 @@ def test_evaluate_verifier_action_selection_defaults_to_all_variants(tmp_path, m
     assert set(summary["per_verifier"]) == {"first_valid", "llm", "reward_model"}
     assert summary["per_variant"]["first_valid"]["rows_evaluated"] == 1
     assert summary["per_variant"]["world_verifier"]["rows_evaluated"] == 1
+    assert summary["per_variant"]["world_mini_verifier"]["rows_evaluated"] == 1
     assert summary["per_variant"]["dynamic_checklist_modify_reward"]["rows_evaluated"] == 1
+    assert summary["per_variant"]["checklist_mini_reward"]["rows_evaluated"] == 1
 
     rows = [json.loads(line) for line in output_jsonl.read_text().splitlines()]
     assert len(rows) == len(_VERIFIER_VARIANTS)
@@ -400,7 +404,8 @@ def test_evaluate_verifier_action_selection_first_valid_does_not_require_model(t
     assert rows[0]["verifier_type"] == "first_valid"
 
 
-def test_evaluate_verifier_action_selection_world_verifier_parses_scores(tmp_path, monkeypatch):
+@pytest.mark.parametrize("variant_name", ["world_verifier", "world_mini_verifier"])
+def test_evaluate_verifier_action_selection_world_verifier_parses_scores(tmp_path, monkeypatch, variant_name: str):
     input_jsonl = tmp_path / "merged.jsonl"
     output_jsonl = tmp_path / "eval_rows.jsonl"
     _write_jsonl(input_jsonl, [_make_row()])
@@ -418,7 +423,7 @@ def test_evaluate_verifier_action_selection_world_verifier_parses_scores(tmp_pat
             'agent.verifier.model.model_name="fake/verifier"',
             'agent.verifier.model.model_class="deterministic"',
         ],
-        verifier_variants=["world_verifier"],
+        verifier_variants=[variant_name],
         strict_five_actions=True,
         show_progress=False,
         max_workers=1,
@@ -430,7 +435,10 @@ def test_evaluate_verifier_action_selection_world_verifier_parses_scores(tmp_pat
     assert row["verifier_output"]["scores"][row["gold_index"]] == 0.95
 
 
-def test_evaluate_verifier_action_selection_ultimate_v2_verifier_parses_scores(tmp_path, monkeypatch):
+@pytest.mark.parametrize("variant_name", ["ultimate_v2_verifier", "ultimate_v2_mini_verifier"])
+def test_evaluate_verifier_action_selection_ultimate_v2_verifier_parses_scores(
+    tmp_path, monkeypatch, variant_name: str
+):
     input_jsonl = tmp_path / "merged.jsonl"
     output_jsonl = tmp_path / "eval_rows.jsonl"
     _write_jsonl(input_jsonl, [_make_row()])
@@ -448,7 +456,7 @@ def test_evaluate_verifier_action_selection_ultimate_v2_verifier_parses_scores(t
             'agent.verifier.model.model_name="fake/verifier"',
             'agent.verifier.model.model_class="deterministic"',
         ],
-        verifier_variants=["ultimate_v2_verifier"],
+        verifier_variants=[variant_name],
         strict_five_actions=True,
         show_progress=False,
         max_workers=1,
@@ -750,7 +758,10 @@ def test_evaluate_verifier_action_selection_extracts_task_from_swebench_instance
     assert "# Task Instructions" not in prompt
 
 
-def test_evaluate_verifier_action_selection_can_include_verifier_and_checklist_inputs(tmp_path, monkeypatch):
+@pytest.mark.parametrize("variant_name", ["checklist_reward", "checklist_mini_reward"])
+def test_evaluate_verifier_action_selection_can_include_verifier_and_checklist_inputs(
+    tmp_path, monkeypatch, variant_name: str
+):
     input_jsonl = tmp_path / "merged.jsonl"
     output_jsonl = tmp_path / "eval_rows.jsonl"
     _write_jsonl(input_jsonl, [_make_row()])
@@ -769,7 +780,7 @@ def test_evaluate_verifier_action_selection_can_include_verifier_and_checklist_i
             'agent.verifier.model.model_class="deterministic"',
             "agent.verifier.include_inputs_in_output=true",
         ],
-        verifier_variants=["checklist_reward"],
+        verifier_variants=[variant_name],
         strict_five_actions=True,
         show_progress=False,
         max_workers=1,
@@ -860,7 +871,8 @@ def test_evaluate_verifier_action_selection_can_use_multi_turn_verifier_history(
     assert "Task: Fix the failing parser test." in messages[-1]["content"]
 
 
-def test_world_reward_prompt_includes_task_in_captured_input(tmp_path, monkeypatch):
+@pytest.mark.parametrize("variant_name", ["world_reward", "world_mini_reward"])
+def test_world_reward_prompt_includes_task_in_captured_input(tmp_path, monkeypatch, variant_name: str):
     input_jsonl = tmp_path / "merged.jsonl"
     output_jsonl = tmp_path / "eval_rows.jsonl"
     _write_jsonl(input_jsonl, [_make_row()])
@@ -879,7 +891,7 @@ def test_world_reward_prompt_includes_task_in_captured_input(tmp_path, monkeypat
             'agent.verifier.model.model_class="deterministic"',
             "agent.verifier.include_inputs_in_output=true",
         ],
-        verifier_variants=["world_reward"],
+        verifier_variants=[variant_name],
         strict_five_actions=True,
         show_progress=False,
         max_workers=1,

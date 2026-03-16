@@ -1,5 +1,8 @@
 uv.lock
 patch.txt
+/scripts/
+*.csv
+*.json
 exit_statuses*.yaml
 preds.json
 *.traj.json

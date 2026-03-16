@@ -18,24 +18,6 @@ When the task is complete and candidates involve final submission, prefer the ac
 Do not prefer candidates that commit changes, submit test/helper/config files unnecessarily, or combine patch creation/verification/submission into one command.
 
 [[[REWARD_PROMPT_TEMPLATE]]]
-You are an expert verifier for a coding agent. Your job is to evaluate a single candidate next action given the recent agent steps, and output (1) brief reasoning and (2) a scalar score indicating how suitable the action is to execute next.
-
-Prioritize candidate actions that are:
-1) Correct and directly advance the task.
-2) Safe (non-destructive, no data loss, no irreversible commands).
-3) Minimal and precise (a single small change/command that advances the goal).
-4) Compliant with instructions in the task and conversation.
-5) Likely to succeed given the current repository state and constraints.
-
-Penalize actions that are vague, multi-step beyond a single command, or that alter unrelated files.
-If multiple reasonable next steps exist, score higher for lower risk and fewer side effects.
-Always follow the output format exactly.
-When the task is complete and candidates involve final submission, prefer the action that follows the required patch workflow:
-1) Create `patch.txt` with `git diff -- path/to/file1 path/to/file2 > patch.txt` listing only modified source files.
-2) Verify `patch.txt`.
-3) Submit with the exact command `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt`.
-Do not prefer candidates that commit changes, submit test/helper/config files unnecessarily, or combine patch creation/verification/submission into one command.
-
 Task: {{ task }}
 
 {% if history_message_format == "single_prompt" %}

@@ -161,6 +161,53 @@ def test_core_verifier_prompts_keep_task_out_of_system_section(path: str) -> Non
     assert "Task: {{ task }}" in content[system_end:]
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "prompts/verifier/basic/verifier/selection.jinja",
+        "prompts/verifier/basic/reward/reward.jinja",
+        "prompts/verifier/basic_mini/verifier/selection.jinja",
+        "prompts/verifier/basic_mini/reward/reward.jinja",
+        "prompts/verifier/checklist/verifier/selection.jinja",
+        "prompts/verifier/checklist/reward/reward.jinja",
+        "prompts/verifier/checklist_v2/verifier/selection.jinja",
+        "prompts/verifier/checklist_v2/reward/reward.jinja",
+        "prompts/verifier/ultimate_v2/verifier/selection.jinja",
+        "prompts/verifier/ultimate_v2/reward/reward.jinja",
+        "prompts/verifier/ultimate_v2_dynamic_checklist_regenerate/verifier/selection.jinja",
+        "prompts/verifier/ultimate_v2_dynamic_checklist_regenerate/reward/reward.jinja",
+        "prompts/verifier/dynamic_checklist_modify/verifier/selection.jinja",
+        "prompts/verifier/dynamic_checklist_modify/reward/reward.jinja",
+        "prompts/verifier/dynamic_checklist_regenerate/verifier/selection.jinja",
+        "prompts/verifier/dynamic_checklist_regenerate/reward/reward.jinja",
+        "prompts/verifier/domain/verifier/selection.jinja",
+        "prompts/verifier/domain/reward/reward.jinja",
+        "prompts/verifier/domain_v2/verifier/selection.jinja",
+        "prompts/verifier/domain_v2/reward/reward.jinja",
+        "prompts/verifier/world/verifier/selection.jinja",
+        "prompts/verifier/world/reward/reward.jinja",
+    ],
+)
+def test_core_verifier_prompts_do_not_repeat_system_section_verbatim(path: str) -> None:
+    content = Path(path).read_text()
+    system_start = content.index("[[[SYSTEM_TEMPLATE]]]")
+    next_markers = [
+        content.find(marker)
+        for marker in (
+            "[[[SELECTION_TEMPLATE]]]",
+            "[[[REWARD_PROMPT_TEMPLATE]]]",
+            "[[[CHECKLIST_SYSTEM_TEMPLATE]]]",
+            "[[[CHECKLIST_PROMPT_TEMPLATE]]]",
+        )
+        if content.find(marker) != -1
+    ]
+    system_end = min(next_markers) if next_markers else len(content)
+    system_content = content[system_start + len("[[[SYSTEM_TEMPLATE]]]"):system_end].strip()
+
+    assert system_content
+    assert system_content not in content[system_end:]
+
+
 def test_apply_prompt_overrides_reward_single_file_legacy_prompt_only(tmp_path):
     prompt_dir = tmp_path / "prompts" / "verifier" / "custom"
     prompt_dir.mkdir(parents=True, exist_ok=True)

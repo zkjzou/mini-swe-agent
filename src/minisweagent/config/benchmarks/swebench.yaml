@@ -329,29 +329,83 @@ profiles:
     basic_reward:
       prompt_name: "basic/reward"
       prompt_dir: "prompts/verifier"
+    basic_feedback_reward:
+      prompt_name: "basic_feedback/reward"
+      prompt_dir: "prompts/verifier"
+    basic_reasoning_reward:
+      prompt_name: "basic_reasoning/reward"
+      prompt_dir: "prompts/verifier"
     basic_mini_reward:
       prompt_name: "basic_mini/reward"
+      prompt_dir: "prompts/verifier"
+    basic_mini_feedback_reward:
+      prompt_name: "basic_mini_feedback/reward"
+      prompt_dir: "prompts/verifier"
+    basic_mini_reasoning_reward:
+      prompt_name: "basic_mini_reasoning/reward"
       prompt_dir: "prompts/verifier"
     domain_reward:
       prompt_name: "domain/reward"
       prompt_dir: "prompts/verifier"
+    domain_feedback_reward:
+      prompt_name: "domain_feedback/reward"
+      prompt_dir: "prompts/verifier"
+    domain_reasoning_reward:
+      prompt_name: "domain_reasoning/reward"
+      prompt_dir: "prompts/verifier"
     domain_v2_reward:
       prompt_name: "domain_v2/reward"
+      prompt_dir: "prompts/verifier"
+    domain_v2_feedback_reward:
+      prompt_name: "domain_v2_feedback/reward"
+      prompt_dir: "prompts/verifier"
+    domain_v2_reasoning_reward:
+      prompt_name: "domain_v2_reasoning/reward"
       prompt_dir: "prompts/verifier"
     world_reward:
       prompt_name: "world/reward"
       prompt_dir: "prompts/verifier"
+    world_feedback_reward:
+      prompt_name: "world_feedback/reward"
+      prompt_dir: "prompts/verifier"
+    world_reasoning_reward:
+      prompt_name: "world_reasoning/reward"
+      prompt_dir: "prompts/verifier"
     checklist_reward:
       prompt_name: "checklist/reward"
+      prompt_dir: "prompts/verifier"
+    checklist_feedback_reward:
+      prompt_name: "checklist_feedback/reward"
+      prompt_dir: "prompts/verifier"
+    checklist_reasoning_reward:
+      prompt_name: "checklist_reasoning/reward"
       prompt_dir: "prompts/verifier"
     checklist_v2_reward:
       prompt_name: "checklist_v2/reward"
       prompt_dir: "prompts/verifier"
+    checklist_v2_feedback_reward:
+      prompt_name: "checklist_v2_feedback/reward"
+      prompt_dir: "prompts/verifier"
+    checklist_v2_reasoning_reward:
+      prompt_name: "checklist_v2_reasoning/reward"
+      prompt_dir: "prompts/verifier"
     dynamic_checklist_regenerate_reward:
       prompt_name: "dynamic_checklist_regenerate/reward"
       prompt_dir: "prompts/verifier"
+    dynamic_checklist_regenerate_feedback_reward:
+      prompt_name: "dynamic_checklist_regenerate_feedback/reward"
+      prompt_dir: "prompts/verifier"
+    dynamic_checklist_regenerate_reasoning_reward:
+      prompt_name: "dynamic_checklist_regenerate_reasoning/reward"
+      prompt_dir: "prompts/verifier"
     dynamic_checklist_modify_reward:
       prompt_name: "dynamic_checklist_modify/reward"
+      prompt_dir: "prompts/verifier"
+    dynamic_checklist_modify_feedback_reward:
+      prompt_name: "dynamic_checklist_modify_feedback/reward"
+      prompt_dir: "prompts/verifier"
+    dynamic_checklist_modify_reasoning_reward:
+      prompt_name: "dynamic_checklist_modify_reasoning/reward"
       prompt_dir: "prompts/verifier"
     ultimate_v2_verifier:
       prompt_name: "ultimate_v2/verifier"
@@ -359,9 +413,21 @@ profiles:
     ultimate_v2_reward:
       prompt_name: "ultimate_v2/reward"
       prompt_dir: "prompts/verifier"
+    ultimate_v2_feedback_reward:
+      prompt_name: "ultimate_v2_feedback/reward"
+      prompt_dir: "prompts/verifier"
+    ultimate_v2_reasoning_reward:
+      prompt_name: "ultimate_v2_reasoning/reward"
+      prompt_dir: "prompts/verifier"
     ultimate_v2_dynamic_checklist_regenerate_verifier:
       prompt_name: "ultimate_v2_dynamic_checklist_regenerate/verifier"
       prompt_dir: "prompts/verifier"
     ultimate_v2_dynamic_checklist_regenerate_reward:
       prompt_name: "ultimate_v2_dynamic_checklist_regenerate/reward"
+      prompt_dir: "prompts/verifier"
+    ultimate_v2_dynamic_checklist_regenerate_feedback_reward:
+      prompt_name: "ultimate_v2_dynamic_checklist_regenerate_feedback/reward"
+      prompt_dir: "prompts/verifier"
+    ultimate_v2_dynamic_checklist_regenerate_reasoning_reward:
+      prompt_name: "ultimate_v2_dynamic_checklist_regenerate_reasoning/reward"
       prompt_dir: "prompts/verifier"

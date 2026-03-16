@@ -4,6 +4,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from minisweagent.utils.verifier_action_evaluation import (
     _VERIFIER_VARIANTS,
     _VerifierVariantSpec,
@@ -62,10 +64,12 @@ class _VariantAwareModel:
             }
 
         is_world_prompt = "predictive world model" in lower_system or "next_state:" in lower_prompt
+        requests_feedback = "feedback:" in lower_prompt
 
         if "candidate action:" in lower_prompt:
             reward = "0.95" if "echo gold_target" in user_prompt else "0.10"
             if is_world_prompt:
+                feedback_line = "FEEDBACK: Focus on the predicted task advance.\n" if requests_feedback else ""
                 return {
                     "role": "assistant",
                     "content": (
@@ -74,11 +78,13 @@ class _VariantAwareModel:
                         "  File_Changes: none\n"
                         "  Command_Output_Summary: concise output\n"
                         "  Progress: Yes + likely useful next step\n"
+                        f"{feedback_line}"
                         f"REWARD: {reward}"
                     ),
                     "extra": {"cost": 0.1},
                 }
             if "issue progress checklist" in lower_prompt:
+                feedback_line = "FEEDBACK: Keep the next step tightly scoped.\n" if requests_feedback else ""
                 return {
                     "role": "assistant",
                     "content": (
@@ -89,13 +95,15 @@ class _VariantAwareModel:
                         "- REASONING: partial support\n"
                         "PROGRESS: Yes + advances task\n"
                         "REASONING: test\n"
+                        f"{feedback_line}"
                         f"SCORE: {reward}"
                     ),
                     "extra": {"cost": 0.1},
                 }
+            feedback_line = "FEEDBACK: Prefer the targeted command.\n" if requests_feedback else ""
             return {
                 "role": "assistant",
-                "content": f"REASONING: test\nFINAL: {reward}",
+                "content": f"REASONING: test\n{feedback_line}FINAL: {reward}",
                 "extra": {"cost": 0.1},
             }
 
@@ -565,6 +573,48 @@ def test_evaluate_verifier_action_selection_dynamic_checklist_metadata(tmp_path,
     assert second_checklist["source"] == "dynamic_checklist"
     assert summary["effective_max_workers"] == 1
     assert summary["per_variant"]["dynamic_checklist_modify_reward"]["total_api_calls"] >= 4
+
+
+@pytest.mark.parametrize(
+    ("variant_name", "expected_mode", "expects_feedback"),
+    [
+        ("basic_feedback_reward", "feedback", True),
+        ("basic_reasoning_reward", "reasoning", False),
+    ],
+)
+def test_evaluate_verifier_action_selection_reward_verbal_feedback_variants(
+    tmp_path, monkeypatch, variant_name: str, expected_mode: str, expects_feedback: bool
+):
+    input_jsonl = tmp_path / "merged.jsonl"
+    output_jsonl = tmp_path / "eval_rows.jsonl"
+    _write_jsonl(input_jsonl, [_make_row()])
+
+    model = _VariantAwareModel()
+    monkeypatch.setattr(
+        "minisweagent.utils.verifier_action_evaluation.get_model",
+        lambda *args, **kwargs: model,
+    )
+
+    evaluate_verifier_action_selection(
+        input_jsonl=input_jsonl,
+        output_jsonl=output_jsonl,
+        config_specs=[
+            "swebench.yaml",
+            'agent.verifier.model.model_name="fake/verifier"',
+            'agent.verifier.model.model_class="deterministic"',
+        ],
+        verifier_variants=[variant_name],
+        strict_five_actions=True,
+        show_progress=False,
+        max_workers=1,
+        overwrite=True,
+    )
+
+    prompt = "\n".join(model.prompts)
+    row = json.loads(output_jsonl.read_text().splitlines()[0])
+    assert ("FEEDBACK:" in prompt) is expects_feedback
+    assert row["verifier_output"]["verbal_feedback_mode"] == expected_mode
+    assert row["selected_is_gold"] is True
 
 
 def test_evaluate_verifier_action_selection_checklist_verifier_uses_final_selection_and_serial_execution(

@@ -88,6 +88,40 @@ _LLM_PROMPT_OVERRIDES = {
     "selection_regex": _FINAL_SELECTION_REGEX,
     "selection_score_regex": _VERIFIER_SCORE_REGEX,
 }
+_REWARD_PROMPT_OVERRIDES_BY_FAMILY: tuple[tuple[str, dict[str, Any]], ...] = (
+    ("basic", _NON_CHECKLIST_OVERRIDES),
+    ("basic_mini", _NON_CHECKLIST_OVERRIDES),
+    ("domain", _NON_CHECKLIST_OVERRIDES),
+    ("domain_v2", _NON_CHECKLIST_OVERRIDES),
+    ("world", _NON_CHECKLIST_OVERRIDES),
+    ("checklist", _CHECKLIST_STATIC_OVERRIDES),
+    ("checklist_v2", _CHECKLIST_RUBRIC_V2_OVERRIDES),
+    ("ultimate_v2", _CHECKLIST_RUBRIC_V2_OVERRIDES),
+    ("dynamic_checklist_regenerate", _DYNAMIC_CHECKLIST_REGENERATE_OVERRIDES),
+    (
+        "ultimate_v2_dynamic_checklist_regenerate",
+        _DYNAMIC_CHECKLIST_REGENERATE_RUBRIC_V2_OVERRIDES,
+    ),
+    ("dynamic_checklist_modify", _DYNAMIC_CHECKLIST_MODIFY_OVERRIDES),
+)
+
+
+def _make_reward_verbal_feedback_variants() -> tuple[_VerifierVariantSpec, ...]:
+    variants: list[_VerifierVariantSpec] = []
+    for family, overrides in _REWARD_PROMPT_OVERRIDES_BY_FAMILY:
+        for mode in ("feedback", "reasoning"):
+            variants.append(
+                _VerifierVariantSpec(
+                    name=f"{family}_{mode}_reward",
+                    verifier_type="reward_model",
+                    prompt_name=f"{family}_{mode}/reward",
+                    prompt_dir="prompts/verifier",
+                    config_overrides={**overrides, "verbal_feedback_mode": mode},
+                )
+            )
+    return tuple(variants)
+
+
 _VERIFIER_VARIANTS: tuple[_VerifierVariantSpec, ...] = (
     _VerifierVariantSpec(name="first_valid", verifier_type="first_valid"),
     _VerifierVariantSpec(
@@ -256,6 +290,7 @@ _VERIFIER_VARIANTS: tuple[_VerifierVariantSpec, ...] = (
         prompt_dir="prompts/verifier",
         config_overrides=_DYNAMIC_CHECKLIST_MODIFY_OVERRIDES,
     ),
+    *_make_reward_verbal_feedback_variants(),
 )
 _VERIFIER_VARIANT_BY_NAME = {spec.name: spec for spec in _VERIFIER_VARIANTS}
 

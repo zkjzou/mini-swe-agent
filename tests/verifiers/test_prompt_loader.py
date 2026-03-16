@@ -11,6 +11,43 @@ from minisweagent.verifiers.prompt_loader import (
     apply_prompt_overrides,
 )
 
+_SELECTION_PROMPT_FAMILIES = [
+    "basic",
+    "basic_mini",
+    "checklist",
+    "checklist_v2",
+    "dynamic_checklist_modify",
+    "dynamic_checklist_regenerate",
+    "domain",
+    "domain_v2",
+    "ultimate_v2",
+    "ultimate_v2_dynamic_checklist_regenerate",
+    "world",
+]
+_REWARD_PROMPT_FAMILIES = [
+    "basic",
+    "basic_mini",
+    "checklist",
+    "checklist_v2",
+    "dynamic_checklist_modify",
+    "dynamic_checklist_regenerate",
+    "domain",
+    "domain_v2",
+    "ultimate_v2",
+    "ultimate_v2_dynamic_checklist_regenerate",
+    "world",
+]
+_REWARD_VERBAL_FEEDBACK_VARIANT_PATHS = [
+    f"prompts/verifier/{family}_{mode}/reward/reward.jinja"
+    for family in _REWARD_PROMPT_FAMILIES
+    for mode in ("feedback", "reasoning")
+]
+_CORE_PROMPT_PATHS = [
+    *(f"prompts/verifier/{family}/verifier/selection.jinja" for family in _SELECTION_PROMPT_FAMILIES),
+    *(f"prompts/verifier/{family}/reward/reward.jinja" for family in _REWARD_PROMPT_FAMILIES),
+    *_REWARD_VERBAL_FEEDBACK_VARIANT_PATHS,
+]
+
 
 def test_parse_selection_prompt_file_with_markers():
     content = """[[[SYSTEM_TEMPLATE]]]
@@ -123,24 +160,7 @@ def test_apply_prompt_overrides_llm_single_file_legacy_prompt_only(tmp_path):
 
 @pytest.mark.parametrize(
     "path",
-    [
-        "prompts/verifier/basic/verifier/selection.jinja",
-        "prompts/verifier/basic/reward/reward.jinja",
-        "prompts/verifier/basic_mini/verifier/selection.jinja",
-        "prompts/verifier/basic_mini/reward/reward.jinja",
-        "prompts/verifier/checklist/verifier/selection.jinja",
-        "prompts/verifier/checklist/reward/reward.jinja",
-        "prompts/verifier/checklist_v2/verifier/selection.jinja",
-        "prompts/verifier/checklist_v2/reward/reward.jinja",
-        "prompts/verifier/ultimate_v2/verifier/selection.jinja",
-        "prompts/verifier/ultimate_v2/reward/reward.jinja",
-        "prompts/verifier/ultimate_v2_dynamic_checklist_regenerate/verifier/selection.jinja",
-        "prompts/verifier/ultimate_v2_dynamic_checklist_regenerate/reward/reward.jinja",
-        "prompts/verifier/dynamic_checklist_modify/verifier/selection.jinja",
-        "prompts/verifier/dynamic_checklist_modify/reward/reward.jinja",
-        "prompts/verifier/dynamic_checklist_regenerate/verifier/selection.jinja",
-        "prompts/verifier/dynamic_checklist_regenerate/reward/reward.jinja",
-    ],
+    _CORE_PROMPT_PATHS,
 )
 def test_core_verifier_prompts_keep_task_out_of_system_section(path: str) -> None:
     content = Path(path).read_text()
@@ -163,30 +183,7 @@ def test_core_verifier_prompts_keep_task_out_of_system_section(path: str) -> Non
 
 @pytest.mark.parametrize(
     "path",
-    [
-        "prompts/verifier/basic/verifier/selection.jinja",
-        "prompts/verifier/basic/reward/reward.jinja",
-        "prompts/verifier/basic_mini/verifier/selection.jinja",
-        "prompts/verifier/basic_mini/reward/reward.jinja",
-        "prompts/verifier/checklist/verifier/selection.jinja",
-        "prompts/verifier/checklist/reward/reward.jinja",
-        "prompts/verifier/checklist_v2/verifier/selection.jinja",
-        "prompts/verifier/checklist_v2/reward/reward.jinja",
-        "prompts/verifier/ultimate_v2/verifier/selection.jinja",
-        "prompts/verifier/ultimate_v2/reward/reward.jinja",
-        "prompts/verifier/ultimate_v2_dynamic_checklist_regenerate/verifier/selection.jinja",
-        "prompts/verifier/ultimate_v2_dynamic_checklist_regenerate/reward/reward.jinja",
-        "prompts/verifier/dynamic_checklist_modify/verifier/selection.jinja",
-        "prompts/verifier/dynamic_checklist_modify/reward/reward.jinja",
-        "prompts/verifier/dynamic_checklist_regenerate/verifier/selection.jinja",
-        "prompts/verifier/dynamic_checklist_regenerate/reward/reward.jinja",
-        "prompts/verifier/domain/verifier/selection.jinja",
-        "prompts/verifier/domain/reward/reward.jinja",
-        "prompts/verifier/domain_v2/verifier/selection.jinja",
-        "prompts/verifier/domain_v2/reward/reward.jinja",
-        "prompts/verifier/world/verifier/selection.jinja",
-        "prompts/verifier/world/reward/reward.jinja",
-    ],
+    _CORE_PROMPT_PATHS,
 )
 def test_core_verifier_prompts_do_not_repeat_system_section_verbatim(path: str) -> None:
     content = Path(path).read_text()
@@ -359,3 +356,30 @@ def test_apply_prompt_overrides_loads_builtin_basic_mini_reward_prompt():
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.reward_system_template
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat patch.txt" in updated.reward_prompt_template
     assert "Candidate action:" in updated.reward_prompt_template
+
+
+@pytest.mark.parametrize(
+    ("prompt_name", "expects_feedback"),
+    [
+        ("basic_mini_feedback/reward", True),
+        ("basic_mini_reasoning/reward", False),
+    ],
+)
+def test_apply_prompt_overrides_loads_builtin_reward_verbal_feedback_variants(prompt_name: str, expects_feedback: bool):
+    config = SimpleNamespace(
+        prompt_name=prompt_name,
+        prompt_dir="prompts/verifier",
+        verifier_type="reward_model",
+        reward_system_template="original reward system",
+        reward_prompt_template="original reward prompt",
+        checklist_system_template="original checklist system",
+        checklist_prompt_template="original checklist prompt",
+    )
+
+    updated = apply_prompt_overrides(config)
+
+    assert "evaluate a single candidate next action" in updated.reward_system_template.lower()
+    assert "Task: {{ task }}" in updated.reward_prompt_template
+    assert "Candidate action:" in updated.reward_prompt_template
+    assert "REASONING:" in updated.reward_prompt_template
+    assert ("FEEDBACK:" in updated.reward_prompt_template) is expects_feedback

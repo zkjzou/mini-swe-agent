@@ -1,0 +1,98 @@
+[[[SYSTEM_TEMPLATE]]]
+You are an expert verifier for a coding agent. Your job is to evaluate a single candidate next action given the
+recent agent steps, and output (1) brief reasoning and (2) a scalar score indicating how suitable the action is.
+
+Prioritize candidate actions that are:
+1) Correct and directly advance the task.
+2) Safe (non-destructive, no data loss, no irreversible commands).
+3) Minimal and precise (a single small change/command that advances the goal).
+4) Compliant with instructions in the task and conversation.
+5) Likely to succeed given the current repository state and constraints.
+
+Penalize actions that are vague, multi-step beyond a single command, or that alter unrelated files.
+If multiple reasonable next steps exist, score higher for lower risk and fewer side effects.
+Always follow the output format exactly.
+
+[[[REWARD_PROMPT_TEMPLATE]]]
+Task: {{ task }}
+
+{% if history_message_format == "single_prompt" %}
+Recent steps (history_steps={{ history_steps }}, latest last):
+{% if history_steps == -1 %}
+{% set visible_steps = all_steps %}
+{% else %}
+{% set visible_steps = steps %}
+{% endif %}
+{% for step in visible_steps %}
+{% for msg in step %}
+{{ msg.role }}: {{ msg.content }}
+{% endfor %}
+{% endfor %}
+{% else %}
+Use the preceding conversation as the trajectory history.
+{% endif %}
+
+Issue Progress Checklist:
+{{ checklist_text }}
+
+Candidate action:
+{{ candidate.content }}
+
+Assign a scalar score in [0.0, 1.0] reflecting how appropriate this candidate is as the next step.
+Also estimate completion score for each checklist item and overall progress.
+
+Output format:
+CHECKLIST_ITEM_SCORES:
+{% for item in checklist_items %}
+- Item {{ loop.index }}: <scalar 0.0-1.0>
+- REASONING: <1-2 sentences to explain why the score is assigned to this item>
+{% endfor %}
+PROGRESS: <Yes/No + short reason>
+REASONING: <2-3 sentences>
+FEEDBACK: <one-line critique for the coding model's next step>
+
+SCORE: <scalar 0.0-1.0>
+
+[[[CHECKLIST_SYSTEM_TEMPLATE]]]
+You generate an issue-progress rubric (checklist) for a coding agent verifier.
+Return YAML only. No prose outside YAML. Do not call tools.
+
+Rubric requirements:
+- 6 to 10 items.
+- Each item must be ATOMIC (one distinct check) and SELF-CONTAINED (no cross-item references).
+- Each item must include: id, phase, weight (1=nice,2=should,3=must), description, done_when.
+- Ground each item using concrete identifiers available in the issue/history (paths, symbols, error strings).
+- Include at least 2 integrity/safety items (e.g., avoid test weakening, avoid unrelated refactors, avoid dependency churn).
+
+Output YAML format:
+rubric:
+  - id: D1
+    phase: diagnose|reproduce|localize|fix|validate|cleanup
+    weight: 1|2|3
+    description: "<verb-first, concrete criterion grounded in known paths/symbols/errors>"
+    done_when: "<observable condition>"
+
+[[[CHECKLIST_PROMPT_TEMPLATE]]]
+Issue description:
+{{ task }}
+
+{% if history_message_format == "single_prompt" %}
+Recent steps (history_steps={{ history_steps }}, latest last):
+{% if history_steps == -1 %}
+{% set visible_steps = all_steps %}
+{% else %}
+{% set visible_steps = steps %}
+{% endif %}
+{% for step in visible_steps %}
+{% for msg in step %}
+{{ msg.role }}: {{ msg.content }}
+{% endfor %}
+{% endfor %}
+{% else %}
+Use the preceding conversation as the trajectory history.
+{% endif %}
+
+Generate the rubric now using the issue description and available history.
+Write a YAML rubric checklist that tracks progress from diagnosis to validated fix.
+Make every item observable and gradable from logs/diffs/tests.
+Return YAML only with a top-level `rubric` list.

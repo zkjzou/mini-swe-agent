@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from minisweagent.verifiers.llm import LLMVerifier
+from minisweagent.verifiers.query_utils import query_verifier_text
 from minisweagent.verifiers.reward_model import RewardModelVerifier
 
 
@@ -86,6 +87,17 @@ class _RawResponsesModel:
 
     def _calculate_cost(self, response):
         return {"cost": 0.3}
+
+
+class _RawRetryModel(_RawQueryModel):
+    def __init__(self):
+        super().__init__()
+        self.query_raw_called = False
+
+    def query_raw(self, messages, **kwargs):
+        self.query_raw_called = True
+        prepared_messages = self._prepare_messages_for_api(messages)
+        return self._query(prepared_messages, **kwargs)
 
 
 class _QueryOnlyModel:
@@ -249,6 +261,31 @@ def test_llm_verifier_falls_back_to_query_when_raw_query_path_not_available():
     assert metadata["response_cost"] == 0.7
     assert "FINAL: 2" in metadata["raw_output"]
     assert metadata["scores"] == [0.3, 0.8]
+
+
+def test_query_verifier_text_prefers_query_raw_when_available():
+    model = _RawRetryModel()
+    content, response, response_cost = query_verifier_text(
+        model,
+        [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "Pick one candidate."},
+        ],
+    )
+
+    assert model.query_raw_called is True
+    assert model.query_called is False
+    assert model.prepared_messages == [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "Pick one candidate."},
+    ]
+    assert model.raw_messages == [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "Pick one candidate."},
+    ]
+    assert "FINAL: 2" in content
+    assert "choices" in response
+    assert response_cost == 0.42
 
 
 def test_llm_verifier_can_replay_history_as_multi_turn_chat():

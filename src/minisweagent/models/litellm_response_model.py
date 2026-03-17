@@ -12,7 +12,6 @@ from minisweagent.models.utils.actions_toolcall_response import (
     format_toolcall_observation_messages,
     parse_toolcall_actions_response,
 )
-from minisweagent.models.utils.retry import retry
 
 logger = logging.getLogger("litellm_response_model")
 litellm.callbacks = ["langfuse_otel"]
@@ -49,9 +48,7 @@ class LitellmResponseModel(LitellmModel):
             raise e
 
     def query(self, messages: list[dict[str, str]], **kwargs) -> dict:
-        for attempt in retry(logger=logger, abort_exceptions=self.abort_exceptions):
-            with attempt:
-                response = self._query(self._prepare_messages_for_api(messages), **kwargs)
+        response = self.query_raw(messages, **kwargs)
         cost_output = self._calculate_cost(response)
         GLOBAL_MODEL_STATS.add(cost_output["cost"])
         message = response.model_dump() if hasattr(response, "model_dump") else dict(response)

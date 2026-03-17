@@ -24,6 +24,7 @@ from minisweagent.models.utils.retry import retry
 logger = logging.getLogger("litellm_model")
 #weave.init('weave_litellm_integration')
 DEFAULT_LITELLM_TIMEOUT_SECONDS = 600
+_CLOSED_CLIENT_ERROR_TEXT = "Cannot send a request, as the client has been closed."
 
 
 class LitellmModelConfig(BaseModel):
@@ -82,10 +83,20 @@ class LitellmModel:
         prepared = _reorder_anthropic_thinking_blocks(prepared)
         return set_cache_control(prepared, mode=self.config.set_cache_control)
 
-    def query(self, messages: list[dict[str, str]], **kwargs) -> dict:
+    def query_raw(self, messages: list[dict[str, str]], **kwargs):
+        prepared_messages = self._prepare_messages_for_api(messages)
         for attempt in retry(logger=logger, abort_exceptions=self.abort_exceptions):
             with attempt:
-                response = self._query(self._prepare_messages_for_api(messages), **kwargs)
+                try:
+                    return self._query(prepared_messages, **kwargs)
+                except Exception as exc:
+                    if _contains_closed_client_error(exc):
+                        logger.warning("Detected closed LiteLLM client cache; clearing cached clients before retry.")
+                        _clear_litellm_client_cache()
+                    raise
+
+    def query(self, messages: list[dict[str, str]], **kwargs) -> dict:
+        response = self.query_raw(messages, **kwargs)
         cost_output = self._calculate_cost(response)
         GLOBAL_MODEL_STATS.add(cost_output["cost"])
         message = response.choices[0].message.model_dump()
@@ -150,3 +161,50 @@ class LitellmModel:
                 },
             }
         }
+
+
+def _contains_closed_client_error(error: BaseException) -> bool:
+    for current in _walk_exception_chain(error):
+        parts = [str(current)]
+        message = getattr(current, "message", None)
+        if isinstance(message, str):
+            parts.append(message)
+        if any(_CLOSED_CLIENT_ERROR_TEXT in part for part in parts):
+            return True
+    return False
+
+
+def _walk_exception_chain(error: BaseException):
+    stack: list[BaseException] = [error]
+    seen: set[int] = set()
+    while stack:
+        current = stack.pop()
+        current_id = id(current)
+        if current_id in seen:
+            continue
+        seen.add(current_id)
+        yield current
+        cause = getattr(current, "__cause__", None)
+        if isinstance(cause, BaseException):
+            stack.append(cause)
+        context = getattr(current, "__context__", None)
+        if isinstance(context, BaseException):
+            stack.append(context)
+        nested = getattr(current, "exceptions", None)
+        if isinstance(nested, tuple):
+            stack.extend(exc for exc in nested if isinstance(exc, BaseException))
+
+
+def _clear_litellm_client_cache() -> None:
+    cache = getattr(litellm, "in_memory_llm_clients_cache", None)
+    if cache is not None:
+        for attr_name in ("cache_dict", "ttl_dict", "expiration_heap"):
+            attr = getattr(cache, attr_name, None)
+            if hasattr(attr, "clear"):
+                attr.clear()
+
+    client_session = getattr(litellm, "client_session", None)
+    if client_session is not None:
+        is_closed = bool(getattr(client_session, "is_closed", False) or getattr(client_session, "closed", False))
+        if is_closed:
+            litellm.client_session = None

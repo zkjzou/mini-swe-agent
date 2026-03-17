@@ -10,6 +10,12 @@ _MULTI_TURN_CHAT_HISTORY_FORMAT = "multi_turn_chat"
 
 def query_verifier_text(model: Any, messages: list[dict[str, Any]]) -> tuple[str, dict[str, Any], float]:
     """Query a verifier model for plain-text output without requiring action parsing."""
+    if hasattr(model, "query_raw"):
+        raw_response = model.query_raw(messages)
+        response_cost = _calculate_cost(model, raw_response)
+        GLOBAL_MODEL_STATS.add(response_cost)
+        return _extract_text(raw_response), _serialize_response(raw_response), response_cost
+
     if not hasattr(model, "_query"):
         response = model.query(messages)
         return _extract_text(response), _serialize_response(response), _extract_cost_from_message(response)

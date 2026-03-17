@@ -1,10 +1,12 @@
 import json
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import litellm
 import pytest
+from tenacity import Retrying, retry_if_not_exception_type, stop_after_attempt, wait_none
 
 from minisweagent.models import GLOBAL_MODEL_STATS
 from minisweagent.models.litellm_textbased_model import LitellmTextbasedModel
@@ -124,3 +126,73 @@ def test_litellm_model_cost_validation_zero_cost():
 
             assert "Cost must be > 0.0, got 0.0" in str(exc_info.value)
             assert "MSWEA_COST_TRACKING='ignore_errors'" in str(exc_info.value)
+
+
+def _make_retrying_stub(*, attempts: int, abort_exceptions: list[type[Exception]]) -> Retrying:
+    return Retrying(
+        reraise=True,
+        stop=stop_after_attempt(attempts),
+        wait=wait_none(),
+        retry=retry_if_not_exception_type(tuple(abort_exceptions)),
+    )
+
+
+def _mock_text_completion_response(content: str = "```mswea_bash_command\necho test\n```") -> Mock:
+    mock_response = Mock()
+    mock_message = Mock()
+    mock_message.content = content
+    mock_message.model_dump.return_value = {"role": "assistant", "content": content}
+    mock_response.choices = [Mock(message=mock_message)]
+    mock_response.model_dump.return_value = {"choices": [{"message": {"content": content}}]}
+    return mock_response
+
+
+def test_query_retries_closed_client_error_and_clears_litellm_cache():
+    model = LitellmTextbasedModel(model_name="gpt-4o")
+    cache = SimpleNamespace(cache_dict={"stale": object()}, ttl_dict={"stale": 1.0}, expiration_heap=[(1.0, "stale")])
+    closed_session = SimpleNamespace(is_closed=True)
+    initial_cost = GLOBAL_MODEL_STATS.cost
+    first_error = RuntimeError("Connection error.")
+    first_error.__cause__ = RuntimeError("Cannot send a request, as the client has been closed.")
+
+    with (
+        patch(
+            "minisweagent.models.litellm_model.retry",
+            new=lambda *, logger, abort_exceptions: _make_retrying_stub(attempts=2, abort_exceptions=abort_exceptions),
+        ),
+        patch.object(litellm, "in_memory_llm_clients_cache", cache),
+        patch.object(litellm, "client_session", closed_session),
+        patch("litellm.completion", side_effect=[first_error, _mock_text_completion_response()]) as mock_completion,
+        patch("litellm.cost_calculator.completion_cost", return_value=0.001),
+    ):
+        result = model.query([{"role": "user", "content": "test"}])
+
+        assert result["content"] == "```mswea_bash_command\necho test\n```"
+        assert result["extra"]["actions"] == [{"command": "echo test"}]
+        assert result["extra"]["cost"] == 0.001
+        assert mock_completion.call_count == 2
+        assert cache.cache_dict == {}
+        assert cache.ttl_dict == {}
+        assert cache.expiration_heap == []
+        assert litellm.client_session is None
+        assert GLOBAL_MODEL_STATS.cost == pytest.approx(initial_cost + 0.001)
+
+
+def test_query_raw_leaves_litellm_cache_unchanged_for_non_stale_errors():
+    model = LitellmTextbasedModel(model_name="gpt-4o")
+    cache = SimpleNamespace(cache_dict={"fresh": object()}, ttl_dict={"fresh": 2.0}, expiration_heap=[(2.0, "fresh")])
+
+    with (
+        patch(
+            "minisweagent.models.litellm_model.retry",
+            new=lambda *, logger, abort_exceptions: _make_retrying_stub(attempts=1, abort_exceptions=abort_exceptions),
+        ),
+        patch.object(litellm, "in_memory_llm_clients_cache", cache),
+        patch("litellm.completion", side_effect=RuntimeError("Different transport failure")),
+    ):
+        with pytest.raises(RuntimeError, match="Different transport failure"):
+            model.query_raw([{"role": "user", "content": "test"}])
+
+    assert cache.cache_dict.keys() == {"fresh"}
+    assert cache.ttl_dict.keys() == {"fresh"}
+    assert cache.expiration_heap == [(2.0, "fresh")]

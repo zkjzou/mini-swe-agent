@@ -9,6 +9,7 @@ import json
 import logging
 import random
 import re
+import shlex
 import traceback
 from pathlib import Path
 from typing import Any, Literal
@@ -165,6 +166,10 @@ class VerifierConfig(BaseModel):
     reasoning_regex: str = r"(?m)^REASONING:\s*(.+)"
     verbal_feedback_mode: Literal["feedback", "reasoning"] = "feedback"
     """Whether reward-model verbal output should parse FEEDBACK or top-level REASONING."""
+    verifier_run_policy: Literal["always", "every_n_steps", "editing_commands_only"] = "always"
+    """When to run verifier sampling: every step, on a fixed cadence, or only for editing commands."""
+    verifier_run_every_n_steps: int = Field(default=1, ge=1)
+    """Cadence for verifier_run_policy=every_n_steps. Runs on step 1, then 1+N, 1+2N, etc."""
     fallback: Literal["first_candidate", "first_valid"] = "first_candidate"
     checklist_mode: Literal["off", "issue_progress"] = "off"
     """Whether to generate and use an issue-derived verifier checklist."""
@@ -353,7 +358,7 @@ class DefaultAgent:
     def query(self) -> dict:
         """Query the model and return model messages. Override to add hooks."""
         self._check_limits()
-        responses, candidate_infos = self._sample_candidates()
+        responses, candidate_infos, schedule_gate_output = self._sample_candidates_for_current_step()
         configured_history_steps = self._get_verifier_history_steps()
         include_verifier_thoughts = self._get_verifier_include_thoughts_in_history_steps()
         all_verifier_steps = self._get_verifier_steps(
@@ -386,8 +391,18 @@ class DefaultAgent:
             "candidates": candidate_infos,
             "verifier_output": {},
         }
-        skip_verifier = False
-        if self.verifier and self.config.verifier.skip_if_actions_similar and len(candidate_infos) > 1:
+        skip_verifier = schedule_gate_output is not None
+        if schedule_gate_output is not None:
+            verifier_output = schedule_gate_output
+            verifier_metadata = {
+                "enabled": True,
+                "type": "schedule_gate",
+                "selected_index": selected_index,
+                "selection_index_base": self.config.verifier.selection_index_base,
+                "candidates": candidate_infos,
+                "verifier_output": verifier_output,
+            }
+        if self.verifier and not skip_verifier and self.config.verifier.skip_if_actions_similar and len(candidate_infos) > 1:
             similarity_info = analyze_action_similarity(
                 candidate_infos,
                 threshold=self.config.verifier.action_similarity_threshold,
@@ -491,11 +506,18 @@ class DefaultAgent:
             return RewardModelVerifier(verifier_model, verifier_config)
         raise ValueError(f"Unknown verifier_type: {verifier_config.verifier_type}")
 
-    def _sample_candidates(self) -> tuple[list[dict], list[dict[str, Any]]]:
+    def _sample_candidates(
+        self,
+        *,
+        num_candidates_override: int | None = None,
+        force_disable_use_n: bool = False,
+        allow_pairing: bool = True,
+    ) -> tuple[list[dict], list[dict[str, Any]]]:
         sampling_config = self.config.candidate_sampling
-        num_candidates = max(1, sampling_config.num_candidates)
+        requested_candidates = sampling_config.num_candidates if num_candidates_override is None else num_candidates_override
+        num_candidates = max(1, requested_candidates)
         responses: list[dict] = []
-        if sampling_config.pair_thoughts_with_toolcalls:
+        if sampling_config.pair_thoughts_with_toolcalls and allow_pairing and num_candidates > 1:
             query_kwargs = dict(sampling_config.sampling_kwargs)
             query_kwargs.pop("n", None)
             paired_response = self._query_once(**query_kwargs)
@@ -509,7 +531,7 @@ class DefaultAgent:
         if num_candidates == 1:
             responses = [self._query_once(**sampling_config.sampling_kwargs)]
         else:
-            if sampling_config.use_n:
+            if sampling_config.use_n and not force_disable_use_n:
                 batched_response = None
                 try:
                     batched_response = self._query_once(n=num_candidates, **sampling_config.sampling_kwargs)
@@ -527,6 +549,117 @@ class DefaultAgent:
 
         candidate_infos = [self._build_candidate_info(response, idx) for idx, response in enumerate(responses)]
         return responses, candidate_infos
+
+    def _sample_candidates_for_current_step(self) -> tuple[list[dict], list[dict[str, Any]], dict[str, Any] | None]:
+        if not self.verifier:
+            responses, candidate_infos = self._sample_candidates()
+            return responses, candidate_infos, None
+
+        run_policy = self._get_verifier_run_policy()
+        if run_policy == "always":
+            responses, candidate_infos = self._sample_candidates()
+            return responses, candidate_infos, None
+
+        if run_policy == "every_n_steps":
+            if self._should_run_verifier_on_current_step():
+                responses, candidate_infos = self._sample_candidates()
+                return responses, candidate_infos, None
+            responses, candidate_infos = self._sample_candidates(num_candidates_override=1, allow_pairing=False)
+            return responses, candidate_infos, self._make_schedule_gate_output(
+                skip_reason="frequency_gate",
+                candidate_infos=candidate_infos,
+            )
+
+        responses, candidate_infos = self._sample_candidates(num_candidates_override=1, allow_pairing=False)
+        first_command = candidate_infos[0].get("action") if candidate_infos else None
+        if not self._is_editing_command(first_command):
+            return responses, candidate_infos, self._make_schedule_gate_output(
+                skip_reason="non_editing_action",
+                candidate_infos=candidate_infos,
+            )
+
+        remaining_candidates = max(0, self.config.candidate_sampling.num_candidates - len(responses))
+        if remaining_candidates == 0:
+            return responses, candidate_infos, None
+
+        extra_responses, extra_candidate_infos = self._sample_candidates(
+            num_candidates_override=remaining_candidates,
+            force_disable_use_n=True,
+            allow_pairing=False,
+        )
+        start_index = len(candidate_infos)
+        for offset, info in enumerate(extra_candidate_infos):
+            info["index"] = start_index + offset
+        responses.extend(extra_responses)
+        candidate_infos.extend(extra_candidate_infos)
+        return responses, candidate_infos, None
+
+    def _get_verifier_run_policy(self) -> Literal["always", "every_n_steps", "editing_commands_only"]:
+        verifier_config = self._get_checklist_config()
+        return verifier_config.verifier_run_policy
+
+    def _should_run_verifier_on_current_step(self) -> bool:
+        verifier_config = self._get_checklist_config()
+        if verifier_config.verifier_run_policy == "always":
+            return True
+        if verifier_config.verifier_run_policy != "every_n_steps":
+            return False
+        return self.step_count % verifier_config.verifier_run_every_n_steps == 0
+
+    def _make_schedule_gate_output(
+        self,
+        *,
+        skip_reason: Literal["frequency_gate", "non_editing_action"],
+        candidate_infos: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        first_action = candidate_infos[0].get("action") if candidate_infos else None
+        output = {
+            "skipped": True,
+            "skip_reason": skip_reason,
+            "verifier_run_policy": self._get_verifier_run_policy(),
+            "verifier_run_every_n_steps": self._get_checklist_config().verifier_run_every_n_steps,
+            "step_number": self.step_count + 1,
+            "sampled_candidate_count": len(candidate_infos),
+            "candidate_action": first_action,
+        }
+        if skip_reason == "non_editing_action":
+            output["candidate_is_editing"] = False
+        return output
+
+    def _is_editing_command(self, command: str | None) -> bool:
+        if not isinstance(command, str):
+            return False
+        normalized = command.strip()
+        if not normalized:
+            return False
+        lowered = normalized.lower()
+
+        if "apply_patch" in normalized:
+            return True
+        if re.search(r"(^|[;&|]\s*|\s)(sed|gsed)\s+-i(?:\s|$)", lowered):
+            return True
+        if re.search(r"(^|[;&|]\s*|\s)perl\s+-pi(?:\s|$)", lowered):
+            return True
+        if re.search(r"(^|[;&|]\s*|\s)git\s+apply(?:\s|$)", lowered):
+            return True
+        if re.search(r"(^|[;&|]\s*|\s)(tee|touch|mkdir|rmdir|mv|cp|rm|ln|install)\b", lowered):
+            return True
+        if re.search(r"(^|[;&|]\s*|\s)(echo|printf|cat)\b", lowered) and re.search(r"(>>?|<<)\s*['\"]?[\w./-]+", normalized):
+            return True
+        if re.search(r"(?:^|[;&|]\s*)(?:python|python3)\s+[^\n;&|]*\.py\b", lowered):
+            return True
+        if re.search(r"(?:^|[;&|]\s*)uv\s+run\s+(?:python|python3)\s+[^\n;&|]*\.py\b", lowered):
+            return True
+        if re.search(r"(?:^|[;&|]\s*)(?:bash|sh|node)\s+[^\n;&|]+", lowered):
+            return True
+
+        try:
+            tokens = shlex.split(normalized)
+        except ValueError:
+            tokens = []
+        if any(token in {">", ">>"} for token in tokens):
+            return True
+        return False
 
     def _split_paired_toolcall_response(self, response: dict, *, num_candidates: int) -> list[dict]:
         extra = response.get("extra", {}) or {}

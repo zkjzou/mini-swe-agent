@@ -194,6 +194,8 @@ agent:
     verifier_type: llm
     prompt_name: ""
     history_steps: -1
+    verifier_run_policy: always
+    verifier_run_every_n_steps: 1
     selection_regex: '(\d+)'
     selection_index_base: 1
     reward_regex: 'FINAL:\s*([01](?:\.\d+)?)'

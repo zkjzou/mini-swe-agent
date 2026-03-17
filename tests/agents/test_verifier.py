@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from minisweagent.agents.default import DefaultAgent
 from minisweagent.environments.local import LocalEnvironment
@@ -255,6 +256,182 @@ def test_similarity_gate_skips_verifier_and_random_samples():
     assert "checklist" not in verifier_output
     assert agent.verifier_cost == 0.0
     assert agent.verifier.model.current_index == -1
+
+
+def test_every_n_steps_runs_verifier_on_step_one_then_cadence():
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "verifier_run_policy": "every_n_steps",
+        "verifier_run_every_n_steps": 2,
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [
+                make_output("REASONING: pick 2\nFINAL: 2", []),
+                make_output("REASONING: pick 1\nFINAL: 1", []),
+            ],
+        },
+    }
+
+    model = DeterministicModel(
+        outputs=[
+            make_output("Step 1 candidate 1", [{"command": "echo step-1-a"}]),
+            make_output("Step 1 candidate 2", [{"command": "echo step-1-b"}]),
+            make_output("Step 2 candidate 1", [{"command": "echo step-2-a"}]),
+            make_output("Step 3 candidate 1", [{"command": "echo step-3-a"}]),
+            make_output("Step 3 candidate 2", [{"command": "echo step-3-b"}]),
+        ]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    agent.step()
+    agent.step()
+    agent.step()
+
+    assistant_messages = [msg for msg in agent.messages if msg.get("role") == "assistant"]
+    assert len(assistant_messages) == 3
+
+    first_verifier = assistant_messages[0]["extra"]["verifier"]
+    second_verifier = assistant_messages[1]["extra"]["verifier"]
+    third_verifier = assistant_messages[2]["extra"]["verifier"]
+
+    assert first_verifier["type"] == "llm"
+    assert first_verifier["selected_index"] == 1
+    assert second_verifier["type"] == "schedule_gate"
+    assert second_verifier["verifier_output"]["skip_reason"] == "frequency_gate"
+    assert second_verifier["verifier_output"]["sampled_candidate_count"] == 1
+    assert third_verifier["type"] == "llm"
+    assert third_verifier["selected_index"] == 0
+    assert agent.n_calls == 5
+    assert agent.verifier.model.current_index == 1
+
+
+def test_editing_command_policy_skips_read_only_commands_without_extra_sampling():
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "verifier_run_policy": "editing_commands_only",
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("REASONING: unreachable\nFINAL: 1", [])],
+        },
+    }
+
+    model = DeterministicModel(
+        outputs=[
+            make_output("Candidate 1", [{"command": "rg verifier src/minisweagent"}]),
+            make_output("Candidate 2", [{"command": "echo should-not-be-sampled"}]),
+        ]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    response = agent.query()
+
+    verifier = response["extra"]["verifier"]
+    assert verifier["type"] == "schedule_gate"
+    assert verifier["verifier_output"]["skip_reason"] == "non_editing_action"
+    assert verifier["verifier_output"]["candidate_action"] == "rg verifier src/minisweagent"
+    assert verifier["verifier_output"]["sampled_candidate_count"] == 1
+    assert agent.n_calls == 1
+    assert agent.verifier.model.current_index == -1
+
+
+def test_editing_command_policy_expands_candidates_for_direct_file_edits():
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "verifier_run_policy": "editing_commands_only",
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("REASONING: prefer second\nFINAL: 2", [])],
+        },
+    }
+
+    model = DeterministicModel(
+        outputs=[
+            make_output("Candidate 1", [{"command": "sed -i 's/old/new/' src/app.py"}]),
+            make_output("Candidate 2", [{"command": "echo validate"}]),
+        ]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    response = agent.query()
+
+    verifier = response["extra"]["verifier"]
+    assert verifier["type"] == "llm"
+    assert verifier["selected_index"] == 1
+    assert len(verifier["candidates"]) == 2
+    assert agent.n_calls == 2
+    assert agent.verifier.model.current_index == 0
+
+
+def test_editing_command_policy_treats_python_scripts_as_editing_commands():
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "verifier_run_policy": "editing_commands_only",
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("REASONING: pick 1\nFINAL: 1", [])],
+        },
+    }
+
+    model = DeterministicModel(
+        outputs=[
+            make_output("Candidate 1", [{"command": "python scripts/rewrite_verifier.py"}]),
+            make_output("Candidate 2", [{"command": "rg verifier src/minisweagent"}]),
+        ]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    response = agent.query()
+
+    verifier = response["extra"]["verifier"]
+    assert verifier["type"] == "llm"
+    assert len(verifier["candidates"]) == 2
+    assert agent.n_calls == 2
+    assert agent.verifier.model.current_index == 0
+
+
+def test_verifier_rejects_non_positive_every_n_steps():
+    config = _load_default_agent_config()
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "verifier_run_policy": "every_n_steps",
+        "verifier_run_every_n_steps": 0,
+    }
+
+    with pytest.raises(ValidationError):
+        DefaultAgent(
+            model=DeterministicModel(outputs=[make_output("Candidate", [{"command": "echo hi"}])]),
+            env=LocalEnvironment(),
+            **config,
+        )
 
 
 def test_checklist_mode_generates_once_and_reuses_across_queries():

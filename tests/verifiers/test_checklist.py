@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from minisweagent.verifiers.checklist import (
     dedupe_checklist_items,
     generate_issue_checklist,
+    infer_checklist_prompt_settings,
     normalize_checklist_items,
     parse_checklist_items,
     parse_checklist_rubric,
@@ -85,6 +86,24 @@ def test_resolve_checklist_output_format_autodetects_dynamic_ultimate_v2():
         checklist_output_format="auto",
     )
     assert resolve_checklist_output_format(config) == "rubric_yaml"
+
+
+def test_resolve_checklist_output_format_autodetects_ultimate_v2_mini():
+    config = SimpleNamespace(prompt_name="ultimate_v2_mini/verifier", checklist_output_format="auto")
+    assert resolve_checklist_output_format(config) == "rubric_yaml"
+
+
+def test_infer_checklist_prompt_settings_enables_ultimate_v2_variants():
+    assert infer_checklist_prompt_settings("ultimate_v2/verifier") == {
+        "checklist_mode": "issue_progress",
+        "checklist_dynamic": False,
+        "checklist_update_mode": "regenerate",
+    }
+    assert infer_checklist_prompt_settings("ultimate_v2_mini/reward") == {
+        "checklist_mode": "issue_progress",
+        "checklist_dynamic": False,
+        "checklist_update_mode": "regenerate",
+    }
 
 
 def test_generate_issue_checklist_uses_model_query_and_parses_items():

@@ -31,6 +31,7 @@ def resolve_checklist_output_format(config: Any) -> str:
     if isinstance(prompt_name, str) and (
         prompt_name.startswith("checklist_v2/")
         or prompt_name.startswith("ultimate_v2/")
+        or prompt_name.startswith("ultimate_v2_mini/")
         or prompt_name.startswith("ultimate_v2_dynamic_checklist_regenerate/")
     ):
         return "rubric_yaml"
@@ -61,7 +62,12 @@ def infer_checklist_prompt_settings(prompt_name: str | None) -> dict[str, Any] |
             "checklist_dynamic": True,
             "checklist_update_mode": "regenerate",
         }
-    if name.startswith("checklist/") or name.startswith("checklist_v2/"):
+    if (
+        name.startswith("checklist/")
+        or name.startswith("checklist_v2/")
+        or name.startswith("ultimate_v2/")
+        or name.startswith("ultimate_v2_mini/")
+    ):
         return {
             "checklist_mode": "issue_progress",
             "checklist_dynamic": False,

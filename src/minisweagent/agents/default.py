@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from jinja2 import StrictUndefined, Template
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from minisweagent import Environment, Model, __version__
 from minisweagent.exceptions import FormatError, InterruptAgentFlow, LimitsExceeded
@@ -166,6 +166,12 @@ class VerifierConfig(BaseModel):
     reasoning_regex: str = r"(?m)^REASONING:\s*(.+)"
     verbal_feedback_mode: Literal["feedback", "reasoning"] = "feedback"
     """Whether reward-model verbal output should parse FEEDBACK or top-level REASONING."""
+    reward_resample_below_threshold_enabled: bool = False
+    """If True, expand candidate sampling when reward-model scores are below a configured threshold."""
+    reward_resample_threshold: float = 0.0
+    """Trigger reward-model resampling when the best initial reward is strictly below this threshold."""
+    reward_resample_max_candidates: int | None = Field(default=None, ge=1)
+    """Maximum total candidate count after reward-model threshold-triggered resampling."""
     verifier_run_policy: Literal["always", "every_n_steps", "editing_commands_only"] = "always"
     """When to run verifier sampling: every step, on a fixed cadence, or only for editing commands."""
     verifier_run_every_n_steps: int = Field(default=1, ge=1)
@@ -248,6 +254,25 @@ class AgentConfig(BaseModel):
     """Whether to append format-error feedback messages to the conversation history."""
     candidate_sampling: CandidateSamplingConfig = Field(default_factory=CandidateSamplingConfig)
     verifier: VerifierConfig = Field(default_factory=VerifierConfig)
+
+    @model_validator(mode="after")
+    def _validate_reward_resample_config(self) -> "AgentConfig":
+        verifier = self.verifier
+        if verifier.verifier_type != "reward_model" or not verifier.reward_resample_below_threshold_enabled:
+            return self
+
+        if verifier.reward_resample_max_candidates is None:
+            raise ValueError(
+                "agent.verifier.reward_resample_max_candidates must be set when "
+                "reward_resample_below_threshold_enabled=true for reward_model."
+            )
+
+        if verifier.reward_resample_max_candidates < self.candidate_sampling.num_candidates:
+            raise ValueError(
+                "agent.verifier.reward_resample_max_candidates must be greater than or equal to "
+                "agent.candidate_sampling.num_candidates."
+            )
+        return self
 
 
 class DefaultAgent:
@@ -436,6 +461,15 @@ class DefaultAgent:
                     task=verifier_vars["task"],
                     messages=verifier_messages,
                     steps=verifier_steps,
+                )
+                responses, candidate_infos, selected_index, verifier_output = self._maybe_resample_reward_candidates(
+                    responses=responses,
+                    candidate_infos=candidate_infos,
+                    selected_index=selected_index,
+                    verifier_output=verifier_output,
+                    verifier_vars=verifier_vars,
+                    verifier_messages=verifier_messages,
+                    verifier_steps=verifier_steps,
                 )
             else:
                 selected_index, verifier_output = self.verifier.select(
@@ -626,6 +660,85 @@ class DefaultAgent:
             output["candidate_is_editing"] = False
         return output
 
+    def _maybe_resample_reward_candidates(
+        self,
+        *,
+        responses: list[dict],
+        candidate_infos: list[dict[str, Any]],
+        selected_index: int,
+        verifier_output: dict[str, Any],
+        verifier_vars: dict[str, Any],
+        verifier_messages: list[dict[str, Any]],
+        verifier_steps: list[list[dict[str, Any]]],
+    ) -> tuple[list[dict], list[dict[str, Any]], int, dict[str, Any]]:
+        verifier_config = self._get_checklist_config()
+        if (
+            verifier_config.verifier_type != "reward_model"
+            or not verifier_config.reward_resample_below_threshold_enabled
+            or verifier_config.reward_resample_max_candidates is None
+        ):
+            return responses, candidate_infos, selected_index, verifier_output
+
+        initial_best_reward = self._get_best_reward(verifier_output)
+        initial_candidate_count = len(candidate_infos)
+        threshold = verifier_config.reward_resample_threshold
+        max_candidates = verifier_config.reward_resample_max_candidates
+        should_resample = (
+            initial_best_reward is not None
+            and initial_best_reward < threshold
+            and initial_candidate_count < max_candidates
+        )
+
+        if not should_resample:
+            verifier_output = dict(verifier_output)
+            verifier_output["threshold_resampling"] = {
+                "enabled": True,
+                "triggered": False,
+                "threshold": threshold,
+                "initial_best_reward": initial_best_reward,
+                "initial_candidate_count": initial_candidate_count,
+                "final_candidate_count": initial_candidate_count,
+            }
+            return responses, candidate_infos, selected_index, verifier_output
+
+        additional_candidates = max_candidates - initial_candidate_count
+        extra_responses, extra_candidate_infos = self._sample_candidates(
+            num_candidates_override=additional_candidates,
+        )
+        start_index = len(candidate_infos)
+        for offset, info in enumerate(extra_candidate_infos):
+            info["index"] = start_index + offset
+        merged_responses = [*responses, *extra_responses]
+        merged_candidate_infos = [*candidate_infos, *extra_candidate_infos]
+
+        final_selected_index, final_verifier_output = self.verifier.select(
+            candidates=merged_candidate_infos,
+            template_vars=verifier_vars,
+            task=verifier_vars["task"],
+            messages=verifier_messages,
+            steps=verifier_steps,
+        )
+        final_verifier_output = dict(final_verifier_output)
+
+        initial_verifier_cost = self._sum_verifier_response_costs(verifier_output)
+        if initial_verifier_cost > 0.0:
+            final_verifier_output["cost"] = initial_verifier_cost
+        final_verifier_output["api_calls"] = self._safe_int(verifier_output.get("api_calls")) + self._safe_int(
+            final_verifier_output.get("api_calls")
+        )
+        final_verifier_output["threshold_resampling"] = {
+            "enabled": True,
+            "triggered": True,
+            "threshold": threshold,
+            "initial_best_reward": initial_best_reward,
+            "initial_candidate_count": initial_candidate_count,
+            "final_candidate_count": len(merged_candidate_infos),
+            "added_candidate_count": len(extra_candidate_infos),
+            "initial_selected_index": selected_index,
+            "initial_selected_reward": verifier_output.get("selected_reward"),
+        }
+        return merged_responses, merged_candidate_infos, final_selected_index, final_verifier_output
+
     def _is_editing_command(self, command: str | None) -> bool:
         if not isinstance(command, str):
             return False
@@ -660,6 +773,39 @@ class DefaultAgent:
         if any(token in {">", ">>"} for token in tokens):
             return True
         return False
+
+    def _get_best_reward(self, verifier_output: dict[str, Any]) -> float | None:
+        rewards = verifier_output.get("rewards")
+        if not isinstance(rewards, list):
+            return None
+        numeric_rewards: list[float] = []
+        for reward in rewards:
+            try:
+                if reward is not None:
+                    numeric_rewards.append(float(reward))
+            except (TypeError, ValueError):
+                continue
+        if not numeric_rewards:
+            return None
+        return max(numeric_rewards)
+
+    def _sum_verifier_response_costs(self, verifier_output: dict[str, Any]) -> float:
+        response_costs = verifier_output.get("response_costs")
+        if not isinstance(response_costs, list):
+            return 0.0
+        total = 0.0
+        for cost in response_costs:
+            try:
+                total += float(cost or 0.0)
+            except (TypeError, ValueError):
+                continue
+        return total
+
+    def _safe_int(self, value: Any) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def _split_paired_toolcall_response(self, response: dict, *, num_candidates: int) -> list[dict]:
         extra = response.get("extra", {}) or {}

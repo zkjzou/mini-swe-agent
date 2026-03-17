@@ -1,7 +1,9 @@
 import copy
 from pathlib import Path
 
+import pytest
 import yaml
+from pydantic import ValidationError
 
 from minisweagent.agents.default import DefaultAgent
 from minisweagent.environments.local import LocalEnvironment
@@ -73,6 +75,193 @@ def test_reward_model_selects_highest_reward():
     assert verifier_output.get("selected_feedback") == "Prefer the more targeted command."
     assert verifier_output.get("selected_reward") == 0.9
     assert verifier_output.get("api_calls") == 2
+
+
+def test_reward_model_resamples_candidates_below_threshold_and_picks_best_expanded_action():
+    class _ThresholdRewardModel:
+        def query(self, messages, **kwargs):
+            prompt = messages[-1].get("content", "")
+            if "Option 4" in prompt:
+                return {"role": "assistant", "content": "FEEDBACK: Best option.\nREWARD: 0.95", "extra": {"cost": 0.1}}
+            if "Option 3" in prompt:
+                return {"role": "assistant", "content": "FEEDBACK: Good option.\nREWARD: 0.8", "extra": {"cost": 0.1}}
+            if "Option 2" in prompt:
+                return {"role": "assistant", "content": "FEEDBACK: Still weak.\nREWARD: 0.3", "extra": {"cost": 0.1}}
+            return {"role": "assistant", "content": "FEEDBACK: Too weak.\nREWARD: 0.2", "extra": {"cost": 0.1}}
+
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "reward_model",
+        "reward_regex": r"REWARD:\s*([+-]?\d+(?:\.\d+)?)",
+        "reward_resample_below_threshold_enabled": True,
+        "reward_resample_threshold": 0.5,
+        "reward_resample_max_candidates": 4,
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("REWARD: 0.0", [])],
+        },
+    }
+
+    model = DeterministicModel(
+        outputs=[
+            make_output("Option 1", [{"command": "echo first"}]),
+            make_output("Option 2", [{"command": "echo second"}]),
+            make_output("Option 3", [{"command": "echo third"}]),
+            make_output("Option 4", [{"command": "echo fourth"}]),
+        ]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    agent.verifier.model = _ThresholdRewardModel()
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    response = agent.query()
+
+    verifier = response.get("extra", {}).get("verifier", {})
+    verifier_output = verifier.get("verifier_output", {})
+    threshold_resampling = verifier_output.get("threshold_resampling", {})
+
+    assert "Option 4" in response.get("content", "")
+    assert verifier.get("selected_index") == 3
+    assert len(verifier.get("candidates", [])) == 4
+    assert verifier_output.get("selected_reward") == 0.95
+    assert verifier_output.get("api_calls") == 6
+    assert threshold_resampling == {
+        "enabled": True,
+        "triggered": True,
+        "threshold": 0.5,
+        "initial_best_reward": 0.3,
+        "initial_candidate_count": 2,
+        "final_candidate_count": 4,
+        "added_candidate_count": 2,
+        "initial_selected_index": 1,
+        "initial_selected_reward": 0.3,
+    }
+    assert abs(agent.verifier_cost - 0.6) < 1e-9
+    assert agent.n_calls == 4
+
+
+def test_reward_model_does_not_resample_candidates_when_initial_reward_meets_threshold():
+    class _ThresholdRewardModel:
+        def query(self, messages, **kwargs):
+            prompt = messages[-1].get("content", "")
+            if "Option 2" in prompt:
+                return {"role": "assistant", "content": "FEEDBACK: Good enough.\nREWARD: 0.7", "extra": {"cost": 0.1}}
+            return {"role": "assistant", "content": "FEEDBACK: Weak.\nREWARD: 0.2", "extra": {"cost": 0.1}}
+
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "reward_model",
+        "reward_regex": r"REWARD:\s*([+-]?\d+(?:\.\d+)?)",
+        "reward_resample_below_threshold_enabled": True,
+        "reward_resample_threshold": 0.5,
+        "reward_resample_max_candidates": 4,
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("REWARD: 0.0", [])],
+        },
+    }
+
+    model = DeterministicModel(
+        outputs=[
+            make_output("Option 1", [{"command": "echo first"}]),
+            make_output("Option 2", [{"command": "echo second"}]),
+            make_output("Option 3", [{"command": "echo third"}]),
+        ]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    agent.verifier.model = _ThresholdRewardModel()
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    response = agent.query()
+
+    verifier_output = response.get("extra", {}).get("verifier", {}).get("verifier_output", {})
+    threshold_resampling = verifier_output.get("threshold_resampling", {})
+    assert "Option 2" in response.get("content", "")
+    assert threshold_resampling == {
+        "enabled": True,
+        "triggered": False,
+        "threshold": 0.5,
+        "initial_best_reward": 0.7,
+        "initial_candidate_count": 2,
+        "final_candidate_count": 2,
+    }
+    assert verifier_output.get("api_calls") == 2
+    assert abs(agent.verifier_cost - 0.2) < 1e-9
+    assert agent.n_calls == 2
+
+
+def test_reward_model_schedule_gate_skips_threshold_resampling_on_non_verifier_steps():
+    class _LowScoreRewardModel:
+        def query(self, messages, **kwargs):
+            return {"role": "assistant", "content": "FEEDBACK: Weak.\nREWARD: 0.1", "extra": {"cost": 0.1}}
+
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "reward_model",
+        "reward_regex": r"REWARD:\s*([+-]?\d+(?:\.\d+)?)",
+        "verifier_run_policy": "every_n_steps",
+        "verifier_run_every_n_steps": 2,
+        "reward_resample_below_threshold_enabled": True,
+        "reward_resample_threshold": 0.5,
+        "reward_resample_max_candidates": 3,
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [make_output("REWARD: 0.0", [])],
+        },
+    }
+
+    model = DeterministicModel(
+        outputs=[
+            make_output("Step 1 option 1", [{"command": "echo one"}]),
+            make_output("Step 1 option 2", [{"command": "echo two"}]),
+            make_output("Step 1 option 3", [{"command": "echo three"}]),
+            make_output("Step 2 option 1", [{"command": "echo four"}]),
+        ]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    agent.verifier.model = _LowScoreRewardModel()
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    agent.step()
+    agent.step()
+
+    assistant_messages = [msg for msg in agent.messages if msg.get("role") == "assistant"]
+    first_verifier_output = assistant_messages[0].get("extra", {}).get("verifier", {}).get("verifier_output", {})
+    second_verifier = assistant_messages[1].get("extra", {}).get("verifier", {})
+
+    assert first_verifier_output.get("threshold_resampling", {}).get("triggered") is True
+    assert second_verifier.get("type") == "schedule_gate"
+    assert second_verifier.get("verifier_output", {}).get("skip_reason") == "frequency_gate"
+    assert "threshold_resampling" not in second_verifier.get("verifier_output", {})
+    assert agent.n_calls == 4
+
+
+def test_reward_model_resample_config_rejects_max_candidates_below_initial_pool():
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 3, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "reward_model",
+        "reward_resample_below_threshold_enabled": True,
+        "reward_resample_threshold": 0.5,
+        "reward_resample_max_candidates": 2,
+    }
+
+    with pytest.raises(ValidationError):
+        DefaultAgent(
+            model=DeterministicModel(outputs=[make_output("Candidate", [{"command": "echo hi"}])]),
+            env=LocalEnvironment(),
+            **config,
+        )
 
 
 def test_reward_model_prompt_only_requests_feedback_when_enabled():

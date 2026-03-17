@@ -2,6 +2,9 @@ agent:
   verifier:
     enabled: false
     verifier_type: reward_model
+    reward_resample_below_threshold_enabled: false
+    reward_resample_threshold: 0.0
+    reward_resample_max_candidates:
     reward_system_template: |
       You are an expert verifier for a coding agent. Your job is to evaluate a single candidate next action given the recent agent steps, and output (1) brief reasoning and (2) a scalar score indicating how suitable the action is to execute next.
 

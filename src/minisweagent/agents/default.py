@@ -22,6 +22,7 @@ from minisweagent.exceptions import FormatError, InterruptAgentFlow, LimitsExcee
 from minisweagent.models import get_model
 from minisweagent.models.utils.actions_text import parse_regex_actions
 from minisweagent.models.utils.content_string import get_content_string
+from minisweagent.models.utils.think_tags import strip_think_tags
 from minisweagent.utils.serialize import recursive_merge
 from minisweagent.verifiers.first_valid import FirstValidVerifier
 from minisweagent.verifiers.llm import LLMVerifier
@@ -841,7 +842,8 @@ class DefaultAgent:
         candidates: list[dict] = []
         for idx, (thought, action) in enumerate(zip(thought_sections, actions)):
             candidate = copy.deepcopy(response)
-            candidate["content"] = f"THOUGHTS:\n{thought}"
+            sanitized_thought = strip_think_tags(thought)
+            candidate["content"] = f"THOUGHTS:\n{sanitized_thought}"
 
             tool_call_id = action.get("tool_call_id")
             if isinstance(tool_call_id, str) and tool_call_id in tool_calls_by_id:
@@ -853,7 +855,7 @@ class DefaultAgent:
             candidate_extra = dict(candidate.get("extra", {}) or {})
             candidate_extra["actions"] = [copy.deepcopy(action)]
             candidate_extra["paired_candidate_index"] = idx
-            candidate_extra["paired_thought"] = thought
+            candidate_extra["paired_thought"] = sanitized_thought
             candidate["extra"] = candidate_extra
             candidates.append(candidate)
         return candidates
@@ -1182,7 +1184,7 @@ class DefaultAgent:
         first_action = actions[0]["command"] if actions else None
         candidate_info = {
             "index": index,
-            "content": get_content_string(response),
+            "content": strip_think_tags(get_content_string(response)),
             "action": first_action,
             "actions": actions,
             "n_actions": len(actions),

@@ -18,6 +18,7 @@ from minisweagent.agents.default import (
 from minisweagent.config import get_config_from_spec
 from minisweagent.models import get_model
 from minisweagent.models.utils.content_string import get_content_string
+from minisweagent.models.utils.think_tags import strip_think_tags
 from minisweagent.run.benchmarks.swebench import DEFAULT_CONFIG_FILE, _resolve_profiled_model_config
 from minisweagent.utils.langfuse import (
     attach_langfuse_session_metadata,
@@ -609,7 +610,7 @@ def _build_candidate(action_entry: dict[str, Any], index: int) -> dict[str, Any]
 
     candidate = {
         "index": index,
-        "content": response_text or command or "(empty candidate)",
+        "content": strip_think_tags(response_text or command or "(empty candidate)"),
         "action": command or None,
         "actions": [action_payload] if action_payload else [],
         "n_actions": 1 if action_payload else 0,

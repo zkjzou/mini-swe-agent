@@ -871,6 +871,42 @@ def test_evaluate_verifier_action_selection_can_use_multi_turn_verifier_history(
     assert "Task: Fix the failing parser test." in messages[-1]["content"]
 
 
+def test_evaluate_verifier_action_selection_strips_think_blocks_from_candidate_inputs(tmp_path, monkeypatch):
+    input_jsonl = tmp_path / "merged.jsonl"
+    output_jsonl = tmp_path / "eval_rows.jsonl"
+    row = _make_row()
+    row["actions"][0]["model_response"]["content"] = "<think>internal reasoning</think>\n\nTHOUGHT: keep this"
+    _write_jsonl(input_jsonl, [row])
+
+    monkeypatch.setattr(
+        "minisweagent.utils.verifier_action_evaluation.get_model",
+        lambda *args, **kwargs: _VariantAwareModel(),
+    )
+
+    evaluate_verifier_action_selection(
+        input_jsonl=input_jsonl,
+        output_jsonl=output_jsonl,
+        config_specs=[
+            "swebench.yaml",
+            'agent.verifier.model.model_name="fake/verifier"',
+            'agent.verifier.model.model_class="deterministic"',
+            "agent.verifier.include_inputs_in_output=true",
+        ],
+        verifier_variants=["basic_verifier"],
+        strict_five_actions=True,
+        show_progress=False,
+        max_workers=1,
+        overwrite=True,
+    )
+
+    row = json.loads(output_jsonl.read_text().splitlines()[0])
+    messages = row["verifier_output"]["input"]["messages"]
+    prompt_text = "\n".join(message["content"] for message in messages if isinstance(message.get("content"), str))
+    assert "THOUGHT: keep this" in prompt_text
+    assert "internal reasoning" not in prompt_text
+    assert "<think>" not in prompt_text
+
+
 @pytest.mark.parametrize("variant_name", ["world_reward", "world_mini_reward"])
 def test_world_reward_prompt_includes_task_in_captured_input(tmp_path, monkeypatch, variant_name: str):
     input_jsonl = tmp_path / "merged.jsonl"

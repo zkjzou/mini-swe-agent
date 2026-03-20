@@ -878,6 +878,48 @@ def test_verifier_history_can_optionally_exclude_assistant_content(include_thoug
         assert "assistant=" in prompt
 
 
+def test_verifier_candidate_content_strips_think_blocks():
+    class _CaptureVerifierModel:
+        def __init__(self):
+            self.messages = None
+
+        def query(self, messages, **kwargs):
+            self.messages = messages
+            return {"role": "assistant", "content": "FINAL: 1", "extra": {"cost": 0.0}}
+
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "history_steps": -1,
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "system_template": "Verifier system",
+        "selection_template": "{% for c in candidates %}Candidate {{ c.index + selection_index_base }}:\n{{ c.content }}\n{% endfor %}",
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [{"content": "FINAL: 1", "tool_calls": []}],
+        },
+    }
+
+    model = DeterministicModel(
+        outputs=[make_output("<think>internal reasoning</think>\n\nTHOUGHT: keep this\n\n```bash\necho hi\n```", [{"command": "echo hi"}])]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    capture_model = _CaptureVerifierModel()
+    agent.verifier.model = capture_model
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    agent.query()
+    assert capture_model.messages is not None
+    prompt = capture_model.messages[-1]["content"]
+    assert "THOUGHT: keep this" in prompt
+    assert "internal reasoning" not in prompt
+    assert "<think>" not in prompt
+
+
 def test_verifier_uses_task_in_system_prompt_and_excludes_actor_system_message():
     class _CaptureVerifierModel:
         def __init__(self):

@@ -506,6 +506,69 @@ def test_redaction_handles_response_api_assistant_message_content(default_config
     assert redacted_messages[0]["output"][0]["content"][0]["text"] == ""
 
 
+def test_response_api_history_keeps_only_marked_thought_sections(default_config):
+    agent = DefaultAgent(
+        model=DeterministicResponseAPIToolcallModel(outputs=[make_response_api_output("candidate", [])]),
+        env=LocalEnvironment(),
+        **default_config,
+    )
+    response_message = make_response_api_output(
+        "Intro text that should not be replayed.\n\nTHOUGHT: keep this thought\n\nTHOUGHT: keep this too",
+        [{"command": "echo hi", "tool_call_id": "call_1"}],
+    )
+    response_message["output_text"] = response_message["output"][0]["content"][0]["text"]
+
+    history_messages = agent._messages_for_outbound_context([response_message], include_assistant_content=True)
+
+    expected = "THOUGHT: keep this thought\n\nTHOUGHT: keep this too"
+    assert response_message["output"][0]["content"][0]["text"].startswith("Intro text")
+    assert history_messages[0]["output"][0]["content"][0]["text"] == expected
+    assert history_messages[0]["output_text"] == expected
+    assert history_messages[0]["output"][1]["type"] == "function_call"
+
+
+def test_response_api_actor_history_uses_thought_only_text(default_config):
+    class _CaptureResponseModel(DeterministicResponseAPIToolcallModel):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.calls: list[list[dict]] = []
+
+        def query(self, messages: list[dict[str, str]], **kwargs) -> dict:
+            self.calls.append(copy.deepcopy(messages))
+            return super().query(messages, **kwargs)
+
+    model = _CaptureResponseModel(
+        outputs=[
+            make_response_api_output(
+                "Intro text that should not be replayed.\n\nTHOUGHT: only this should remain",
+                [{"command": "echo first", "tool_call_id": "call_1"}],
+            ),
+            make_response_api_output("THOUGHT: second", [{"command": "echo second", "tool_call_id": "call_2"}]),
+        ]
+    )
+    agent = DefaultAgent(
+        model=model,
+        env=LocalEnvironment(),
+        **default_config,
+    )
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    agent.query()
+    agent.add_messages({"role": "user", "content": "observation"})
+    agent.query()
+
+    assert len(model.calls) == 2
+    second_call_response_messages = [msg for msg in model.calls[1] if msg.get("object") == "response"]
+    assert second_call_response_messages
+    assistant_items = [
+        item
+        for item in second_call_response_messages[-1]["output"]
+        if item.get("type") == "message" and item.get("role") == "assistant"
+    ]
+    assert assistant_items
+    assert assistant_items[0]["content"][0]["text"] == "THOUGHT: only this should remain"
+
+
 def test_step_adds_messages(model_factory):
     """Test that step adds assistant and observation messages."""
     factory, config = model_factory

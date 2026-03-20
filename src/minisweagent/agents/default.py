@@ -65,6 +65,14 @@ _VERIFIER_SAFE_FALLBACK_MODEL_TYPES = {
     "minisweagent.models.openrouter_textbased_model.OpenRouterTextbasedModel",
     "minisweagent.models.test_models.DeterministicModel",
 }
+_RESPONSE_API_THOUGHT_ONLY_HISTORY_MODEL_TYPES = {
+    "minisweagent.models.litellm_response_model.LitellmResponseModel",
+    "minisweagent.models.test_models.DeterministicResponseAPIToolcallModel",
+}
+_THOUGHT_HISTORY_PATTERN = re.compile(
+    r"^\s*(THOUGHTS?):\s*(.*?)(?=^\s*THOUGHTS?:\s*|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
 
 
 def _normalize_verifier_model_config(model_config: dict[str, Any]) -> dict[str, Any]:
@@ -1327,15 +1335,87 @@ class DefaultAgent:
     def _messages_for_outbound_context(
         self, messages: list[dict[str, Any]], *, include_assistant_content: bool
     ) -> list[dict[str, Any]]:
-        if include_assistant_content:
+        thought_only_response_history = include_assistant_content and self._uses_response_api_thought_only_history()
+        if include_assistant_content and not thought_only_response_history:
             return messages
         sanitized_messages: list[dict[str, Any]] = []
         for message in messages:
             message_copy = copy.deepcopy(message)
             if self._is_assistant_message(message_copy):
-                message_copy = self._redact_assistant_message_content(message_copy)
+                if include_assistant_content:
+                    message_copy = self._sanitize_response_api_assistant_message_for_outbound_history(message_copy)
+                else:
+                    message_copy = self._redact_assistant_message_content(message_copy)
             sanitized_messages.append(message_copy)
         return sanitized_messages
+
+    def _uses_response_api_thought_only_history(self) -> bool:
+        for cls in type(self.model).mro():
+            model_type = f"{cls.__module__}.{cls.__name__}"
+            if model_type in _RESPONSE_API_THOUGHT_ONLY_HISTORY_MODEL_TYPES:
+                return True
+        return False
+
+    def _sanitize_response_api_assistant_message_for_outbound_history(self, message: dict[str, Any]) -> dict[str, Any]:
+        if message.get("object") != "response":
+            return message
+
+        history_text = self._extract_response_api_history_text(message)
+        if not history_text:
+            return message
+
+        if isinstance(message.get("output_text"), str):
+            message["output_text"] = history_text
+
+        output = message.get("output")
+        if not isinstance(output, list):
+            return message
+
+        sanitized_output: list[Any] = []
+        assistant_text_written = False
+        for item in output:
+            if not isinstance(item, dict):
+                sanitized_output.append(item)
+                continue
+
+            item_copy = copy.deepcopy(item)
+            if item_copy.get("type") == "message" and item_copy.get("role") == "assistant":
+                replacement_text = history_text if not assistant_text_written else ""
+                item_copy["content"] = self._make_response_api_text_blocks(item_copy.get("content"), replacement_text)
+                assistant_text_written = True
+            sanitized_output.append(item_copy)
+
+        message["output"] = sanitized_output
+        return message
+
+    def _extract_response_api_history_text(self, message: dict[str, Any]) -> str:
+        content_text = self._extract_response_content_text(message)
+        if not content_text:
+            return ""
+        thought_text = self._extract_marked_thought_history_text(content_text)
+        return thought_text or content_text
+
+    def _extract_marked_thought_history_text(self, text: str) -> str:
+        sections: list[str] = []
+        for match in _THOUGHT_HISTORY_PATTERN.finditer(text):
+            label = match.group(1).upper()
+            body = match.group(2).strip()
+            if not body:
+                continue
+            separator = "\n" if "\n" in body else " "
+            sections.append(f"{label}:{separator}{body}")
+        return "\n\n".join(sections)
+
+    def _make_response_api_text_blocks(self, existing_content: Any, text: str) -> list[dict[str, Any]]:
+        block_type = "output_text"
+        if isinstance(existing_content, list):
+            for block in existing_content:
+                if isinstance(block, dict) and isinstance(block.get("type"), str):
+                    block_type = block["type"]
+                    break
+        elif isinstance(existing_content, dict) and isinstance(existing_content.get("type"), str):
+            block_type = existing_content["type"]
+        return [{"type": block_type, "text": text}]
 
     def _redact_assistant_message_content(self, message: dict[str, Any]) -> dict[str, Any]:
         if "content" in message:

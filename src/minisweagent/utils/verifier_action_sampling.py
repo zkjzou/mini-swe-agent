@@ -13,6 +13,7 @@ from typing import Any, Callable
 import yaml
 
 from minisweagent.models import get_model
+from minisweagent.models.utils.reasoning_sanitizer import strip_reasoning_items
 
 try:
     from tqdm.auto import tqdm as _tqdm
@@ -145,13 +146,14 @@ def _normalize_tool_call(tool_call: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def normalize_docent_message_for_model(message: dict[str, Any]) -> dict[str, Any]:
+    sanitized_message = strip_reasoning_items(message)
     role = message.get("role")
     normalized: dict[str, Any] = {
         "role": role,
-        "content": message.get("content"),
+        "content": sanitized_message.get("content"),
     }
     if role == "assistant":
-        tool_calls = message.get("tool_calls")
+        tool_calls = sanitized_message.get("tool_calls")
         if isinstance(tool_calls, list):
             parsed_calls = []
             for tool_call in tool_calls:
@@ -161,11 +163,14 @@ def normalize_docent_message_for_model(message: dict[str, Any]) -> dict[str, Any
                         parsed_calls.append(parsed)
             if parsed_calls:
                 normalized["tool_calls"] = parsed_calls
+        output = sanitized_message.get("output")
+        if isinstance(output, list):
+            normalized["output"] = output
     elif role == "tool":
-        tool_call_id = message.get("tool_call_id")
+        tool_call_id = sanitized_message.get("tool_call_id")
         if tool_call_id is not None:
             normalized["tool_call_id"] = tool_call_id
-        name = message.get("name") or message.get("tool_name") or message.get("function")
+        name = sanitized_message.get("name") or sanitized_message.get("tool_name") or sanitized_message.get("function")
         if name is not None:
             normalized["name"] = name
     return normalized

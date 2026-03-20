@@ -103,6 +103,40 @@ def test_normalize_docent_message_for_model_preserves_tool_calls():
     assert normalized["tool_calls"][0]["function"]["arguments"] == '{"command": "ls -la"}'
 
 
+
+
+def test_normalize_docent_message_for_model_drops_reasoning_items():
+    message = {
+        "role": "assistant",
+        "content": [
+            {"type": "reasoning_text", "text": "think privately"},
+            {"type": "output_text", "text": "visible text"},
+        ],
+        "output": [
+            {
+                "id": "rs_1",
+                "type": "reasoning",
+                "content": [{"type": "reasoning_text", "text": "hidden"}],
+            },
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "reasoning_text", "text": "hidden"},
+                    {"type": "output_text", "text": "keep me"},
+                ],
+            },
+        ],
+    }
+
+    normalized = normalize_docent_message_for_model(message)
+
+    assert normalized["content"] == [{"type": "output_text", "text": "visible text"}]
+    assert normalized["output"] == [
+        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "keep me"}]}
+    ]
+
+
 def test_extract_replay_steps_only_assistant_toolcall_steps():
     messages = [
         {"role": "system", "content": "sys"},

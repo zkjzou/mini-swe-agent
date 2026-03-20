@@ -12,6 +12,7 @@ from minisweagent.models.utils.actions_toolcall_response import (
     format_toolcall_observation_messages,
     parse_toolcall_actions_response,
 )
+from minisweagent.models.utils.reasoning_sanitizer import strip_reasoning_items
 
 logger = logging.getLogger("litellm_response_model")
 litellm.callbacks = ["langfuse_otel"]
@@ -29,10 +30,11 @@ class LitellmResponseModel(LitellmModel):
         result = []
         for msg in messages:
             if msg.get("object") == "response":
-                for item in msg.get("output", []):
+                sanitized_output = strip_reasoning_items(msg.get("output", []))
+                for item in sanitized_output:
                     result.append({k: v for k, v in item.items() if k != "extra"})
             else:
-                result.append({k: v for k, v in msg.items() if k != "extra"})
+                result.append({k: v for k, v in strip_reasoning_items(msg).items() if k != "extra"})
         return result
 
     def _query(self, messages: list[dict[str, str]], **kwargs):

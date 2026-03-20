@@ -16,11 +16,11 @@ class TestLitellmModelConfig:
         assert LitellmModelConfig(model_name="test").format_error_template == "{{ error }}"
 
 
-def _mock_litellm_response(tool_calls):
+def _mock_litellm_response(tool_calls, *, content=None):
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
     mock_response.choices[0].message.tool_calls = tool_calls
-    mock_response.choices[0].message.model_dump.return_value = {"role": "assistant", "content": None}
+    mock_response.choices[0].message.model_dump.return_value = {"role": "assistant", "content": content}
     mock_response.model_dump.return_value = {}
     return mock_response
 
@@ -110,3 +110,37 @@ class TestLitellmModel:
         model = LitellmModel(model_name="gpt-4")
         result = model.format_observation_messages({"extra": {}}, [])
         assert result == []
+
+
+    def test_prepare_messages_for_api_strips_think_tags_when_enabled(self):
+        model = LitellmModel(model_name="gpt-4", strip_think_tags=True)
+
+        prepared = model._prepare_messages_for_api(
+            [
+                {
+                    "role": "assistant",
+                    "content": "<think>internal</think>\n\nTHOUGHT: visible",
+                }
+            ]
+        )
+
+        assert prepared[0]["content"] == "THOUGHT: visible"
+
+    @patch("minisweagent.models.litellm_model.litellm.completion")
+    @patch("minisweagent.models.litellm_model.litellm.cost_calculator.completion_cost")
+    def test_query_strips_think_tags_from_stored_message_when_enabled(self, mock_cost, mock_completion):
+        tool_call = MagicMock()
+        tool_call.function.name = "bash"
+        tool_call.function.arguments = '{"command": "echo test"}'
+        tool_call.id = "call_strip_think"
+        mock_completion.return_value = _mock_litellm_response(
+            [tool_call],
+            content="<think>internal reasoning</think>\n\nTHOUGHT: visible",
+        )
+        mock_cost.return_value = 0.001
+
+        model = LitellmModel(model_name="gpt-4", strip_think_tags=True)
+        result = model.query([{"role": "user", "content": "test"}])
+
+        assert result["content"] == "THOUGHT: visible"
+        assert result["extra"]["response"] == {}

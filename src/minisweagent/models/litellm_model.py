@@ -20,6 +20,7 @@ from minisweagent.models.utils.anthropic_utils import _reorder_anthropic_thinkin
 from minisweagent.models.utils.cache_control import set_cache_control
 from minisweagent.models.utils.openai_multimodal import expand_multimodal_content
 from minisweagent.models.utils.retry import retry
+from minisweagent.models.utils.think_tags import strip_think_tags
 
 logger = logging.getLogger("litellm_model")
 #weave.init('weave_litellm_integration')
@@ -47,6 +48,8 @@ class LitellmModelConfig(BaseModel):
     """Template used to render the observation after executing an action."""
     multimodal_regex: str = ""
     """Regex to extract multimodal content. Empty string disables multimodal processing."""
+    strip_think_tags: bool = False
+    """Remove <think>...</think> blocks from assistant text before reuse when enabled."""
 
 
 class LitellmModel:
@@ -80,6 +83,8 @@ class LitellmModel:
 
     def _prepare_messages_for_api(self, messages: list[dict]) -> list[dict]:
         prepared = [{k: v for k, v in msg.items() if k != "extra"} for msg in messages]
+        if self.config.strip_think_tags:
+            prepared = [strip_think_tags(msg) for msg in prepared]
         prepared = _reorder_anthropic_thinking_blocks(prepared)
         return set_cache_control(prepared, mode=self.config.set_cache_control)
 
@@ -100,6 +105,8 @@ class LitellmModel:
         cost_output = self._calculate_cost(response)
         GLOBAL_MODEL_STATS.add(cost_output["cost"])
         message = response.choices[0].message.model_dump()
+        if self.config.strip_think_tags:
+            message = strip_think_tags(message)
         message["extra"] = {
             "actions": self._parse_actions(response),
             "response": response.model_dump(),

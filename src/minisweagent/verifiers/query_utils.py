@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from minisweagent.models import GLOBAL_MODEL_STATS
+from minisweagent.models.utils.think_tags import strip_think_tags
 
 _SINGLE_PROMPT_HISTORY_FORMAT = "single_prompt"
 _MULTI_TURN_CHAT_HISTORY_FORMAT = "multi_turn_chat"
@@ -46,6 +47,8 @@ def build_verifier_messages(
 ) -> list[dict[str, Any]]:
     template_vars = template_vars or {}
     history_format = resolve_verifier_history_message_format(config)
+    system_prompt = strip_think_tags(system_prompt)
+    final_user_prompt = strip_think_tags(final_user_prompt)
     input_messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
     if history_format == _MULTI_TURN_CHAT_HISTORY_FORMAT:
         input_messages.extend(_extract_history_messages(template_vars))
@@ -157,16 +160,16 @@ def _sanitize_tool_history_message(message: Mapping[str, Any]) -> dict[str, Any]
 def _extract_message_text(message: Mapping[str, Any]) -> str:
     content = message.get("content")
     if isinstance(content, str):
-        return content
+        return strip_think_tags(content)
     if isinstance(content, list):
         text = _extract_text_from_content(content)
         if text:
-            return text
+            return strip_think_tags(text)
     if isinstance(message.get("output_text"), str):
-        return message["output_text"]
+        return strip_think_tags(message["output_text"])
     output = message.get("output")
     if isinstance(output, list):
-        return _extract_text_from_output(output)
+        return strip_think_tags(_extract_text_from_output(output))
     return ""
 
 
@@ -286,10 +289,10 @@ def _extract_text(response: Any) -> str:
     if isinstance(choices, list):
         text = _extract_text_from_choices(choices)
         if text:
-            return text
+            return strip_think_tags(text)
     output = getattr(response, "output", None)
     if isinstance(output, list):
-        return _extract_text_from_output(output)
+        return strip_think_tags(_extract_text_from_output(output))
     return ""
 
 
@@ -308,13 +311,13 @@ def _extract_text_from_dict(response: dict[str, Any]) -> str:
     if isinstance(choices, list):
         text = _extract_text_from_choices(choices)
         if text:
-            return text
+            return strip_think_tags(text)
 
     output = response.get("output")
     if isinstance(output, list):
         text = _extract_text_from_output(output)
         if text:
-            return text
+            return strip_think_tags(text)
 
     return ""
 
@@ -354,7 +357,7 @@ def _extract_text_from_output(output: list[Any]) -> str:
 
 def _extract_text_from_content(content: Any) -> str:
     if isinstance(content, str):
-        return content
+        return strip_think_tags(content)
     if not isinstance(content, list):
         return ""
 

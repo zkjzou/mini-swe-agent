@@ -193,6 +193,44 @@ def test_generate_issue_checklist_can_include_rendered_inputs():
     ]
 
 
+def test_generate_issue_checklist_strips_think_blocks_from_rendered_inputs():
+    class _QueryOnlyModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": "CHECKLIST:\n- Reproduce issue\n- Patch source code\n- Run tests\n",
+                "extra": {"cost": 0.25},
+            }
+
+    config = SimpleNamespace(
+        checklist_system_template="system <think>hidden</think> {{ task }}",
+        checklist_prompt_template="Issue description: {{ task }}\nRecent: {{ messages[0].content }}",
+        checklist_item_regex=r"^\s*(?:[-*]|\d+[.)])\s*(.+?)\s*$",
+        checklist_min_items=3,
+        checklist_max_items=5,
+        include_inputs_in_output=True,
+        history_message_format="multi_turn_chat",
+    )
+    output = generate_issue_checklist(
+        _QueryOnlyModel(),
+        config,
+        template_vars={
+            "task": "sample issue",
+            "messages": [
+                {"role": "assistant", "content": "<think>internal reasoning</think>\n\nInspect parser"},
+                {"role": "user", "content": "Found failing test output"},
+            ],
+        },
+    )
+
+    assert "sample issue" in output["input"]["messages"][0]["content"]
+    assert "<think>" not in output["input"]["messages"][0]["content"]
+    assert "hidden" not in output["input"]["messages"][0]["content"]
+    assert "Inspect parser" in output["input"]["messages"][-1]["content"]
+    assert "internal reasoning" not in output["input"]["messages"][-1]["content"]
+    assert "<think>" not in output["input"]["messages"][-1]["content"]
+
+
 def test_generate_issue_checklist_can_replay_history_as_multi_turn_chat():
     class _QueryOnlyModel:
         def query(self, messages, **kwargs):

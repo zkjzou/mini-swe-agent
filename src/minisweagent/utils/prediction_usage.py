@@ -309,6 +309,55 @@ def _extract_actions(
     return int(api_calls)
 
 
+def _extract_steps(
+    obj: Dict[str, Any],
+    *,
+    assistant_count: int,
+    tool_count: int,
+    usage_count: int,
+    api_calls: int,
+) -> int:
+    trajectory = obj.get("trajectory")
+    if isinstance(trajectory, list):
+        return len(trajectory)
+
+    for key in ("steps", "num_steps", "n_steps", "step_count", "total_steps"):
+        value = obj.get(key)
+        if _is_number(value):
+            return int(value)
+
+    model_stats = _extract_model_stats(obj)
+    for key in ("steps", "num_steps", "n_steps", "step_count", "total_steps", "api_calls"):
+        value = model_stats.get(key)
+        if _is_number(value):
+            return int(value)
+
+    if assistant_count:
+        return int(assistant_count)
+    if tool_count:
+        return int(tool_count)
+    if usage_count:
+        return int(usage_count)
+    return int(api_calls)
+
+
+def _count_parse_errors(messages: Any) -> int:
+    if not isinstance(messages, list):
+        return 0
+
+    count = 0
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        if message.get("parse_error"):
+            count += 1
+            continue
+        extra = message.get("extra")
+        if isinstance(extra, dict) and (extra.get("candidate_parse_error") or extra.get("parse_error")):
+            count += 1
+    return count
+
+
 def _guess_instance_id(path: Path, obj: Dict[str, Any]) -> str | None:
     instance_id = obj.get("instance_id")
     if isinstance(instance_id, str) and instance_id:
@@ -349,7 +398,9 @@ def _empty_metrics() -> Dict[str, Any]:
         "verifier_completion_tokens": 0,
         "verifier_total_tokens": 0,
         "actions": 0,
+        "steps": 0,
         "api_calls": 0,
+        "parse_errors": 0,
     }
 
 
@@ -365,7 +416,9 @@ def _merge_metrics(target: Dict[str, Any], source: Dict[str, Any]) -> None:
     target["verifier_completion_tokens"] += source.get("verifier_completion_tokens", 0)
     target["verifier_total_tokens"] += source.get("verifier_total_tokens", 0)
     target["actions"] += source.get("actions", 0)
+    target["steps"] += source.get("steps", 0)
     target["api_calls"] += source.get("api_calls", 0)
+    target["parse_errors"] += source.get("parse_errors", 0)
 
 
 def _display_path(root: Path, path: Path) -> str:
@@ -399,8 +452,16 @@ def _analyze_payload(obj: Dict[str, Any], path: Path, *, root: Path) -> Dict[str
         usage_count=usage_totals["count"],
         api_calls=api_calls,
     )
+    steps = _extract_steps(
+        obj,
+        assistant_count=assistant_count,
+        tool_count=tool_count,
+        usage_count=usage_totals["count"],
+        api_calls=api_calls,
+    )
     tokens = _extract_tokens(obj, usage_totals)
     cost = _extract_cost(obj, usage_totals["cost"])
+    parse_errors = _count_parse_errors(messages)
     split_tokens = _reconcile_token_split(
         aggregate_tokens=tokens,
         agent_usage=agent_usage_totals,
@@ -421,7 +482,9 @@ def _analyze_payload(obj: Dict[str, Any], path: Path, *, root: Path) -> Dict[str
         "verifier_completion_tokens": split_tokens["verifier_completion_tokens"],
         "verifier_total_tokens": split_tokens["verifier_total_tokens"],
         "actions": actions,
+        "steps": steps,
         "api_calls": api_calls,
+        "parse_errors": parse_errors,
     }
 
 
@@ -495,7 +558,8 @@ def summarize(root: Path, *, include_files: bool = False, models: set[str] | Non
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Summarize cost, tokens, action count, and API calls from .traj.json outputs.")
+        description="Summarize cost, tokens, actions, steps, parse errors, and API calls from .traj.json outputs."
+    )
     parser.add_argument(
         "--root",
         default=DEFAULT_ROOT,

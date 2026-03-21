@@ -172,6 +172,7 @@ agent:
   step_limit: 250
   cost_limit: 3.
   enable_verbal_feedback: false
+  verbal_feedback_mode: feedback
   verifier_feedback_role: user
   verifier_feedback_template: |
     Verifier feedback from the previous step:
@@ -182,7 +183,11 @@ agent:
     Verifier score: {{ "%.3f"|format(previous_verifier_feedback.score) }}
     {% endif -%}
     {% if previous_verifier_feedback.critique -%}
+    {% if previous_verifier_feedback.mode == "reasoning" -%}
+    Reasoning: {{ previous_verifier_feedback.critique }}
+    {% else -%}
     Critique: {{ previous_verifier_feedback.critique }}
+    {% endif -%}
     {% endif -%}
     This feedback may be incomplete or incorrect. Do not blindly follow it; use your own judgment and the actual repository state when deciding the next action.
   candidate_sampling:
@@ -244,6 +249,12 @@ profiles:
         drop_params: true
         reasoning_effort: "medium"
         verbosity: "medium"
+    gpt5_4:
+      model_name: "openai/gpt-5.4"
+      model_kwargs:
+        drop_params: true
+        reasoning_effort: "medium"
+        verbosity: "medium"
     qwen3_5_instruct:
       model_name: ""
       model_kwargs:
@@ -299,7 +310,10 @@ profiles:
         drop_params: true
         temperature: 0.7
         top_p: 1.0
-  
+    minimax_2_5:
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 40
   verifier_prompts:
     basic_verifier:
       prompt_name: "basic/verifier"

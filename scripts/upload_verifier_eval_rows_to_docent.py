@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import os
 import re
 from functools import lru_cache
@@ -67,6 +68,11 @@ def parse_args() -> argparse.Namespace:
         "--source-jsonl",
         type=Path,
         help="Optional merged verifier-action JSONL used to recover the previous message.",
+    )
+    parser.add_argument(
+        "--action-summary-json",
+        type=Path,
+        help="Optional action_summary.with_rollout_steps.json used to attach per-candidate resolve rates.",
     )
     parser.add_argument("--batch-size", type=int, default=100, help="Runs per upload batch.")
     parser.add_argument(
@@ -170,6 +176,130 @@ def trajectory_name(row: dict[str, Any]) -> str:
     return f"{original}__step_{step_index}"
 
 
+def candidate_stats_key(instance_id: str, step_index: int, label: str) -> tuple[str, int, str]:
+    return (instance_id, step_index, label)
+
+
+def safe_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def safe_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def format_metric(value: Any) -> str:
+    numeric = safe_float(value)
+    if numeric is None:
+        return ""
+    if numeric.is_integer():
+        return str(int(numeric))
+    return f"{numeric:.4f}".rstrip("0").rstrip(".")
+
+
+def population_std(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    mean = sum(values) / len(values)
+    return math.sqrt(sum((value - mean) ** 2 for value in values) / len(values))
+
+
+def row_instance_and_step(row: dict[str, Any] | None, fallback: dict[str, Any]) -> tuple[str, int]:
+    data = row if isinstance(row, dict) else fallback
+    instance_id = str(data.get("instance_id") or fallback.get("instance_id") or "")
+    step_index = int_or_default(data.get("step_index"), int_or_default(fallback.get("step_index"), -1))
+    return instance_id, step_index
+
+
+def load_action_summary_lookup(path: Path) -> dict[tuple[str, int, str], dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"Expected action summary JSON to be a dictionary: {path}")
+
+    lookup: dict[tuple[str, int, str], dict[str, Any]] = {}
+    for instance_id, instance_summary in payload.items():
+        if not isinstance(instance_id, str) or not isinstance(instance_summary, dict):
+            continue
+        for step_key, step_summary in instance_summary.items():
+            if not isinstance(step_key, str) or not step_key.startswith("step_") or not isinstance(step_summary, dict):
+                continue
+            step_index = safe_int(step_key.removeprefix("step_"))
+            if step_index is None:
+                continue
+            for action_summary in step_summary.values():
+                if not isinstance(action_summary, dict):
+                    continue
+                label = action_summary.get("label")
+                if not isinstance(label, str) or not label:
+                    continue
+                stats: dict[str, Any] = {}
+                resolve_rate = safe_float(action_summary.get("resolve_rate"))
+                if resolve_rate is not None:
+                    stats["resolve_rate"] = resolve_rate
+                    stats["resolve_rate_std"] = math.sqrt(resolve_rate * (1.0 - resolve_rate))
+                avg_steps = safe_float(action_summary.get("avg_rollout_executed_steps"))
+                if avg_steps is not None:
+                    stats["avg_rollout_executed_steps"] = avg_steps
+                step_std = safe_float(action_summary.get("rollout_executed_steps_std"))
+                if step_std is not None:
+                    stats["rollout_executed_steps_std"] = step_std
+                if stats:
+                    lookup[candidate_stats_key(instance_id, step_index, label)] = stats
+    return lookup
+
+
+def build_candidate_stats_lookup(
+    action_summary_path: Path | None,
+) -> dict[tuple[str, int, str], dict[str, Any]]:
+    lookup: dict[tuple[str, int, str], dict[str, Any]] = {}
+    if action_summary_path is not None:
+        for key, stats in load_action_summary_lookup(action_summary_path).items():
+            lookup[key] = dict(stats)
+
+    return lookup
+
+
+def build_step_rollout_metadata(
+    row: dict[str, Any],
+    source_row: dict[str, Any] | None,
+    candidate_actions: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    if not candidate_actions:
+        return {}
+
+    actions_with_metrics = [
+        action
+        for action in candidate_actions
+        if safe_float(action.get("resolve_rate")) is not None
+        and safe_float(action.get("avg_rollout_executed_steps")) is not None
+    ]
+    if not actions_with_metrics:
+        return {}
+
+    monte_carlo_gold = max(
+        actions_with_metrics,
+        key=lambda action: (
+            safe_float(action.get("resolve_rate")) or 0.0,
+            -(safe_float(action.get("avg_rollout_executed_steps")) or 0.0),
+        ),
+    )
+    resolve_rates = [safe_float(action.get("resolve_rate")) or 0.0 for action in actions_with_metrics]
+    avg_steps = [safe_float(action.get("avg_rollout_executed_steps")) or 0.0 for action in actions_with_metrics]
+
+    metadata: dict[str, Any] = {
+        "monte_carlo_gold_label": monte_carlo_gold.get("label"),
+        "candidate_resolve_rate_std": population_std(resolve_rates),
+        "candidate_avg_rollout_steps_std": population_std(avg_steps),
+    }
+    return metadata
+
+
 @lru_cache(maxsize=None)
 def get_verifier_config(config_specs: tuple[str, ...], verifier_type: str) -> VerifierConfig:
     resolved_config, _ = _load_resolved_config(list(config_specs) or None)
@@ -187,12 +317,55 @@ def get_verifier_config(config_specs: tuple[str, ...], verifier_type: str) -> Ve
     return apply_prompt_overrides(verifier_config)
 
 
-def build_metadata(row: dict[str, Any]) -> dict[str, Any]:
+def build_candidate_action_metadata(
+    row: dict[str, Any],
+    source_row: dict[str, Any] | None,
+    candidate_stats_lookup: dict[tuple[str, int, str], dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    if not isinstance(source_row, dict):
+        return None
+
+    actions = source_row.get("actions")
+    if not isinstance(actions, list) or not actions:
+        return None
+
+    instance_id, step_index = row_instance_and_step(source_row, row)
+    enriched: list[dict[str, Any]] = []
+    for idx, action in enumerate(actions, start=1):
+        if not isinstance(action, dict):
+            continue
+        label = str(action.get("label") or f"candidate_{idx}")
+        item: dict[str, Any] = {
+            "index": idx,
+            "label": label,
+            "is_gold": bool(action.get("is_gold")),
+            "command": str(action.get("command") or ""),
+        }
+        if candidate_stats_lookup is not None:
+            stats = candidate_stats_lookup.get(candidate_stats_key(instance_id, step_index, label))
+            if isinstance(stats, dict):
+                item.update(stats)
+        enriched.append(item)
+
+    if not enriched:
+        return None
+    return enriched
+
+
+def build_metadata(
+    row: dict[str, Any],
+    source_row: dict[str, Any] | None,
+    candidate_stats_lookup: dict[tuple[str, int, str], dict[str, Any]] | None,
+) -> dict[str, Any]:
+    candidate_actions = build_candidate_action_metadata(row, source_row, candidate_stats_lookup)
     metadata: dict[str, Any] = {
         "instance_id": augmented_instance_id(row),
         "gold_index": row.get("gold_index"),
         "selected_label": row.get("selected_label"),
     }
+    metadata.update(build_step_rollout_metadata(row, source_row, candidate_actions))
+    if candidate_actions is not None:
+        metadata["candidate_actions"] = candidate_actions
     return metadata
 
 
@@ -262,7 +435,46 @@ def source_history_messages(source_row: dict[str, Any] | None) -> list[dict[str,
     return [message for message in history if isinstance(message, dict) and isinstance(message.get("role"), str)]
 
 
-def build_candidate_actions_content(source_row: dict[str, Any] | None) -> str | None:
+def flatten_message_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if not isinstance(content, list):
+        return ""
+
+    parts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") in {"text", "input_text", "output_text"}:
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+    return "\n".join(parts).strip()
+
+
+def candidate_thought(action: dict[str, Any]) -> str:
+    direct_thought = action.get("thought")
+    if isinstance(direct_thought, str) and direct_thought.strip():
+        return direct_thought.strip()
+
+    model_response = action.get("model_response")
+    if not isinstance(model_response, dict):
+        return ""
+    return flatten_message_content(model_response.get("content"))
+
+
+def prefixed_block(label: str, text: str, *, indent: str = "   ") -> list[str]:
+    if not text.strip():
+        return []
+    lines = text.strip().splitlines()
+    return [f"{indent}{label}: {lines[0]}"] + [f"{indent}  {line}" for line in lines[1:]]
+
+
+def build_candidate_actions_content(
+    row: dict[str, Any],
+    source_row: dict[str, Any] | None,
+    candidate_stats_lookup: dict[tuple[str, int, str], dict[str, Any]] | None,
+) -> str | None:
     if not isinstance(source_row, dict):
         return None
 
@@ -270,26 +482,47 @@ def build_candidate_actions_content(source_row: dict[str, Any] | None) -> str | 
     if not isinstance(actions, list) or not actions:
         return None
 
+    instance_id, step_index = row_instance_and_step(source_row, row)
     lines = ["Candidate actions:"]
     for idx, action in enumerate(actions, start=1):
         if not isinstance(action, dict):
             continue
         label = str(action.get("label") or f"candidate_{idx}")
         command = str(action.get("command") or "").strip()
+        thought = candidate_thought(action)
         is_gold = bool(action.get("is_gold"))
         suffix = " [gold]" if is_gold else ""
-        if command:
-            lines.append(f"{idx}. {label}{suffix}: {command}")
-        else:
-            lines.append(f"{idx}. {label}{suffix}")
+        lines.append(f"{idx}. {label}{suffix}")
+        lines.extend(prefixed_block("Thought", thought))
+        lines.extend(prefixed_block("Action", command))
+        if candidate_stats_lookup is not None:
+            stats = candidate_stats_lookup.get(candidate_stats_key(instance_id, step_index, label))
+            if isinstance(stats, dict):
+                resolve_rate = format_metric(stats.get("resolve_rate"))
+                resolve_rate_std = format_metric(stats.get("resolve_rate_std"))
+                avg_rollout_executed_steps = format_metric(stats.get("avg_rollout_executed_steps"))
+                rollout_executed_steps_std = format_metric(stats.get("rollout_executed_steps_std"))
+                if resolve_rate:
+                    lines.extend(prefixed_block("Average resolve rate", resolve_rate))
+                if resolve_rate_std:
+                    lines.extend(prefixed_block("Resolve rate std", resolve_rate_std))
+                if avg_rollout_executed_steps:
+                    lines.extend(prefixed_block("Average rollout steps", avg_rollout_executed_steps))
+                if rollout_executed_steps_std:
+                    lines.extend(prefixed_block("Rollout step std", rollout_executed_steps_std))
 
     if len(lines) == 1:
         return None
     return "\n".join(lines)
 
 
-def inject_candidate_actions_into_template(template: str, source_row: dict[str, Any] | None) -> str:
-    candidate_actions_content = build_candidate_actions_content(source_row)
+def inject_candidate_actions_into_template(
+    template: str,
+    row: dict[str, Any],
+    source_row: dict[str, Any] | None,
+    candidate_stats_lookup: dict[tuple[str, int, str], dict[str, Any]] | None,
+) -> str:
+    candidate_actions_content = build_candidate_actions_content(row, source_row, candidate_stats_lookup)
     if candidate_actions_content is None:
         return template.strip()
 
@@ -322,6 +555,7 @@ def build_verifier_prompt_messages(
     source_row: dict[str, Any] | None,
     *,
     config_specs: tuple[str, ...],
+    candidate_stats_lookup: dict[tuple[str, int, str], dict[str, Any]] | None,
 ) -> list[Any]:
     verifier_type = str(row.get("verifier_type") or "llm")
     verifier_config = get_verifier_config(config_specs, verifier_type)
@@ -334,7 +568,9 @@ def build_verifier_prompt_messages(
         system_prompt = verifier_config.system_template.strip()
         user_prompt = inject_candidate_actions_into_template(
             strip_recent_steps_block(verifier_config.selection_template),
+            row,
             source_row,
+            candidate_stats_lookup,
         )
 
     prompt_messages.append(parse_chat_message({"role": "system", "content": system_prompt}))
@@ -347,12 +583,20 @@ def build_transcript_messages(
     source_row: dict[str, Any] | None,
     *,
     config_specs: tuple[str, ...],
+    candidate_stats_lookup: dict[tuple[str, int, str], dict[str, Any]] | None,
 ) -> list[Any]:
     messages: list[Any] = []
     for message in source_history_messages(source_row):
         messages.append(parse_chat_message(normalize_message(message)))
 
-    messages.extend(build_verifier_prompt_messages(row, source_row, config_specs=config_specs))
+    messages.extend(
+        build_verifier_prompt_messages(
+            row,
+            source_row,
+            config_specs=config_specs,
+            candidate_stats_lookup=candidate_stats_lookup,
+        )
+    )
 
     verifier_output = row.get("verifier_output") or {}
     if isinstance(verifier_output, dict):
@@ -370,9 +614,15 @@ def row_to_agent_run(
     source_row: dict[str, Any] | None,
     *,
     config_specs: tuple[str, ...],
+    candidate_stats_lookup: dict[tuple[str, int, str], dict[str, Any]] | None,
 ) -> AgentRun:
-    metadata = build_metadata(row)
-    messages = build_transcript_messages(row, source_row, config_specs=config_specs)
+    metadata = build_metadata(row, source_row, candidate_stats_lookup)
+    messages = build_transcript_messages(
+        row,
+        source_row,
+        config_specs=config_specs,
+        candidate_stats_lookup=candidate_stats_lookup,
+    )
     name = trajectory_name(row)
     transcript = Transcript(name=name, messages=messages, metadata=metadata)
     return AgentRun(name=name, transcripts=[transcript], metadata=metadata)
@@ -383,6 +633,7 @@ def iter_agent_runs(
     source_lookup: dict[tuple[str, str, str, int, int], dict[str, Any]] | None = None,
     *,
     config_specs: tuple[str, ...],
+    candidate_stats_lookup: dict[tuple[str, int, str], dict[str, Any]] | None = None,
 ) -> list[AgentRun]:
     runs: list[AgentRun] = []
     with path.open("r", encoding="utf-8") as handle:
@@ -397,7 +648,15 @@ def iter_agent_runs(
             if not isinstance(row, dict):
                 raise ValueError(f"Expected a JSON object on line {line_no}.")
             source_row = None if source_lookup is None else source_lookup.get(row_lookup_key(row))
-            runs.append(row_to_agent_run(row, line_no, source_row, config_specs=config_specs))
+            runs.append(
+                row_to_agent_run(
+                    row,
+                    line_no,
+                    source_row,
+                    config_specs=config_specs,
+                    candidate_stats_lookup=candidate_stats_lookup,
+                )
+            )
     return runs
 
 
@@ -501,6 +760,13 @@ def main() -> None:
     else:
         print("No source rows provided; uploaded transcripts will not include the previous message.", flush=True)
 
+    action_summary_json = args.action_summary_json
+    if action_summary_json is not None and not action_summary_json.is_file():
+        raise SystemExit(f"Action summary JSON not found: {action_summary_json}")
+    candidate_stats_lookup = build_candidate_stats_lookup(action_summary_json)
+    if action_summary_json is not None:
+        print(f"Using action summary: {action_summary_json}", flush=True)
+
     client_kwargs = {
         "api_key": args.api_key,
         "domain": args.domain,
@@ -531,7 +797,12 @@ def main() -> None:
         print(f"Using collection: {collection_id}", flush=True)
 
     config_specs = tuple(args.config_specs or [])
-    runs = iter_agent_runs(args.input_jsonl, source_lookup=source_lookup, config_specs=config_specs)
+    runs = iter_agent_runs(
+        args.input_jsonl,
+        source_lookup=source_lookup,
+        config_specs=config_specs,
+        candidate_stats_lookup=candidate_stats_lookup,
+    )
     print(f"Prepared {len(runs)} runs from {args.input_jsonl}", flush=True)
 
     uploaded = 0

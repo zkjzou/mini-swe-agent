@@ -20,7 +20,8 @@ def test_append_predicted_action_distribution_writes_wide_rows(tmp_path):
             "verifier_variant": "basic_verifier",
             "selected_label": "qwen3_coder",
             "n_actions": 5,
-            "verifier_output": {"raw_index": 4},
+            "gold_index": 0,
+            "verifier_output": {"raw_index": 4, "scores": [0.9, 0.6, 0.4, 0.9, 0.1]},
         },
         {
             "status": "evaluated",
@@ -28,7 +29,8 @@ def test_append_predicted_action_distribution_writes_wide_rows(tmp_path):
             "verifier_variant": "basic_verifier",
             "selected_label": "qwen3_coder",
             "n_actions": 5,
-            "verifier_output": {"raw_index": None},
+            "gold_index": 0,
+            "verifier_output": {"raw_index": None, "scores": [0.9, 0.6, 0.4, 0.9, 0.1]},
         },
         {
             "status": "evaluated",
@@ -36,13 +38,20 @@ def test_append_predicted_action_distribution_writes_wide_rows(tmp_path):
             "verifier_variant": "basic_verifier",
             "selected_label": "gold",
             "n_actions": 5,
-            "verifier_output": {"raw_index": 1},
+            "gold_index": 0,
+            "verifier_output": {"raw_index": 1, "scores": [0.9, 0.9, 0.4, 0.2, 0.1]},
         },
-        {"status": "evaluated", "verifier_type": "reward_model", "verifier_variant": "world_reward", "selected_label": "gold"},
+        {
+            "status": "evaluated",
+            "verifier_type": "reward_model",
+            "verifier_variant": "world_reward",
+            "selected_label": "gold",
+            "gold_index": 0,
+            "verifier_output": {"rewards": [1.0, 0.5, 0.1, 0.0, -0.2]},
+        },
         {"status": "skipped", "verifier_type": "reward_model", "verifier_variant": "world_reward", "selected_label": "ignored"},
     ]
     output_jsonl.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
-
     append_predicted_action_distribution(output_jsonl, output_csv)
 
     with output_csv.open("r", encoding="utf-8", newline="") as handle:
@@ -57,15 +66,18 @@ def test_append_predicted_action_distribution_writes_wide_rows(tmp_path):
             "gpt5-mini",
             "qwen3-coder-instruct",
         ]
-        assert reader.fieldnames[7:13] == [
+        assert reader.fieldnames[7:16] == [
             "rows_evaluated",
             "rows_non_parser_failed",
             "rows_parser_failed",
             "fraction_parser_failed",
+            "gold_pick_score_available_count",
+            "gold_pick_score_tie_count",
+            "gold_pick_score_tie_fraction",
             "timestamp_utc",
             "output_jsonl",
         ]
-        assert reader.fieldnames[13:18] == [
+        assert reader.fieldnames[16:21] == [
             "count__gold",
             "count__qwen3-coder-next",
             "count__qwen3.5-27b",
@@ -88,6 +100,9 @@ def test_append_predicted_action_distribution_writes_wide_rows(tmp_path):
     assert basic_row["rows_non_parser_failed"] == "2"
     assert basic_row["rows_parser_failed"] == "1"
     assert basic_row["fraction_parser_failed"] == "0.333333"
+    assert basic_row["gold_pick_score_available_count"] == "1"
+    assert basic_row["gold_pick_score_tie_count"] == "1"
+    assert basic_row["gold_pick_score_tie_fraction"] == "1.000000"
     assert basic_row["count__gold"] == "1"
     assert basic_row["count__qwen3-coder-next"] == ""
     assert basic_row["count__qwen3.5-27b"] == ""
@@ -109,6 +124,9 @@ def test_append_predicted_action_distribution_writes_wide_rows(tmp_path):
     assert reward_row["rows_non_parser_failed"] == "1"
     assert reward_row["rows_parser_failed"] == "0"
     assert reward_row["fraction_parser_failed"] == "0.000000"
+    assert reward_row["gold_pick_score_available_count"] == "1"
+    assert reward_row["gold_pick_score_tie_count"] == "0"
+    assert reward_row["gold_pick_score_tie_fraction"] == "0.000000"
     assert reward_row["count__gold"] == "1"
     assert reward_row["count__qwen3-coder-next"] == ""
     assert reward_row["count__qwen3.5-27b"] == ""
@@ -172,9 +190,7 @@ def test_evaluate_verifier_actions_cli_invokes_utility(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "minisweagent.run.utilities.evaluate_verifier_actions.append_predicted_action_distribution",
-        lambda output_jsonl, output_csv: appended.update(
-            {"output_jsonl": output_jsonl, "output_csv": output_csv}
-        ),
+        lambda output_jsonl, output_csv: appended.update({"output_jsonl": output_jsonl, "output_csv": output_csv}),
     )
 
     runner = CliRunner()

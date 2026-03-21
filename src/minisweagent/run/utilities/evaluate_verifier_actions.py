@@ -123,9 +123,60 @@ def _has_parser_failure(row: dict) -> bool:
     return False
 
 
+def _extract_candidate_scores(row: dict) -> list[float | None] | None:
+    verifier_output = row.get("verifier_output")
+    if not isinstance(verifier_output, dict):
+        return None
+
+    raw_scores = verifier_output.get("scores")
+    if not isinstance(raw_scores, list):
+        raw_scores = verifier_output.get("rewards")
+    if not isinstance(raw_scores, list):
+        return None
+
+    scores: list[float | None] = []
+    for value in raw_scores:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            scores.append(float(value))
+        else:
+            scores.append(None)
+    return scores
+
+
+def _gold_index(row: dict) -> int | None:
+    gold_index = row.get("gold_index")
+    if isinstance(gold_index, int) and gold_index >= 0:
+        return gold_index
+    candidate_labels = row.get("candidate_labels")
+    if isinstance(candidate_labels, list):
+        for index, label in enumerate(candidate_labels):
+            if label == "gold":
+                return index
+    return None
+
+
+def _gold_pick_score_tie(row: dict) -> tuple[bool, bool]:
+    scores = _extract_candidate_scores(row)
+    gold_index = _gold_index(row)
+    if scores is None or gold_index is None or not (0 <= gold_index < len(scores)):
+        return False, False
+
+    gold_score = scores[gold_index]
+    if gold_score is None:
+        return False, False
+
+    other_scores = [score for index, score in enumerate(scores) if index != gold_index and score is not None]
+    if not other_scores:
+        return False, False
+
+    return True, any(abs(score - gold_score) <= 1e-12 for score in other_scores)
+
+
 def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> list[dict[str, str]]:
     parsed_counts: dict[tuple[str, str, str], Counter[str]] = defaultdict(Counter)
     parser_failure_counts: dict[tuple[str, str, str], Counter[str]] = defaultdict(Counter)
+    gold_pick_score_available_counts: Counter[tuple[str, str, str]] = Counter()
+    gold_pick_score_tie_counts: Counter[tuple[str, str, str]] = Counter()
     totals: Counter[tuple[str, str, str]] = Counter()
     parsed_totals: Counter[tuple[str, str, str]] = Counter()
     parser_failures: Counter[tuple[str, str, str]] = Counter()
@@ -149,6 +200,12 @@ def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> li
                 else:
                     parsed_counts[key][selected_label] += 1
                     parsed_totals[key] += 1
+                    if selected_label == "gold":
+                        available, tied = _gold_pick_score_tie(row)
+                        if available:
+                            gold_pick_score_available_counts[key] += 1
+                            if tied:
+                                gold_pick_score_tie_counts[key] += 1
 
     labels = _ordered_labels(
         {
@@ -169,6 +226,9 @@ def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> li
         "rows_non_parser_failed",
         "rows_parser_failed",
         "fraction_parser_failed",
+        "gold_pick_score_available_count",
+        "gold_pick_score_tie_count",
+        "gold_pick_score_tie_fraction",
         "timestamp_utc",
         "output_jsonl",
     ]
@@ -205,6 +265,13 @@ def _collect_predicted_action_distribution_rows(output_jsonls: list[Path]) -> li
             "rows_non_parser_failed": str(parsed_total),
             "rows_parser_failed": str(parser_failed),
             "fraction_parser_failed": f"{parser_failed / total:.6f}" if total else "0.000000",
+            "gold_pick_score_available_count": str(gold_pick_score_available_counts[key]),
+            "gold_pick_score_tie_count": str(gold_pick_score_tie_counts[key]),
+            "gold_pick_score_tie_fraction": (
+                f"{gold_pick_score_tie_counts[key] / gold_pick_score_available_counts[key]:.6f}"
+                if gold_pick_score_available_counts[key]
+                else "0.000000"
+            ),
             "timestamp_utc": timestamp,
             "output_jsonl": output_jsonl,
         }

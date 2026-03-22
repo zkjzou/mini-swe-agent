@@ -6,7 +6,7 @@ export MSWEA_COST_TRACKING="${MSWEA_COST_TRACKING:-ignore_errors}"
 
 mini-extra generate-trajectory-checklists \
     --input /home/zkjzou/SWE-PRM/mini-swe-agent/success_row.json \
-    --output /home/zkjzou/SWE-PRM/mini-swe-agent/minimax_checklists.jsonl \
+    --output /scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/minimax_checklists.jsonl \
     --mode trajectory_success \
     --prompt-name static_success_v2 \
     --model minimax-2.5 \

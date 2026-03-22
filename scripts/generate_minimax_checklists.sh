@@ -11,7 +11,7 @@ mini-extra generate-trajectory-checklists \
     --prompt-name static_success_v2 \
     --model minimax-2.5 \
     --model-class litellm \
-    --config verifier.yaml \
+    --config swebench.yaml \
     --config agent.verifier.prompt_dir=/home/zkjzou/SWE-PRM/mini-swe-agent/prompts/checklist_generator \
     --config agent.verifier.model.model_kwargs.api_base=http://localhost:8000/v1 \
     --config agent.verifier.model.model_kwargs.api_key=EMPTY \

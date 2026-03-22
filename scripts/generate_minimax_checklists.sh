@@ -14,4 +14,5 @@ mini-extra generate-trajectory-checklists \
     --config verifier.yaml \
     --config agent.verifier.prompt_dir=/home/zkjzou/SWE-PRM/mini-swe-agent/prompts/checklist_generator \
     --config agent.verifier.model.model_kwargs.api_base=http://localhost:8000/v1 \
-    --config agent.verifier.model.model_kwargs.api_key=EMPTY
+    --config agent.verifier.model.model_kwargs.api_key=EMPTY \
+    "$@"

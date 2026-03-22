@@ -10,6 +10,7 @@ from minisweagent.config import get_config_from_spec
 from minisweagent.models.test_models import DeterministicModel, make_output
 from minisweagent.run.benchmarks.swebench import (
     _attach_langfuse_session_metadata,
+    _resolve_eval_server_subset,
     _enable_langfuse_tracing,
     _make_langfuse_session_id,
     _resolve_profiled_model_config,
@@ -55,6 +56,7 @@ def test_swebench_end_to_end(github_test_data, tmp_path, workers):
             filter_spec="swe-agent__test-repo-1",
             config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
             environment_class="docker",
+            auto_eval=False,
         )
 
     traj_file_path = package_dir.parent.parent / "tests" / "test_data" / "github_issue.traj.json"
@@ -499,6 +501,7 @@ def test_swebench_main_can_enable_langfuse_tracing(tmp_path):
             config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
             environment_class="docker",
             enable_langfuse=True,
+            auto_eval=False,
         )
 
     mock_enable_langfuse.assert_called_once_with()
@@ -530,8 +533,11 @@ def test_redo_existing_false_skips_existing(github_test_data, tmp_path):
             output=str(tmp_path),
             workers=1,
             filter_spec="swe-agent__test-repo-1",
+            shuffle=False,
             redo_existing=False,
+            redo_errors=False,
             config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
+            auto_eval=False,
         )
 
     # Should still have the original result
@@ -568,6 +574,7 @@ def test_redo_existing_true_overwrites_existing(github_test_data, tmp_path):
             redo_existing=True,
             config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
             environment_class="docker",
+            auto_eval=False,
         )
 
     # Should have new result from deterministic model
@@ -624,11 +631,22 @@ class ExceptionModel:
         }
 
 
+class ExceptionTestEnvironment:
+    def get_template_vars(self) -> dict:
+        return {}
+
+    def serialize(self) -> dict:
+        return {"info": {"environment": {"environment_type": "test"}}}
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize("workers", [1, 2])
 def test_exception_handling_in_agent_run(tmp_path, workers):
     """Test that exceptions during agent.run() are properly handled and recorded"""
-    with patch("minisweagent.run.benchmarks.swebench.get_model") as mock_get_model:
+    with (
+        patch("minisweagent.run.benchmarks.swebench.get_model") as mock_get_model,
+        patch("minisweagent.run.benchmarks.swebench.get_sb_environment", return_value=ExceptionTestEnvironment()),
+    ):
         mock_get_model.return_value = ExceptionModel(RuntimeError, "Agent processing failed")
 
         with patch("minisweagent.run.benchmarks.swebench.RunBatchProgressManager") as mock_progress_class:
@@ -644,6 +662,7 @@ def test_exception_handling_in_agent_run(tmp_path, workers):
                 filter_spec="swe-agent__test-repo-1",
                 config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
                 environment_class="docker",
+                auto_eval=False,
             )
 
     # Check that prediction file contains exception information
@@ -671,7 +690,10 @@ def test_exception_handling_in_agent_run(tmp_path, workers):
 @pytest.mark.parametrize("workers", [1, 2])
 def test_different_exception_types(tmp_path, workers):
     """Test that different exception types are properly recorded"""
-    with patch("minisweagent.run.benchmarks.swebench.get_model") as mock_get_model:
+    with (
+        patch("minisweagent.run.benchmarks.swebench.get_model") as mock_get_model,
+        patch("minisweagent.run.benchmarks.swebench.get_sb_environment", return_value=ExceptionTestEnvironment()),
+    ):
         mock_get_model.return_value = ExceptionModel(ValueError, "Invalid input provided")
 
         with patch("minisweagent.run.benchmarks.swebench.RunBatchProgressManager") as mock_progress_class:
@@ -687,6 +709,7 @@ def test_different_exception_types(tmp_path, workers):
                 filter_spec="swe-agent__test-repo-1",
                 config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
                 environment_class="docker",
+                auto_eval=False,
             )
 
     # Check trajectory file for correct exception type
@@ -702,7 +725,10 @@ def test_different_exception_types(tmp_path, workers):
 @pytest.mark.slow
 def test_exception_handling_with_progress_manager(tmp_path):
     """Test that progress manager receives exception notifications in multithreaded mode"""
-    with patch("minisweagent.run.benchmarks.swebench.get_model") as mock_get_model:
+    with (
+        patch("minisweagent.run.benchmarks.swebench.get_model") as mock_get_model,
+        patch("minisweagent.run.benchmarks.swebench.get_sb_environment", return_value=ExceptionTestEnvironment()),
+    ):
         mock_get_model.return_value = ExceptionModel(ConnectionError, "Network timeout")
 
         with patch("minisweagent.run.benchmarks.swebench.RunBatchProgressManager") as mock_progress_class:
@@ -718,6 +744,7 @@ def test_exception_handling_with_progress_manager(tmp_path):
                 filter_spec="swe-agent__test-repo-1",
                 config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
                 environment_class="docker",
+                auto_eval=False,
             )
 
             # Verify progress manager methods were called
@@ -726,3 +753,75 @@ def test_exception_handling_with_progress_manager(tmp_path):
 
             # on_uncaught_exception should not be called since exceptions are handled properly
             mock_progress_manager.on_uncaught_exception.assert_not_called()
+
+
+def test_resolve_eval_server_subset_maps_verified_aliases():
+    assert _resolve_eval_server_subset("verified") == "swe-bench_verified"
+    assert _resolve_eval_server_subset("smith") == "swe-smith"
+    assert _resolve_eval_server_subset("lite") == "lite"
+
+
+def test_swebench_main_auto_submits_predictions(tmp_path):
+    with (
+        patch("datasets.load_dataset", return_value=[]),
+        patch("minisweagent.run.benchmarks.swebench.Live") as mock_live,
+        patch("minisweagent.run.benchmarks.swebench.auto_submit_swebench_predictions") as mock_auto_submit,
+    ):
+        mock_live.return_value.__enter__.return_value = mock_live.return_value
+        mock_live.return_value.__exit__.return_value = False
+        preds_path = tmp_path / "preds.json"
+        preds_path.write_text("{}", encoding="utf-8")
+        mock_auto_submit.return_value = (
+            {"job_id": "job-123", "run_id": "run-123", "status": "queued", "position_in_queue": 1},
+            tmp_path / "upload.json",
+            tmp_path / "evaluation_submission.json",
+        )
+
+        main(
+            subset="verified",
+            split="test",
+            slice_spec="",
+            output=str(tmp_path),
+            workers=1,
+            filter_spec="",
+            shuffle=False,
+            redo_existing=False,
+            redo_errors=False,
+            config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
+            environment_class="docker",
+        )
+
+    mock_auto_submit.assert_called_once()
+    kwargs = mock_auto_submit.call_args.kwargs
+    assert kwargs["preds_path"] == preds_path
+    assert kwargs["output_dir"] == tmp_path
+    assert kwargs["subset"] == "swe-bench_verified"
+    assert kwargs["split"] == "test"
+
+
+def test_swebench_main_auto_submit_failure_is_nonfatal(tmp_path):
+    with (
+        patch("datasets.load_dataset", return_value=[]),
+        patch("minisweagent.run.benchmarks.swebench.Live") as mock_live,
+        patch(
+            "minisweagent.run.benchmarks.swebench.auto_submit_swebench_predictions",
+            side_effect=RuntimeError("server unavailable"),
+        ),
+    ):
+        mock_live.return_value.__enter__.return_value = mock_live.return_value
+        mock_live.return_value.__exit__.return_value = False
+        (tmp_path / "preds.json").write_text("{}", encoding="utf-8")
+
+        main(
+            subset="verified",
+            split="test",
+            slice_spec="",
+            output=str(tmp_path),
+            workers=1,
+            filter_spec="",
+            shuffle=False,
+            redo_existing=False,
+            redo_errors=False,
+            config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
+            environment_class="docker",
+        )

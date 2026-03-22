@@ -51,6 +51,16 @@ subcommands = [
         ["critical-steps-from-action-summary"],
         "Rank critical steps from action_summary-with-rollout-steps JSON",
     ),
+    (
+        "minisweagent.run.utilities.generate_trajectory_checklists",
+        ["generate-trajectory-checklists", "generate-checklists"],
+        "Generate rubric-style checklists from successful, failed, pairwise, or dynamic trajectories",
+    ),
+    (
+        "minisweagent.run.utilities.evaluation_client",
+        ["evaluation-client", "eval-client", "eval-server"],
+        "Submit, poll, and sync SWE-bench evaluation-server jobs",
+    ),
 ]
 
 

@@ -23,6 +23,7 @@ from minisweagent.config import builtin_config_dir, get_config_from_spec
 from minisweagent.environments import get_environment
 from minisweagent.models import get_model
 from minisweagent.run.benchmarks.utils.batch_progress import RunBatchProgressManager
+from minisweagent.run.utilities.evaluation_client import auto_submit_swebench_predictions
 from minisweagent.utils.langfuse import (
     attach_langfuse_session_metadata as _attach_shared_langfuse_session_metadata,
     enable_langfuse_tracing as _enable_shared_langfuse_tracing,
@@ -68,6 +69,12 @@ DATASET_MAPPING = {
 
 app = typer.Typer(rich_markup_mode="rich", add_completion=False)
 _OUTPUT_FILE_LOCK = threading.Lock()
+_EVAL_SERVER_SUBSET_MAPPING = {
+    "verified": "swe-bench_verified",
+    "smith": "swe-smith",
+    "swe-bench_verified": "swe-bench_verified",
+    "swe-smith": "swe-smith",
+}
 
 
 def _enable_langfuse_tracing() -> None:
@@ -80,6 +87,10 @@ def _make_langfuse_session_id(*, subset: str, split: str, output_path: Path) -> 
 
 def _attach_langfuse_session_metadata(config: dict, *, session_id: str) -> None:
     _attach_shared_langfuse_session_metadata(config, session_id=session_id)
+
+
+def _resolve_eval_server_subset(subset: str) -> str:
+    return _EVAL_SERVER_SUBSET_MAPPING.get(subset, subset)
 
 
 def _resolve_profiled_model_config(config: dict) -> dict:
@@ -373,6 +384,36 @@ def main(
         help='Enable LiteLLM Langfuse tracing by adding "langfuse_otel" to litellm.callbacks',
         rich_help_panel="Advanced",
     ),
+    auto_eval: bool = typer.Option(
+        True,
+        "--auto-eval/--no-auto-eval",
+        help="Submit preds.json to the evaluation server after the batch run completes",
+        rich_help_panel="Advanced",
+    ),
+    eval_server_url: str = typer.Option(
+        "http://laplace.eecs.umich.edu:8000",
+        "--eval-server-url",
+        help="Evaluation server URL used for post-run prediction submission",
+        rich_help_panel="Advanced",
+    ),
+    eval_run_id: str | None = typer.Option(
+        None,
+        "--eval-run-id",
+        help="Stable evaluation-server run_id override for cache reuse across reruns",
+        rich_help_panel="Advanced",
+    ),
+    eval_timeout: int | None = typer.Option(
+        None,
+        "--eval-timeout",
+        help="Optional per-instance timeout sent to the evaluation server",
+        rich_help_panel="Advanced",
+    ),
+    eval_max_workers: int | None = typer.Option(
+        None,
+        "--eval-max-workers",
+        help="Optional worker count sent to the evaluation server",
+        rich_help_panel="Advanced",
+    ),
 ) -> None:
     # fmt: on
     output_path = Path(output)
@@ -457,6 +498,35 @@ def main(
                     if not future.running() and not future.done():
                         future.cancel()
                 process_futures(futures)
+
+    preds_path = output_path / "preds.json"
+    if auto_eval and preds_path.exists():
+        eval_subset = _resolve_eval_server_subset(subset)
+        try:
+            response, upload_path, metadata_path = auto_submit_swebench_predictions(
+                preds_path=preds_path,
+                output_dir=output_path,
+                subset=eval_subset,
+                split=split,
+                server_url=eval_server_url,
+                run_id=eval_run_id,
+                timeout=eval_timeout,
+                max_workers=eval_max_workers,
+            )
+            logger.info(
+                "Queued evaluation job_id=%s run_id=%s status=%s position_in_queue=%s upload=%s metadata=%s server=%s",
+                response.get("job_id"),
+                response.get("run_id"),
+                response.get("status"),
+                response.get("position_in_queue"),
+                upload_path,
+                metadata_path,
+                eval_server_url,
+            )
+        except Exception as exc:
+            logger.error("Failed to auto-submit predictions to evaluation server: %s", exc, exc_info=True)
+    elif auto_eval:
+        logger.info("Skipping evaluation-server submission because no preds.json was produced.")
 
 
 if __name__ == "__main__":

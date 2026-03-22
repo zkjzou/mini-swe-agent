@@ -13,6 +13,7 @@ from minisweagent.models import get_model
 from minisweagent.utils.langfuse import attach_langfuse_session_metadata, enable_langfuse_tracing, make_langfuse_session_id
 from minisweagent.utils.serialize import UNSET, recursive_merge
 from minisweagent.verifiers.checklist import generate_issue_checklist
+from minisweagent.verifiers.checklist_generator import normalize_checklist_generator_model_config
 
 app = typer.Typer(add_completion=False)
 
@@ -213,6 +214,7 @@ def main(
         generator_mode=generator_mode,
         prompt_name=prompt_name,
     )
+    verifier_config.model = normalize_checklist_generator_model_config(dict(verifier_config.model))
     if enable_langfuse:
         enable_langfuse_tracing()
         session_id = make_langfuse_session_id(

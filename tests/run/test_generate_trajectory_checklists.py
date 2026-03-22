@@ -191,3 +191,49 @@ def test_generate_trajectory_checklists_strips_coding_wrapper_from_issue_descrip
     assert "Consider the following PR description" not in prompt
     assert "You'll be helping implement necessary changes" not in prompt
     assert "Your task is specifically to make changes" not in prompt
+
+
+def test_generate_trajectory_checklists_normalizes_litellm_to_textbased_model(tmp_path, monkeypatch):
+    input_path = tmp_path / "rows.json"
+    input_path.write_text(json.dumps([{"task": "Fix bug", "messages": [{"role": "user", "content": "Fix bug"}]}]))
+    output_path = tmp_path / "generated.jsonl"
+    calls = {}
+
+    class _StaticModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": (
+                    "rubric:\n"
+                    "  - id: S1\n"
+                    "    phase: understand\n"
+                    "    weight: 3\n"
+                    "    description: Understand the issue before editing\n"
+                    "    done_when: The issue goal is restated accurately\n"
+                ),
+            }
+
+    def _fake_get_model(*, config):
+        calls["model_config"] = dict(config)
+        return _StaticModel()
+
+    monkeypatch.setattr(
+        "minisweagent.run.utilities.generate_trajectory_checklists.get_model",
+        _fake_get_model,
+    )
+
+    main(
+        input_path=input_path,
+        trajectory=None,
+        output_path=output_path,
+        generator_mode="trajectory_success",
+        prompt_name="static_success_v2",
+        compare_trajectory=None,
+        existing_rubric=None,
+        step_index=None,
+        model_name="openai/MiniMaxAI/MiniMax-M2.5",
+        model_class="litellm",
+        config_spec=[],
+    )
+
+    assert calls["model_config"]["model_class"] == "litellm_textbased"

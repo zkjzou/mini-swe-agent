@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import re
 from typing import Any
 
@@ -9,6 +10,41 @@ from minisweagent.verifiers.checklist import (
     parse_checklist_rubric,
     resolve_checklist_generator_prompt_name,
 )
+
+
+_TEXT_ONLY_MODEL_CLASS_DEFAULT = "litellm_textbased"
+_TEXT_ONLY_MODEL_CLASS_REWRITES = {
+    "litellm": "litellm_textbased",
+    "minisweagent.models.litellm_model.LitellmModel": "litellm_textbased",
+    "openrouter": "openrouter_textbased",
+    "minisweagent.models.openrouter_model.OpenRouterModel": "openrouter_textbased",
+}
+_TEXT_ONLY_MODEL_CLASS_ALLOWED = {
+    "litellm_textbased",
+    "openrouter_textbased",
+    "deterministic",
+    "minisweagent.models.litellm_textbased_model.LitellmTextbasedModel",
+    "minisweagent.models.openrouter_textbased_model.OpenRouterTextbasedModel",
+    "minisweagent.models.test_models.DeterministicModel",
+}
+
+
+def normalize_checklist_generator_model_config(model_config: dict[str, Any]) -> dict[str, Any]:
+    normalized = copy.deepcopy(model_config)
+    requested_model_class = str(normalized.get("model_class") or "").strip()
+    if not requested_model_class:
+        normalized["model_class"] = _TEXT_ONLY_MODEL_CLASS_DEFAULT
+        return normalized
+    if rewritten_class := _TEXT_ONLY_MODEL_CLASS_REWRITES.get(requested_model_class):
+        normalized["model_class"] = rewritten_class
+        return normalized
+    if requested_model_class in _TEXT_ONLY_MODEL_CLASS_ALLOWED:
+        return normalized
+    allowed = ", ".join(sorted(_TEXT_ONLY_MODEL_CLASS_ALLOWED))
+    raise ValueError(
+        f"Unsupported checklist generator model_class '{requested_model_class}'. "
+        f"Checklist generation must use a text-based verifier model. Use one of: {allowed}"
+    )
 
 
 def prepare_checklist_generator_template_vars(
@@ -77,6 +113,8 @@ def generate_trajectory_checklist(
     )
     resolved.checklist_generator_mode = prepared_vars.get("generator_mode", resolved_mode)
     resolved.checklist_generator_prompt_name = prompt_name
+    if isinstance(getattr(resolved, "model", None), dict):
+        resolved.model = normalize_checklist_generator_model_config(resolved.model)
     if prompt_dir is not None:
         resolved.checklist_generator_prompt_dir = prompt_dir
     return generate_issue_checklist(model, resolved, template_vars=prepared_vars)
@@ -99,6 +137,7 @@ class _ChecklistGeneratorConfigProxy:
 __all__ = [
     "generate_trajectory_checklist",
     "load_checklist_generator_templates",
+    "normalize_checklist_generator_model_config",
     "prepare_checklist_generator_template_vars",
     "resolve_checklist_generator_prompt_name",
 ]

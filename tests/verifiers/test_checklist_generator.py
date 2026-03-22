@@ -130,3 +130,25 @@ def test_normalize_checklist_generator_model_config_rewrites_litellm_to_textbase
     normalized = normalize_checklist_generator_model_config({"model_name": "minimax-2.5", "model_class": "litellm"})
 
     assert normalized["model_class"] == "litellm_textbased"
+
+
+def test_prepare_checklist_generator_template_vars_sets_dynamic_current_and_successful_trajectory():
+    template_vars = prepare_checklist_generator_template_vars(
+        {
+            "messages": [{"role": "user", "content": "Inspect parser flow"}],
+            "all_steps": [
+                [{"role": "user", "content": "Inspect parser flow"}],
+                [{"role": "assistant", "content": "Patch parser ordering"}],
+            ],
+        },
+        generator_mode="trajectory_dynamic",
+    )
+
+    assert template_vars["current_trajectory"] == "user: Inspect parser flow"
+    assert "assistant: Patch parser ordering" in template_vars["successful_trajectory_text"]
+
+
+def test_resolve_checklist_generator_prompt_name_accepts_dynamic_success_v2():
+    assert resolve_checklist_generator_prompt_name(
+        SimpleNamespace(checklist_generator_prompt_name="dynamic_success_v2")
+    ) == "dynamic_success_v2"

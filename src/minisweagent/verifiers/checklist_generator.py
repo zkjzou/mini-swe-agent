@@ -72,6 +72,8 @@ def prepare_checklist_generator_template_vars(
     prepared.setdefault("trajectory_messages", all_messages)
     prepared.setdefault("full_trajectory_text", full_trajectory_text)
     prepared.setdefault("prior_trajectory_text", prior_trajectory_text)
+    prepared.setdefault("current_trajectory", prior_trajectory_text)
+    prepared.setdefault("successful_trajectory_text", full_trajectory_text)
 
     if generator_mode == "trajectory_dynamic":
         future_messages = all_messages[len(visible_messages) :]
@@ -186,4 +188,5 @@ def _generator_mode_from_prompt_name(prompt_name: str) -> str | None:
         "static_failure": "trajectory_failure",
         "pairwise_evolve": "trajectory_pairwise",
         "dynamic_success": "trajectory_dynamic",
+        "dynamic_success_v2": "trajectory_dynamic",
     }.get(prompt_name)

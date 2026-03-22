@@ -6,10 +6,13 @@ from minisweagent.verifiers.checklist import (
     dedupe_checklist_items,
     generate_issue_checklist,
     infer_checklist_prompt_settings,
+    load_checklist_generator_templates,
     normalize_checklist_items,
     parse_checklist_items,
     parse_checklist_rubric,
+    resolve_checklist_generator_prompt_name,
     resolve_checklist_output_format,
+    sanitize_checklist_generation_output,
 )
 
 
@@ -91,6 +94,15 @@ def test_resolve_checklist_output_format_autodetects_dynamic_ultimate_v2():
 def test_resolve_checklist_output_format_autodetects_ultimate_v2_mini():
     config = SimpleNamespace(prompt_name="ultimate_v2_mini/verifier", checklist_output_format="auto")
     assert resolve_checklist_output_format(config) == "rubric_yaml"
+
+
+def test_load_checklist_generator_templates_supports_static_success_v2():
+    config = SimpleNamespace(checklist_generator_prompt_name="static_success_v2")
+    system_template, prompt_template = load_checklist_generator_templates(config)
+
+    assert system_template is not None
+    assert prompt_template is not None
+    assert "verifier-facing process rubric" in prompt_template
 
 
 def test_infer_checklist_prompt_settings_enables_ultimate_v2_variants():
@@ -267,3 +279,168 @@ def test_generate_issue_checklist_can_replay_history_as_multi_turn_chat():
         {"role": "user", "content": "Found failing test output"},
         {"role": "user", "content": "Issue description: sample issue"},
     ]
+
+
+def test_load_checklist_generator_templates_reads_prompt_family(tmp_path):
+    prompt_dir = tmp_path / "prompts" / "checklist_generator" / "dynamic_success"
+    prompt_dir.mkdir(parents=True, exist_ok=True)
+    (prompt_dir / "system.jinja").write_text("generator system")
+    (prompt_dir / "prompt.jinja").write_text("generator prompt")
+
+    config = SimpleNamespace(
+        checklist_generator_prompt_name="dynamic_success",
+        checklist_generator_prompt_dir=str(tmp_path / "prompts" / "checklist_generator"),
+    )
+
+    system_template, prompt_template = load_checklist_generator_templates(config)
+
+    assert system_template == "generator system"
+    assert prompt_template == "generator prompt"
+
+
+def test_resolve_checklist_generator_prompt_name_defaults_from_mode():
+    config = SimpleNamespace(checklist_generator_mode="trajectory_dynamic", checklist_generator_prompt_name=None)
+
+    assert resolve_checklist_generator_prompt_name(config) == "dynamic_success"
+
+
+def test_generate_issue_checklist_uses_checklist_generator_prompt_override(tmp_path):
+    prompt_dir = tmp_path / "prompts" / "checklist_generator" / "trajectory_success"
+    prompt_dir.mkdir(parents=True, exist_ok=True)
+    (prompt_dir / "system.jinja").write_text("system {{ task }}")
+    (prompt_dir / "prompt.jinja").write_text("trajectory {{ trajectory_text }}")
+
+    class _QueryOnlyModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": "CHECKLIST:\n- Reproduce issue\n- Patch source code\n- Run tests\n",
+                "extra": {"cost": 0.25},
+            }
+
+    config = SimpleNamespace(
+        checklist_system_template="fallback system",
+        checklist_prompt_template="fallback prompt",
+        checklist_generator_prompt_name="trajectory_success",
+        checklist_generator_prompt_dir=str(tmp_path / "prompts" / "checklist_generator"),
+        checklist_generator_mode="trajectory_success",
+        checklist_item_regex=r"^\s*(?:[-*]|\d+[.)])\s*(.+?)\s*$",
+        checklist_min_items=3,
+        checklist_max_items=5,
+        include_inputs_in_output=True,
+    )
+
+    output = generate_issue_checklist(
+        _QueryOnlyModel(),
+        config,
+        template_vars={"task": "sample issue", "messages": [], "trajectory_text": "assistant: inspect file"},
+    )
+
+    assert output["input"]["messages"][0]["content"] == "system sample issue"
+    assert output["input"]["messages"][-1]["content"] == "trajectory assistant: inspect file"
+
+
+def test_sanitize_checklist_generation_output_strips_future_only_terms():
+    config = SimpleNamespace(
+        checklist_generator_mode="trajectory_dynamic",
+        checklist_generator_validate_grounding=True,
+        checklist_output_format="rubric_yaml",
+        checklist_min_items=3,
+        checklist_max_items=5,
+    )
+
+    sanitized = sanitize_checklist_generation_output(
+        config,
+        template_vars={
+            "task": "Fix bug",
+            "messages": [{"role": "assistant", "content": "Inspect parser.py"}],
+            "future_steps": ["assistant: edit hidden_future.py to update FutureSymbol"],
+            "future_steps_text": "1. assistant: edit hidden_future.py to update FutureSymbol",
+        },
+        items=["Inspect hidden_future.py and update FutureSymbol"],
+        rubric_items=[
+            {
+                "id": "S1",
+                "description": "Inspect hidden_future.py and update FutureSymbol",
+                "stage": "fix",
+                "observable_signal": "FutureSymbol is updated in hidden_future.py",
+            }
+        ],
+    )
+
+    assert sanitized["guardrail"]["mode"] == "trajectory_dynamic"
+    assert "hidden_future.py" in sanitized["guardrail"]["sanitized_terms"]
+    assert sanitized["items"][0] == "Inspect relevant implementation detail and update relevant code element"
+    assert sanitized["rubric_items"][0]["description"] == sanitized["items"][0]
+
+
+def test_generate_issue_checklist_dynamic_mode_uses_inferred_prompt_and_full_future_steps():
+    class _DynamicRubricModel:
+        def query(self, messages, **kwargs):
+            self.messages = messages
+            return {
+                "role": "assistant",
+                "content": (
+                    "rubric:\n"
+                    "  - id: D1\n"
+                    "    phase: validate\n"
+                    "    weight: 3\n"
+                    "    description: Validate src/future_only.py after the change\n"
+                    "    done_when: src/future_only.py passes focused checks\n"
+                ),
+                "extra": {"cost": 0.3},
+            }
+
+    config = SimpleNamespace(
+        checklist_generator_mode="trajectory_dynamic",
+        checklist_generator_prompt_name=None,
+        checklist_generator_prompt_dir="prompts/checklist_generator",
+        checklist_generator_validate_grounding=True,
+        checklist_output_format="rubric_yaml",
+        checklist_system_template="fallback system",
+        checklist_prompt_template="fallback prompt",
+        checklist_item_regex=r"^\s*(?:[-*]|\d+[.)])\s*(.+?)\s*$",
+        checklist_min_items=3,
+        checklist_max_items=5,
+        include_inputs_in_output=True,
+        history_message_format="single_prompt",
+    )
+
+    output = generate_issue_checklist(
+        _DynamicRubricModel(),
+        config,
+        template_vars={
+            "task": "Fix validation flow",
+            "steps": [
+                [
+                    {"role": "assistant", "content": "Inspect current validation logic"},
+                    {"role": "user", "content": "Observed problem in src/current.py"},
+                ]
+            ],
+            "all_steps": [
+                [
+                    {"role": "assistant", "content": "Inspect current validation logic"},
+                    {"role": "user", "content": "Observed problem in src/current.py"},
+                ],
+                [
+                    {"role": "assistant", "content": "Edit src/future_only.py"},
+                    {"role": "user", "content": "Focused test now passes"},
+                ],
+                [
+                    {"role": "assistant", "content": "Run regression suite"},
+                    {"role": "user", "content": "No regressions found"},
+                ],
+            ],
+        },
+    )
+
+    rendered_prompt = output["input"]["messages"][-1]["content"]
+    assert "Full future steps after the current step" in rendered_prompt
+    assert "Edit src/future_only.py" in rendered_prompt
+    assert output["generator_prompt_name"] == "dynamic_success"
+    assert output["generator_mode"] == "trajectory_dynamic"
+    assert output["guardrail"]["mode"] == "trajectory_dynamic"
+    assert "src/future_only.py" in output["guardrail"]["sanitized_terms"]
+    assert output["items"] == ["Validate relevant implementation detail after the change"]
+    assert output["rubric_items"][0]["description"] == "Validate relevant implementation detail after the change"
+    assert output["rubric_items"][0]["observable_signal"] == "relevant implementation detail passes focused checks"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -46,22 +47,39 @@ def _extract_messages(payload: Any) -> list[dict[str, Any]]:
     raise ValueError("Trajectory payload must be a list of messages or an object with a 'messages' list.")
 
 
+def _extract_task_from_user_message(content: str) -> str:
+    text = str(content or "").strip()
+    if not text:
+        return ""
+
+    pr_description_match = re.search(r"<pr_description>\s*(.*?)\s*</pr_description>", text, re.DOTALL | re.IGNORECASE)
+    extracted = pr_description_match.group(1).strip() if pr_description_match is not None else text
+    extracted = re.sub(
+        r"^\s*Consider the following PR description:\s*",
+        "",
+        extracted,
+        count=1,
+        flags=re.IGNORECASE,
+    ).strip()
+    return extracted or text
+
+
 def _extract_task(payload: Any, messages: list[dict[str, Any]]) -> str:
     if isinstance(payload, dict):
         for key in ("task", "problem_statement"):
             value = payload.get(key)
             if isinstance(value, str) and value.strip():
-                return value.strip()
+                return _extract_task_from_user_message(value)
         info = payload.get("info", {})
         if isinstance(info, dict):
             value = info.get("task")
             if isinstance(value, str) and value.strip():
-                return value.strip()
+                return _extract_task_from_user_message(value)
     for message in messages:
         if message.get("role") == "user":
             content = message.get("content")
             if isinstance(content, str) and content.strip():
-                return content.strip()
+                return _extract_task_from_user_message(content)
     return ""
 
 

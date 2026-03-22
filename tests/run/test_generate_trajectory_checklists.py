@@ -127,3 +127,67 @@ def test_generate_trajectory_checklists_can_enable_langfuse(tmp_path, monkeypatc
     assert calls["enabled"] is True
     assert calls["session_id"] == "session-123"
     assert calls["config"]["model"]["model_kwargs"]["litellm_session_id"] == "session-123"
+
+
+def test_generate_trajectory_checklists_strips_coding_wrapper_from_issue_description(tmp_path, monkeypatch):
+    trajectory_path = tmp_path / "wrapped.traj.json"
+    trajectory_path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "system", "content": "system"},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Consider the following PR description:\n"
+                            "<pr_description>\nFix validation flow for empty payloads\n</pr_description>\n\n"
+                            "You'll be helping implement necessary changes to meet requirements in the PR description.\n"
+                            "Your task is specifically to make changes to non-test files in the current directory."
+                        ),
+                    },
+                ],
+            }
+        )
+    )
+    output_path = tmp_path / "generated.jsonl"
+
+    class _StaticModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": (
+                    "rubric:\n"
+                    "  - id: S1\n"
+                    "    phase: understand\n"
+                    "    weight: 3\n"
+                    "    description: Understand the issue before editing\n"
+                    "    done_when: The issue goal is restated accurately\n"
+                ),
+            }
+
+    monkeypatch.setattr(
+        "minisweagent.run.utilities.generate_trajectory_checklists.get_model",
+        lambda **kwargs: _StaticModel(),
+    )
+
+    main(
+        input_path=None,
+        trajectory=trajectory_path,
+        output_path=output_path,
+        generator_mode="trajectory_success",
+        prompt_name="static_success_v2",
+        compare_trajectory=None,
+        existing_rubric=None,
+        step_index=None,
+        model_name="deterministic",
+        model_class="deterministic",
+        config_spec=[],
+    )
+
+    row = json.loads(output_path.read_text().strip())
+    prompt = row["output"]["input"]["messages"][-1]["content"]
+
+    assert "Fix validation flow for empty payloads" in prompt
+    assert "Consider the following PR description" not in prompt
+    assert "You'll be helping implement necessary changes" not in prompt
+    assert "Your task is specifically to make changes" not in prompt

@@ -1,0 +1,142 @@
+[
+  {
+    "instance_id": "astropy__astropy-12907",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-12907/astropy__astropy-12907.traj.json"
+  },
+  {
+    "instance_id": "astropy__astropy-13453",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-13453/astropy__astropy-13453.traj.json"
+  },
+  {
+    "instance_id": "astropy__astropy-13579",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-13579/astropy__astropy-13579.traj.json"
+  },
+  {
+    "instance_id": "astropy__astropy-14096",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-14096/astropy__astropy-14096.traj.json"
+  },
+  {
+    "instance_id": "astropy__astropy-14182",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-14182/astropy__astropy-14182.traj.json"
+  },
+  {
+    "instance_id": "astropy__astropy-14309",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-14309/astropy__astropy-14309.traj.json"
+  },
+  {
+    "instance_id": "astropy__astropy-14365",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-14365/astropy__astropy-14365.traj.json"
+  },
+  {
+    "instance_id": "astropy__astropy-14369",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-14369/astropy__astropy-14369.traj.json"
+  },
+  {
+    "instance_id": "astropy__astropy-14508",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-14508/astropy__astropy-14508.traj.json"
+  },
+  {
+    "instance_id": "astropy__astropy-14539",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-14539/astropy__astropy-14539.traj.json"
+  },
+  {
+    "instance_id": "astropy__astropy-14995",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-14995/astropy__astropy-14995.traj.json"
+  },
+  {
+    "instance_id": "astropy__astropy-7166",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-7166/astropy__astropy-7166.traj.json"
+  },
+  {
+    "instance_id": "astropy__astropy-7336",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-7336/astropy__astropy-7336.traj.json"
+  },
+  {
+    "instance_id": "astropy__astropy-7671",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/astropy__astropy-7671/astropy__astropy-7671.traj.json"
+  },
+  {
+    "instance_id": "django__django-10880",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-10880/django__django-10880.traj.json"
+  },
+  {
+    "instance_id": "django__django-10914",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-10914/django__django-10914.traj.json"
+  },
+  {
+    "instance_id": "django__django-11066",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11066/django__django-11066.traj.json"
+  },
+  {
+    "instance_id": "django__django-11095",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11095/django__django-11095.traj.json"
+  },
+  {
+    "instance_id": "django__django-11099",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11099/django__django-11099.traj.json"
+  },
+  {
+    "instance_id": "django__django-11119",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11119/django__django-11119.traj.json"
+  },
+  {
+    "instance_id": "django__django-11133",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11133/django__django-11133.traj.json"
+  },
+  {
+    "instance_id": "django__django-11138",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11138/django__django-11138.traj.json"
+  },
+  {
+    "instance_id": "django__django-11141",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11141/django__django-11141.traj.json"
+  },
+  {
+    "instance_id": "django__django-11149",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11149/django__django-11149.traj.json"
+  },
+  {
+    "instance_id": "django__django-11163",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11163/django__django-11163.traj.json"
+  },
+  {
+    "instance_id": "django__django-11179",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11179/django__django-11179.traj.json"
+  },
+  {
+    "instance_id": "django__django-11206",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11206/django__django-11206.traj.json"
+  },
+  {
+    "instance_id": "django__django-11211",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11211/django__django-11211.traj.json"
+  },
+  {
+    "instance_id": "django__django-11239",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11239/django__django-11239.traj.json"
+  },
+  {
+    "instance_id": "django__django-11276",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11276/django__django-11276.traj.json"
+  },
+  {
+    "instance_id": "django__django-11292",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11292/django__django-11292.traj.json"
+  },
+  {
+    "instance_id": "django__django-11299",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11299/django__django-11299.traj.json"
+  },
+  {
+    "instance_id": "django__django-11333",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11333/django__django-11333.traj.json"
+  },
+  {
+    "instance_id": "django__django-11433",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11433/django__django-11433.traj.json"
+  },
+  {
+    "instance_id": "django__django-11451",
+    "trajectory_path": "/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_4/django__django-11451/django__django-11451.traj.json"
+  }
+]

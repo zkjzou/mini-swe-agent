@@ -1,11 +1,11 @@
 Issue description:
 {{ task }}
 
-Successful trajectory:
+{% if history_message_format != "multi_turn_chat" %}Successful trajectory:
 {{ trajectory_text }}
 
-Background:
-A successful trajectory for this same issue is provided in one of two ways: either as one flattened trajectory message above or as the preceding conversation history.
-Use the preceding conversation as the trajectory history when available. Use that successful trajectory as evidence for what mattered, but do not narrate it step by step.
+{% endif %}Background:
+Use the preceding conversation as the trajectory history when history messages are provided. Otherwise use the single trajectory block above.
+Use that successful trajectory as evidence for what mattered, but do not narrate it step by step.
 
 Generate the checklist now.

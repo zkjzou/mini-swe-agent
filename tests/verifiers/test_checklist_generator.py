@@ -163,7 +163,8 @@ def test_generate_trajectory_checklist_static_success_supports_multi_turn_chat_c
 
     input_messages = output["input"]["messages"]
     assert any(msg["role"] == "assistant" and "Inspect parser ordering logic" in msg["content"] for msg in input_messages)
-    assert "Successful trajectory:" in input_messages[-1]["content"]
+    assert "Use the preceding conversation as the trajectory history" in input_messages[-1]["content"]
+    assert "Successful trajectory:" not in input_messages[-1]["content"]
 
 
 def test_resolve_checklist_generator_prompt_name_accepts_static_success_v2():
@@ -615,3 +616,46 @@ def test_generate_trajectory_checklist_dynamic_failure_minimal_returns_checklist
     assert output["rubric_items"] == []
     assert output["guardrail"]["mode"] == "trajectory_dynamic"
     assert "Unsuccessful trajectory (teacher-only privileged evidence):" in output["input"]["messages"][-1]["content"]
+
+
+def test_generate_trajectory_checklist_dynamic_success_multi_turn_chat_avoids_duplicate_current_trajectory():
+    class _DynamicModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": (
+                    "CHECKLIST:\n"
+                    "- Confirm the reproduction still matches the reported failure\n"
+                    "- Validate the fix with focused regression checks\n"
+                ),
+                "extra": {"cost": 0.1},
+            }
+
+    config = SimpleNamespace(
+        checklist_output_format="list",
+        checklist_min_items=2,
+        checklist_max_items=8,
+        include_inputs_in_output=True,
+        history_message_format="multi_turn_chat",
+    )
+    output = generate_trajectory_checklist(
+        _DynamicModel(),
+        config,
+        prompt_name="dynamic_success",
+        template_vars={
+            "task": "Fix parser bug",
+            "steps": [[{"role": "user", "content": "Reproduce failure in parser.py"}]],
+            "all_steps": [
+                [{"role": "user", "content": "Reproduce failure in parser.py"}],
+                [{"role": "assistant", "content": "Patch parser ordering and validate behavior"}],
+            ],
+            "generator_mode": "trajectory_dynamic",
+        },
+    )
+
+    final_prompt = output["input"]["messages"][-1]["content"]
+    assert "Use the preceding conversation as the trajectory history" in final_prompt
+    assert "Current trajectory so far:" not in final_prompt
+    assert "Reproduce failure in parser.py" not in final_prompt
+    assert "Successful trajectory (teacher-only privileged evidence):" in final_prompt
+    assert "assistant: Patch parser ordering and validate behavior" in final_prompt

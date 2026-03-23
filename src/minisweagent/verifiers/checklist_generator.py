@@ -75,9 +75,14 @@ def prepare_checklist_generator_template_vars(
     prepared.setdefault("current_trajectory", prior_trajectory_text)
     prepared.setdefault("successful_trajectory_text", full_trajectory_text)
     prepared.setdefault("unsuccessful_trajectory_text", full_trajectory_text)
+    prepared.setdefault("remaining_successful_trajectory_text", "")
+    prepared.setdefault("remaining_unsuccessful_trajectory_text", "")
 
     if generator_mode == "trajectory_dynamic":
         future_messages = all_messages[len(visible_messages) :]
+        future_trajectory_text = _render_messages_text(future_messages)
+        prepared["remaining_successful_trajectory_text"] = future_trajectory_text
+        prepared["remaining_unsuccessful_trajectory_text"] = future_trajectory_text
         future_steps = prepared.get("future_steps")
         if not isinstance(future_steps, list) or not future_steps:
             future_steps = [_summarize_message(message) for message in future_messages]

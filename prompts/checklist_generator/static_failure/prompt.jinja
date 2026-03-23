@@ -1,12 +1,12 @@
 Issue description:
 {{ task }}
 
-Unsuccessful trajectory:
+{% if history_message_format != "multi_turn_chat" %}Unsuccessful trajectory:
 {{ trajectory_text }}
 
-Background:
-An unsuccessful trajectory for this same issue is provided in one of two ways: either as one flattened trajectory message above or as the preceding conversation history.
-Use the preceding conversation as the trajectory history when available. Use the unsuccessful trajectory as privileged evidence about what was missed, misdiagnosed, overfit, or insufficiently validated.
+{% endif %}Background:
+Use the preceding conversation as the trajectory history when history messages are provided. Otherwise use the single trajectory block above.
+Use the unsuccessful trajectory as privileged evidence about what was missed, misdiagnosed, overfit, or insufficiently validated.
 Convert those lessons into issue-level checklist items that another attempt could use without access to this trajectory.
 
 Generate the checklist now.

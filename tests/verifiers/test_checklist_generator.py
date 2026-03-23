@@ -60,12 +60,13 @@ def test_generate_trajectory_checklist_filters_future_only_details_in_dynamic_mo
     output = generate_trajectory_checklist(
         _DynamicModel(),
         config,
-        prompt_name="dynamic_success",
+        prompt_name="dynamic_success_v2",
         template_vars={
             "task": "Fix parser bug",
-            "prior_trajectory_text": "Step 1:\nuser: Reproduce failure in parser.py",
-            "future_steps": [
-                "Step 2:\nassistant: Edit src/new_future_file.py and run pytest tests/test_new_future_file.py",
+            "steps": [[{"role": "user", "content": "Reproduce failure in parser.py"}]],
+            "all_steps": [
+                [{"role": "user", "content": "Reproduce failure in parser.py"}],
+                [{"role": "assistant", "content": "Edit src/new_future_file.py and run pytest tests/test_new_future_file.py"}],
             ],
             "generator_mode": "trajectory_dynamic",
         },
@@ -75,10 +76,11 @@ def test_generate_trajectory_checklist_filters_future_only_details_in_dynamic_mo
         "Inspect relevant implementation detail before editing it",
         "Confirm the existing reproduction still matches the reported failure",
     ]
-    assert output["generator_prompt_name"] == "dynamic_success"
+    assert output["generator_prompt_name"] == "dynamic_success_v2"
     assert output["guardrail"]["mode"] == "trajectory_dynamic"
     assert "src/new_future_file.py" in output["guardrail"]["sanitized_terms"]
-    assert "Full future steps after the current step" in output["input"]["messages"][-1]["content"]
+    assert "Current trajectory so far:" in output["input"]["messages"][-1]["content"]
+    assert "Successful trajectory (teacher-only privileged evidence):" in output["input"]["messages"][-1]["content"]
 
 
 def test_generate_trajectory_checklist_parses_static_success_checklist_items():
@@ -242,3 +244,53 @@ def test_generate_trajectory_checklist_parses_static_failure_checklist_items():
     assert output["generator_mode"] == "trajectory_failure"
     assert output["checklist_output_format"] == "list"
     assert output["rubric_items"] == []
+
+
+def test_generate_trajectory_checklist_dynamic_success_returns_checklist_items():
+    class _DynamicChecklistModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": (
+                    "CHECKLIST:\n"
+                    "- Inspect src/new_future_file.py before editing it\n"
+                    "- Confirm the existing reproduction still matches the reported failure\n"
+                ),
+                "extra": {"cost": 0.2},
+            }
+
+    config = SimpleNamespace(
+        checklist_output_format="list",
+        checklist_min_items=2,
+        checklist_max_items=8,
+        include_inputs_in_output=True,
+        history_message_format="single_prompt",
+    )
+    output = generate_trajectory_checklist(
+        _DynamicChecklistModel(),
+        config,
+        prompt_name="dynamic_success",
+        template_vars={
+            "task": "Fix parser bug",
+            "steps": [[{"role": "user", "content": "Reproduce failure in parser.py"}]],
+            "all_steps": [
+                [{"role": "user", "content": "Reproduce failure in parser.py"}],
+                [
+                    {
+                        "role": "assistant",
+                        "content": "Edit src/new_future_file.py and run pytest tests/test_new_future_file.py",
+                    }
+                ],
+            ],
+            "generator_mode": "trajectory_dynamic",
+        },
+    )
+
+    assert output["items"] == [
+        "Inspect relevant implementation detail before editing it",
+        "Confirm the existing reproduction still matches the reported failure",
+    ]
+    assert output["generator_prompt_name"] == "dynamic_success"
+    assert output["checklist_output_format"] == "list"
+    assert output["rubric_items"] == []
+    assert output["guardrail"]["mode"] == "trajectory_dynamic"

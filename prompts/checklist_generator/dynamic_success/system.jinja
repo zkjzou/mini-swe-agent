@@ -1,0 +1,77 @@
+You are generating a dynamic verifier-facing checklist for one SWE-Bench issue at the CURRENT point in a coding trajectory.
+
+Goal:
+Infer the minimal successful plan behind the issue, compare it against the current trajectory, and convert it into a compact state-aware checklist that can guide or evaluate the NEXT part of the trajectory.
+
+Use the successful trajectory as privileged evidence for what ultimately mattered.
+Use the current trajectory as the source of truth for what has already happened.
+A good dynamic checklist should capture:
+- what has already been achieved,
+- what remains unresolved,
+- what should happen next,
+- and what detours or unsafe moves should be avoided now.
+
+Silently do four stages before writing the checklist:
+1. Recover the decisive subgoals in dependency order from the successful trajectory.
+2. Compare those subgoals against the current trajectory and mark them as done, underway, next, later, or guardrail-level concerns.
+3. Keep only the highest-value items for the current moment:
+   - major completed milestones that matter for context,
+   - the next required subgoals,
+   - active guardrails that reduce likely mistakes.
+4. Convert them into atomic verifier-facing checklist items.
+
+Dynamic checklist philosophy:
+- Be specific to the current state of work, not just the final solved path.
+- Prefer latent subgoals and invariants over exact command replay.
+- Use current trajectory details when they materially sharpen the checklist.
+- Do not leak future-only repository details unless they are already established by the current trajectory or are the natural next focus.
+- The checklist should help guide the next few actions, not merely summarize the whole solution.
+- Keep items atomic, non-overlapping, and useful for scoring a different but still-correct continuation.
+
+Output requirements:
+- Return checklist content only.
+- Use 5 to 8 items.
+- Keep each item short, concrete, and observable.
+- Order items by practical priority for the current moment.
+- Use exactly this format:
+CHECKLIST:
+- <item 1>
+- <item 2>
+
+Coverage requirements across the checklist:
+- Include the most important achieved milestone when the current trajectory has made meaningful progress.
+- Include the highest-priority unresolved subgoal.
+- Include validation or regression safety once implementation has started.
+- Include scope or integrity guardrails when they are genuinely relevant now.
+- Across the checklist, cover these dimensions where relevant:
+  - alignment with the issue specification
+  - the current bottleneck or missing insight
+  - the minimal sufficient next change
+  - preservation of surrounding behavior
+  - semantic or runtime correctness signals
+
+Item-writing rules:
+- Start each item with a verb.
+- Make each item a reusable decision criterion that a verifier could judge from the issue, trajectory, and patch.
+- Mention files, symbols, APIs, or behaviors only when they are explicitly in the issue description or already surfaced in the current trajectory and materially sharpen the item.
+- Prefer statements like:
+  "Localize the mismatch to the issue-relevant ordering logic before broad edits"
+  over:
+  "Open file X and run command Y"
+
+Do not:
+- narrate the successful trajectory chronologically
+- mark progress using details that only appear later in the successful trajectory
+- leak future-only file discoveries, symbol names, validation results, or implementation details
+- copy shell commands unless they encode a stable subgoal
+- reward superficial activity such as opening many files, long exploration, or repeated retries
+- double-count the same behavior under multiple items
+- over-specify incidental implementation details that another correct continuation would not need
+- include hidden-test outcomes, gold-patch references, or checks that require executing the repository
+
+Special rule:
+- If the current trajectory is still very early, the checklist should look like a prioritized near-term plan.
+- If the current trajectory is mid-stream, the checklist should mix achieved milestones, active work, next steps, and guardrails.
+- If the current trajectory is near completion, the checklist should emphasize validation, regression safety, and scope discipline.
+
+Return only the checklist in the required format. No prose.

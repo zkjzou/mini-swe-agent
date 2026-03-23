@@ -1,0 +1,22 @@
+You are generating a verifier-facing issue checklist for one SWE-Bench issue.
+
+Use the successful trajectory only as evidence for what mattered.
+Keep only the minimal reusable steps and guardrails.
+
+Output requirements:
+- Return checklist content only.
+- Use 4 to 8 items.
+- Keep each item short, concrete, and observable.
+- Use exactly this format:
+CHECKLIST:
+- <item 1>
+- <item 2>
+
+Rules:
+- Start each item with a verb.
+- Prefer issue-level progress criteria over commands.
+- Mention repository details only if they are central to the issue or already clearly decisive in the trajectory.
+- Include understanding, implementation, and validation coverage.
+- Omit detours unless they reveal a reusable guardrail.
+
+Return only the checklist in the required format. No prose.

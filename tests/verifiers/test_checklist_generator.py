@@ -220,6 +220,33 @@ def test_resolve_checklist_generator_prompt_name_accepts_dynamic_failure_v2():
     ) == "dynamic_failure_v2"
 
 
+def test_resolve_checklist_generator_prompt_name_accepts_static_success_minimal():
+    assert resolve_checklist_generator_prompt_name(
+        SimpleNamespace(checklist_generator_prompt_name="static_success_minimal")
+    ) == "static_success_minimal"
+
+
+
+def test_resolve_checklist_generator_prompt_name_accepts_static_failure_minimal():
+    assert resolve_checklist_generator_prompt_name(
+        SimpleNamespace(checklist_generator_prompt_name="static_failure_minimal")
+    ) == "static_failure_minimal"
+
+
+
+def test_resolve_checklist_generator_prompt_name_accepts_dynamic_success_minimal():
+    assert resolve_checklist_generator_prompt_name(
+        SimpleNamespace(checklist_generator_prompt_name="dynamic_success_minimal")
+    ) == "dynamic_success_minimal"
+
+
+
+def test_resolve_checklist_generator_prompt_name_accepts_dynamic_failure_minimal():
+    assert resolve_checklist_generator_prompt_name(
+        SimpleNamespace(checklist_generator_prompt_name="dynamic_failure_minimal")
+    ) == "dynamic_failure_minimal"
+
+
 def test_generate_trajectory_checklist_parses_static_failure_checklist_items():
     class _FailureModel:
         def query(self, messages, **kwargs):
@@ -413,3 +440,178 @@ def test_generate_trajectory_checklist_dynamic_failure_returns_checklist_items()
     assert output["checklist_output_format"] == "list"
     assert output["rubric_items"] == []
     assert output["guardrail"]["mode"] == "trajectory_dynamic"
+
+
+def test_generate_trajectory_checklist_parses_static_success_minimal_items():
+    class _StaticMinimalModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": (
+                    "CHECKLIST:\n"
+                    "- Clarify the issue-relevant behavior before editing\n"
+                    "- Validate the fix against the reported failure and nearby behavior\n"
+                ),
+                "extra": {"cost": 0.1},
+            }
+
+    config = SimpleNamespace(
+        checklist_output_format="list",
+        checklist_min_items=2,
+        checklist_max_items=8,
+        include_inputs_in_output=False,
+        history_message_format="single_prompt",
+    )
+    output = generate_trajectory_checklist(
+        _StaticMinimalModel(),
+        config,
+        prompt_name="static_success_minimal",
+        template_vars={
+            "task": "Fix parser bug",
+            "full_trajectory_text": "Step 1:\nuser: reproduce\n\nStep 2:\nassistant: localize",
+            "generator_mode": "trajectory_success",
+        },
+    )
+
+    assert output["items"] == [
+        "Clarify the issue-relevant behavior before editing",
+        "Validate the fix against the reported failure and nearby behavior",
+    ]
+    assert output["generator_prompt_name"] == "static_success_minimal"
+    assert output["checklist_output_format"] == "list"
+    assert output["rubric_items"] == []
+
+
+
+def test_generate_trajectory_checklist_parses_static_failure_minimal_items():
+    class _StaticFailureMinimalModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": (
+                    "CHECKLIST:\n"
+                    "- Clarify the intended behavior before accepting a fix\n"
+                    "- Verify the semantic correction instead of stopping at a surface symptom change\n"
+                ),
+                "extra": {"cost": 0.1},
+            }
+
+    config = SimpleNamespace(
+        checklist_output_format="list",
+        checklist_min_items=2,
+        checklist_max_items=8,
+        include_inputs_in_output=False,
+        history_message_format="single_prompt",
+    )
+    output = generate_trajectory_checklist(
+        _StaticFailureMinimalModel(),
+        config,
+        prompt_name="static_failure_minimal",
+        template_vars={
+            "task": "Fix parser bug",
+            "full_trajectory_text": "Step 1:\nuser: reproduce\n\nStep 2:\nassistant: patch partial symptom",
+            "generator_mode": "trajectory_failure",
+        },
+    )
+
+    assert output["items"] == [
+        "Clarify the intended behavior before accepting a fix",
+        "Verify the semantic correction instead of stopping at a surface symptom change",
+    ]
+    assert output["generator_prompt_name"] == "static_failure_minimal"
+    assert output["checklist_output_format"] == "list"
+    assert output["rubric_items"] == []
+
+
+
+def test_generate_trajectory_checklist_dynamic_success_minimal_returns_checklist_items():
+    class _DynamicSuccessMinimalModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": (
+                    "CHECKLIST:\n"
+                    "- Revisit src/new_future_file.py before broad edits\n"
+                    "- Confirm the reported failure still matches the current understanding\n"
+                ),
+                "extra": {"cost": 0.2},
+            }
+
+    config = SimpleNamespace(
+        checklist_output_format="list",
+        checklist_min_items=2,
+        checklist_max_items=8,
+        include_inputs_in_output=True,
+        history_message_format="single_prompt",
+    )
+    output = generate_trajectory_checklist(
+        _DynamicSuccessMinimalModel(),
+        config,
+        prompt_name="dynamic_success_minimal",
+        template_vars={
+            "task": "Fix parser bug",
+            "steps": [[{"role": "user", "content": "Reproduce failure in parser.py"}]],
+            "all_steps": [
+                [{"role": "user", "content": "Reproduce failure in parser.py"}],
+                [{"role": "assistant", "content": "Edit src/new_future_file.py and run pytest tests/test_new_future_file.py"}],
+            ],
+            "generator_mode": "trajectory_dynamic",
+        },
+    )
+
+    assert output["items"] == [
+        "Revisit relevant implementation detail before broad edits",
+        "Confirm the reported failure still matches the current understanding",
+    ]
+    assert output["generator_prompt_name"] == "dynamic_success_minimal"
+    assert output["checklist_output_format"] == "list"
+    assert output["rubric_items"] == []
+    assert output["guardrail"]["mode"] == "trajectory_dynamic"
+    assert "Successful trajectory (teacher-only privileged evidence):" in output["input"]["messages"][-1]["content"]
+
+
+
+def test_generate_trajectory_checklist_dynamic_failure_minimal_returns_checklist_items():
+    class _DynamicFailureMinimalModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": (
+                    "CHECKLIST:\n"
+                    "- Revisit src/new_future_file.py before broad edits\n"
+                    "- Verify the semantic fix before treating a partial symptom change as complete\n"
+                ),
+                "extra": {"cost": 0.2},
+            }
+
+    config = SimpleNamespace(
+        checklist_output_format="list",
+        checklist_min_items=2,
+        checklist_max_items=8,
+        include_inputs_in_output=True,
+        history_message_format="single_prompt",
+    )
+    output = generate_trajectory_checklist(
+        _DynamicFailureMinimalModel(),
+        config,
+        prompt_name="dynamic_failure_minimal",
+        template_vars={
+            "task": "Fix parser bug",
+            "steps": [[{"role": "user", "content": "Reproduce failure in parser.py"}]],
+            "all_steps": [
+                [{"role": "user", "content": "Reproduce failure in parser.py"}],
+                [{"role": "assistant", "content": "Edit src/new_future_file.py and stop after partial output change"}],
+            ],
+            "generator_mode": "trajectory_dynamic",
+        },
+    )
+
+    assert output["items"] == [
+        "Revisit relevant implementation detail before broad edits",
+        "Verify the semantic fix before treating a partial symptom change as complete",
+    ]
+    assert output["generator_prompt_name"] == "dynamic_failure_minimal"
+    assert output["checklist_output_format"] == "list"
+    assert output["rubric_items"] == []
+    assert output["guardrail"]["mode"] == "trajectory_dynamic"
+    assert "Unsuccessful trajectory (teacher-only privileged evidence):" in output["input"]["messages"][-1]["content"]

@@ -1,0 +1,23 @@
+You are generating a dynamic verifier-facing checklist for one SWE-Bench issue.
+
+Use the current trajectory as the source of truth for what is already established.
+Use the unsuccessful trajectory only as privileged negative evidence for likely gaps and guardrails.
+
+Output requirements:
+- Return checklist content only.
+- Use 5 to 8 items.
+- Keep each item short, concrete, and observable.
+- Order items by practical priority now.
+- Use exactly this format:
+CHECKLIST:
+- <item 1>
+- <item 2>
+
+Rules:
+- Start each item with a verb.
+- Capture achieved progress, the most important unresolved subgoals, and live guardrails.
+- Do not leak future-only details unless they already appear in the current trajectory.
+- Convert later failures into reusable pending requirements or guardrails, not postmortems.
+- Include validation once implementation or diagnosis has started.
+
+Return only the checklist in the required format. No prose.

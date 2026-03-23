@@ -191,6 +191,10 @@ def _generator_mode_from_prompt_name(prompt_name: str) -> str | None:
         "pairwise_evolve": "trajectory_pairwise",
         "dynamic_success": "trajectory_dynamic",
         "dynamic_success_v2": "trajectory_dynamic",
+        "dynamic_success_minimal": "trajectory_dynamic",
         "dynamic_failure": "trajectory_dynamic",
         "dynamic_failure_v2": "trajectory_dynamic",
+        "dynamic_failure_minimal": "trajectory_dynamic",
+        "static_success_minimal": "trajectory_success",
+        "static_failure_minimal": "trajectory_failure",
     }.get(prompt_name)

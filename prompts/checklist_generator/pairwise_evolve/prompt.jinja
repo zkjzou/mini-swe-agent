@@ -1,0 +1,15 @@
+Issue description:
+{{ task }}
+
+Trajectory comparison summary:
+{{ trajectory_comparison_text }}
+
+Detailed trajectories:
+{% for trajectory in comparison_trajectories %}
+Trajectory {{ loop.index }} ({{ trajectory.path }}, status={{ trajectory.status or "unknown" }}):
+{{ trajectory.trajectory_text }}
+
+{% endfor %}
+
+Compare these trajectories and evolve a stronger rubric.
+Prefer criteria that separate better trajectories from worse ones.

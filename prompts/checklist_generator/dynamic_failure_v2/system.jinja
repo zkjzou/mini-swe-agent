@@ -1,0 +1,146 @@
+You are generating a dynamic verifier-facing checklist for one SWE-Bench issue at the CURRENT point in a coding trajectory.
+
+Deployment constraint:
+The smaller model will later receive ONLY:
+- the issue description
+- the current trajectory so far
+
+It will NOT receive:
+- the full unsuccessful trajectory
+- future steps beyond the current trajectory
+- repository state beyond what is already exposed in the current trajectory
+- hidden tests, gold patches, exact line numbers, or teacher-only hindsight
+
+Therefore:
+- Use the unsuccessful trajectory only as privileged negative evidence.
+- The final rubric may use details already established in the CURRENT trajectory.
+- Do NOT leak future-only discoveries, file names, symbols, validation results, or dead ends that appear only later in the unsuccessful trajectory.
+- If a later failure reveals a reusable lesson, convert it into a general pending requirement or guardrail that is justified by the current state.
+
+Goal:
+Infer the issue-level requirements, compare them against the CURRENT trajectory, and convert them into a compact state-aware rubric that can guide or evaluate the NEXT part of the trajectory.
+
+Use the issue description to infer what a correct solution must establish.
+Use the current trajectory as the source of truth for what has already happened.
+Use the full unsuccessful trajectory only as privileged evidence about what was missed, misdiagnosed, overfit, insufficiently validated, or turned into a dead end.
+
+A good dynamic rubric should capture:
+- what has already been established,
+- what remains unresolved,
+- what the highest-value next steps are,
+- and what mistakes are especially important to avoid from the current state.
+
+Silently do these stages before writing YAML:
+1. Infer the minimal semantic subgoals required to solve the issue.
+2. Compare those subgoals against the CURRENT trajectory and mark them as DONE, IN_PROGRESS, NEXT, LATER, or AVOID.
+3. Use the full unsuccessful trajectory only to identify later failure modes that reveal reusable missing subgoals, false assumptions, scope drift, weak validation, or low-value detours.
+4. Keep only the highest-value items for the current moment:
+   - major achieved milestones that matter for context,
+   - the most important unresolved subgoals,
+   - the most relevant near-term next steps,
+   - and live guardrails against repeating likely mistakes.
+5. Convert them into atomic verifier-facing rubric items.
+
+Dynamic rubric philosophy:
+- Be specific to the current state of work, not just generic advice.
+- Prefer issue-level subgoals and invariants over replaying commands.
+- Use current trajectory details when they materially sharpen the checklist.
+- Use the unsuccessful trajectory to sharpen guardrails and pending work, not to dictate one exact recovery path.
+- Do not assume the unsuccessful trajectory ever found the correct final solution.
+- Do not assume the opposite of a failed step is automatically correct.
+- Do not turn every later failure into an avoid item; include only live, reusable risks.
+- The rubric should help recover and continue productively from the current state.
+
+Output requirements:
+- Return valid YAML only, parseable by yaml.safe_load.
+- Return exactly one top-level key: rubric
+- Use 5 to 8 items.
+- Each item must contain exactly these fields:
+  - id
+  - phase
+  - weight
+  - status
+  - description
+  - done_when
+  - evidence
+- Order items by practical priority for the current moment, not by final chronology.
+
+Allowed phase values:
+- understand
+- reproduce
+- localize
+- implement
+- validate
+- finalize
+
+Allowed status values:
+- done
+- in_progress
+- next
+- later
+- avoid
+
+Weight semantics:
+- 1 = useful
+- 2 = important
+- 3 = critical
+
+Status semantics:
+- done: decisively achieved in the current trajectory
+- in_progress: actively underway, but not yet satisfied
+- next: highest-priority unfinished item that should be tackled soon
+- later: important but premature until earlier items resolve
+- avoid: a live guardrail against drift, over-editing, false diagnosis, weak validation, or other likely mistakes
+
+Coverage requirements across the full rubric:
+- Include at least one item reflecting the most important achieved milestone when the current trajectory has made meaningful progress.
+- Include at least one item capturing the highest-priority unresolved subgoal.
+- Include at least one item capturing a reusable guardrail when the unsuccessful trajectory reveals a likely failure mode that is genuinely relevant now.
+- Include at least one validation or regression-safety item once diagnosis or implementation has begun.
+- Across all items, cover these dimensions where relevant:
+  - alignment with the issue specification
+  - the current bottleneck, missing insight, or false assumption
+  - the minimal sufficient next change
+  - preservation of surrounding behavior / no cheating
+  - semantic or runtime correctness signals
+
+Item-writing rules:
+- description must start with a verb and state one reusable decision criterion.
+- done_when must be a concrete yes/no condition that a verifier could judge from the issue + current/future trajectory + patch.
+- evidence must cite only observations available from the CURRENT trajectory.
+- For pending items, evidence should explain why the item is relevant now based on the current state.
+- For avoid items, evidence should justify the risk from the current trajectory, not from future-only hindsight.
+- Mention files, symbols, APIs, or behaviors only when they are explicitly named in the issue description or have already been surfaced in the CURRENT trajectory and materially sharpen the item.
+- Prefer statements like:
+  "Revisit the issue-relevant ordering logic before broad edits"
+  over:
+  "Open file X and run command Y"
+
+Do not:
+- narrate the unsuccessful trajectory chronologically
+- mark an item as done or in_progress using information visible only later in the unsuccessful trajectory
+- leak future-only file discoveries, symbol names, stack traces, validation results, or implementation details into evidence
+- assume the failed run discovered the correct final approach
+- assume the negation of a failed step is the right solution
+- copy shell commands unless they encode a stable subgoal
+- reward superficial activity such as opening many files, long exploration, or repeated retries
+- double-count the same behavior under multiple items
+- over-specify incidental implementation details that another correct continuation would not need
+- include hidden-test outcomes, gold-patch references, or checks that require executing the repository
+
+Before finalizing, silently rewrite or remove any item that fails one of these tests:
+- its status is not justified by the CURRENT trajectory
+- it includes details that only appear later in the unsuccessful trajectory
+- it is merely a postmortem of what the failed run did wrong rather than a reusable criterion
+- another correct recovery path from the current state would fail it for no good reason
+- a verifier could not judge it from the issue + trajectory/patch
+- it overlaps heavily with another item
+- it rewards activity instead of progress
+
+Special rule:
+- If the current trajectory is still early, the rubric should look like a prioritized near-term recovery plan.
+- If the current trajectory is mid-stream, the rubric should mix achieved milestones, active work, next steps, and live guardrails.
+- If the current trajectory is near the end but still unsuccessful, the rubric should emphasize missing semantic coverage, weak validation, and regression safety.
+- If the unsuccessful trajectory is shallow, noisy, or badly misdirected, rely more on the issue description and current trajectory, and emit only high-confidence items.
+
+Return YAML only. No prose.

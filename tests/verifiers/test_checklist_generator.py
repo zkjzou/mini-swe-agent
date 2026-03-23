@@ -198,12 +198,26 @@ def test_prepare_checklist_generator_template_vars_sets_dynamic_current_and_succ
 
     assert template_vars["current_trajectory"] == "user: Inspect parser flow"
     assert "assistant: Patch parser ordering" in template_vars["successful_trajectory_text"]
+    assert "assistant: Patch parser ordering" in template_vars["unsuccessful_trajectory_text"]
 
 
 def test_resolve_checklist_generator_prompt_name_accepts_dynamic_success_v2():
     assert resolve_checklist_generator_prompt_name(
         SimpleNamespace(checklist_generator_prompt_name="dynamic_success_v2")
     ) == "dynamic_success_v2"
+
+
+def test_resolve_checklist_generator_prompt_name_accepts_dynamic_failure():
+    assert resolve_checklist_generator_prompt_name(
+        SimpleNamespace(checklist_generator_prompt_name="dynamic_failure")
+    ) == "dynamic_failure"
+
+
+
+def test_resolve_checklist_generator_prompt_name_accepts_dynamic_failure_v2():
+    assert resolve_checklist_generator_prompt_name(
+        SimpleNamespace(checklist_generator_prompt_name="dynamic_failure_v2")
+    ) == "dynamic_failure_v2"
 
 
 def test_generate_trajectory_checklist_parses_static_failure_checklist_items():
@@ -291,6 +305,111 @@ def test_generate_trajectory_checklist_dynamic_success_returns_checklist_items()
         "Confirm the existing reproduction still matches the reported failure",
     ]
     assert output["generator_prompt_name"] == "dynamic_success"
+    assert output["checklist_output_format"] == "list"
+    assert output["rubric_items"] == []
+    assert output["guardrail"]["mode"] == "trajectory_dynamic"
+
+
+def test_generate_trajectory_checklist_filters_future_only_details_in_dynamic_failure_mode():
+    class _DynamicFailureModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": (
+                    "rubric:\n"
+                    "  - id: F1\n"
+                    "    phase: localize\n"
+                    "    weight: 3\n"
+                    "    status: next\n"
+                    "    description: Revisit src/new_future_file.py before broad edits\n"
+                    "    done_when: The agent explicitly inspects src/new_future_file.py before editing\n"
+                    "    evidence: The current trajectory has only reproduced the parser failure so far.\n"
+                    "  - id: F2\n"
+                    "    phase: validate\n"
+                    "    weight: 2\n"
+                    "    status: avoid\n"
+                    "    description: Verify the semantic fix before treating a partial symptom change as complete\n"
+                    "    done_when: The trajectory checks the issue-relevant behavior and nearby regressions before finalizing\n"
+                    "    evidence: The current trajectory has only reproduced the parser failure so far.\n"
+                ),
+                "extra": {"cost": 0.2},
+            }
+
+    config = SimpleNamespace(
+        checklist_output_format="rubric_yaml",
+        checklist_system_template="unused",
+        checklist_prompt_template="unused",
+        checklist_item_regex=r"^\s*(?:[-*]|\d+[.)])\s*(.+?)\s*$",
+        include_inputs_in_output=True,
+        history_message_format="single_prompt",
+    )
+    output = generate_trajectory_checklist(
+        _DynamicFailureModel(),
+        config,
+        prompt_name="dynamic_failure_v2",
+        template_vars={
+            "task": "Fix parser bug",
+            "steps": [[{"role": "user", "content": "Reproduce failure in parser.py"}]],
+            "all_steps": [
+                [{"role": "user", "content": "Reproduce failure in parser.py"}],
+                [{"role": "assistant", "content": "Edit src/new_future_file.py and stop after partial output change"}],
+            ],
+            "generator_mode": "trajectory_dynamic",
+        },
+    )
+
+    assert output["items"] == [
+        "Revisit relevant implementation detail before broad edits",
+        "Verify the semantic fix before treating a partial symptom change as complete",
+    ]
+    assert output["generator_prompt_name"] == "dynamic_failure_v2"
+    assert output["guardrail"]["mode"] == "trajectory_dynamic"
+    assert "src/new_future_file.py" in output["guardrail"]["sanitized_terms"]
+    assert "Current trajectory so far:" in output["input"]["messages"][-1]["content"]
+    assert "Unsuccessful trajectory (teacher-only privileged evidence):" in output["input"]["messages"][-1]["content"]
+
+
+
+def test_generate_trajectory_checklist_dynamic_failure_returns_checklist_items():
+    class _DynamicFailureChecklistModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": (
+                    "CHECKLIST:\n"
+                    "- Revisit src/new_future_file.py before broad edits\n"
+                    "- Verify the semantic fix before treating a partial symptom change as complete\n"
+                ),
+                "extra": {"cost": 0.2},
+            }
+
+    config = SimpleNamespace(
+        checklist_output_format="list",
+        checklist_min_items=2,
+        checklist_max_items=8,
+        include_inputs_in_output=True,
+        history_message_format="single_prompt",
+    )
+    output = generate_trajectory_checklist(
+        _DynamicFailureChecklistModel(),
+        config,
+        prompt_name="dynamic_failure",
+        template_vars={
+            "task": "Fix parser bug",
+            "steps": [[{"role": "user", "content": "Reproduce failure in parser.py"}]],
+            "all_steps": [
+                [{"role": "user", "content": "Reproduce failure in parser.py"}],
+                [{"role": "assistant", "content": "Edit src/new_future_file.py and stop after partial output change"}],
+            ],
+            "generator_mode": "trajectory_dynamic",
+        },
+    )
+
+    assert output["items"] == [
+        "Revisit relevant implementation detail before broad edits",
+        "Verify the semantic fix before treating a partial symptom change as complete",
+    ]
+    assert output["generator_prompt_name"] == "dynamic_failure"
     assert output["checklist_output_format"] == "list"
     assert output["rubric_items"] == []
     assert output["guardrail"]["mode"] == "trajectory_dynamic"

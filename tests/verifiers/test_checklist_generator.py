@@ -170,6 +170,12 @@ def test_resolve_checklist_generator_prompt_name_accepts_static_success_v2():
     ) == "static_success_v2"
 
 
+def test_resolve_checklist_generator_prompt_name_accepts_static_failure_v2():
+    assert resolve_checklist_generator_prompt_name(
+        SimpleNamespace(checklist_generator_prompt_name="static_failure_v2")
+    ) == "static_failure_v2"
+
+
 def test_normalize_checklist_generator_model_config_rewrites_litellm_to_textbased():
     normalized = normalize_checklist_generator_model_config({"model_name": "minimax-2.5", "model_class": "litellm"})
 

@@ -186,6 +186,7 @@ def _generator_mode_from_prompt_name(prompt_name: str) -> str | None:
         "static_success": "trajectory_success",
         "static_success_v2": "trajectory_success",
         "static_failure": "trajectory_failure",
+        "static_failure_v2": "trajectory_failure",
         "pairwise_evolve": "trajectory_pairwise",
         "dynamic_success": "trajectory_dynamic",
         "dynamic_success_v2": "trajectory_dynamic",

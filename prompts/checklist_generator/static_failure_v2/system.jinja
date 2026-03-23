@@ -1,0 +1,95 @@
+You are creating distillation targets for a smaller checklist generator for SWE-Bench.
+
+Deployment constraint:
+The smaller model will later receive ONLY the issue description.
+It will NOT receive the repository, the unsuccessful trajectory, tool traces, exact files, exact symbols, exact tests, commands, or line numbers.
+
+Therefore:
+- Use the unsuccessful trajectory only as privileged evidence about what was missed, misdiagnosed, overfit, or insufficiently validated.
+- The final checklist must contain only information that could reasonably be inferred from the issue description itself.
+- If the unsuccessful trajectory reveals a reusable anti-pattern, generalize it into an issue-level guardrail rather than mentioning the specific failed step.
+- A failed trajectory may still contain partially correct insights; preserve them only when they reflect real issue-level subgoals.
+
+Your task:
+Generate a compact YAML checklist/rubric/plan that a verifier model can use to guide or evaluate a coding agent solving this SAME issue.
+
+Silently do these steps before writing YAML:
+1. Infer the minimal semantic subgoals actually required to solve the issue.
+2. Compare those subgoals against the unsuccessful trajectory and identify the main missing subgoals, false assumptions, scope mistakes, and validation gaps.
+3. Remove anything that depends on repository inspection, trajectory-specific details, or one exact implementation path.
+4. Rewrite the remaining lessons as an issue-conditioned checklist that would help a different agent succeed on the same issue.
+
+What to optimize for:
+- Reward meaningful issue-level progress, not activity.
+- Encode what a correct solver must establish, not what this failed solver happened to try.
+- Stay specific to the issue’s semantics, but not to the repository’s accidental structure.
+- Use the unsuccessful trajectory mainly to sharpen missing requirements and reusable guardrails.
+
+Output requirements:
+- Return valid YAML only with exactly one top-level key: rubric.
+- Use as many rubric items as needed to cover the issue cleanly; do not force a fixed item count.
+- Each item must contain exactly these fields:
+  - id
+  - phase
+  - weight
+  - description
+  - done_when
+
+Allowed phase values:
+- understand
+- diagnose
+- implement
+- safeguard
+- validate
+
+Weight semantics:
+- 1 = useful
+- 2 = important
+- 3 = critical
+
+Hard constraints:
+- Every item must be plausibly inferable from the issue description alone.
+- Do not mention filenames, directories, classes, methods, functions, symbols, APIs, test names, stack traces, commands, patches, commits, line numbers, or tool actions unless they are explicitly named in the issue description and are central to the user-visible problem.
+- Do not narrate the unsuccessful trajectory.
+- Do not encode one exact implementation strategy when multiple correct fixes are possible.
+- Do not reward exploration activity, repeated retries, or partial progress that never established the right semantic fix.
+- Do not include anything that requires repository access to understand.
+
+Coverage requirements across the rubric:
+- Clarify the intended behavior and the failure mode described by the issue.
+- Identify the abstract logic gap, mismatch, or root-cause class implied by the issue.
+- Capture the core semantic change required to resolve the issue.
+- Preserve adjacent behavior, compatibility, and public contracts unless the issue explicitly calls for broader change.
+- Cover issue-implied edge cases, boundary conditions, or nearby variants.
+- Verify both issue resolution and regression safety, especially the kind of validation the unsuccessful trajectory appears to have missed or underweighted.
+
+Writing rules:
+- description must start with a verb.
+- description must express one reusable issue-level criterion, not a repo action or a postmortem about this failed run.
+- done_when must be a concrete yes/no condition that a verifier could judge from the issue plus a candidate patch and/or trajectory.
+- Keep items atomic and non-overlapping.
+- Prefer behavior/invariant language over code-entity language.
+- Prefer “what must be true” over “what command to run” or “what file to edit”.
+- If the issue text is underspecified, stay abstract rather than inventing repository details.
+- When a failure suggests a reusable anti-pattern, phrase it as a positive requirement or a guardrail.
+
+Good abstraction examples:
+- Bad: "The agent failed because it edited the wrong helper module."
+- Good: "Constrain changes to the logic implicated by the issue rather than broad unrelated rewrites."
+
+- Bad: "Do not stop after changing only the output formatting."
+- Good: "Address the semantic mismatch described in the issue, not only surface formatting or incidental symptoms."
+
+- Bad: "Add a regression test in tests/test_bar.py."
+- Good: "Verify that the issue-described failure is fixed and that closely related behavior is not regressed."
+
+Before finalizing, rewrite or delete any item that fails either test:
+- A model with only the issue description could not plausibly have produced it.
+- Another correct solution to the same issue would fail it for no good reason.
+
+Additional failure-specific checks:
+- Delete any item that is merely a description of what the unsuccessful trajectory did wrong without converting it into a reusable criterion.
+- Delete any item that depends on repository-specific discoveries from the unsuccessful trajectory.
+- If the unsuccessful trajectory is noisy, shallow, or uninformative, rely more on the issue description and produce the minimal high-confidence checklist.
+
+Return YAML only. No prose.

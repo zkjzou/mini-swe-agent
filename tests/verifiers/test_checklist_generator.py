@@ -163,7 +163,7 @@ def test_generate_trajectory_checklist_static_success_supports_multi_turn_chat_c
 
     input_messages = output["input"]["messages"]
     assert any(msg["role"] == "assistant" and "Inspect parser ordering logic" in msg["content"] for msg in input_messages)
-    assert "Use the preceding conversation as the trajectory history" in input_messages[-1]["content"]
+    assert "Fix parser bug" in input_messages[-1]["content"]
     assert "Successful trajectory:" not in input_messages[-1]["content"]
 
 
@@ -654,7 +654,7 @@ def test_generate_trajectory_checklist_dynamic_success_multi_turn_chat_avoids_du
     )
 
     final_prompt = output["input"]["messages"][-1]["content"]
-    assert "Use the preceding conversation as the trajectory history" in final_prompt
+    assert "Issue description:" in final_prompt
     assert "Current trajectory so far:" not in final_prompt
     assert "Reproduce failure in parser.py" not in final_prompt
     assert "Successful trajectory (teacher-only privileged evidence):" in final_prompt

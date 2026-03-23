@@ -202,3 +202,43 @@ def test_resolve_checklist_generator_prompt_name_accepts_dynamic_success_v2():
     assert resolve_checklist_generator_prompt_name(
         SimpleNamespace(checklist_generator_prompt_name="dynamic_success_v2")
     ) == "dynamic_success_v2"
+
+
+def test_generate_trajectory_checklist_parses_static_failure_checklist_items():
+    class _FailureModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": (
+                    "CHECKLIST:\n"
+                    "- Clarify the issue-described failure and intended behavior before changing implementation details\n"
+                    "- Verify the semantic fix and nearby issue-implied behavior instead of stopping at a partial symptom change\n"
+                ),
+                "extra": {"cost": 0.1},
+            }
+
+    config = SimpleNamespace(
+        checklist_output_format="list",
+        checklist_min_items=2,
+        checklist_max_items=8,
+        include_inputs_in_output=False,
+        history_message_format="single_prompt",
+    )
+    output = generate_trajectory_checklist(
+        _FailureModel(),
+        config,
+        prompt_name="static_failure",
+        template_vars={
+            "task": "Fix parser bug",
+            "full_trajectory_text": "Step 1:\nuser: reproduce\n\nStep 2:\nassistant: patch partial symptom",
+            "generator_mode": "trajectory_failure",
+        },
+    )
+
+    assert output["items"] == [
+        "Clarify the issue-described failure and intended behavior before changing implementation details",
+        "Verify the semantic fix and nearby issue-implied behavior instead of stopping at a partial symptom change",
+    ]
+    assert output["generator_mode"] == "trajectory_failure"
+    assert output["checklist_output_format"] == "list"
+    assert output["rubric_items"] == []

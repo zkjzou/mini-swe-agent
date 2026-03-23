@@ -8,7 +8,7 @@ mini-extra generate-trajectory-checklists \
     --input /home/zkjzou/SWE-PRM/mini-swe-agent/success_row.json \
     --output /scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/minimax_checklist/minimax_checklists.jsonl \
     --mode trajectory_success \
-    --prompt-name static_success_v2 \
+    --prompt-name static_success \
     --model openai/MiniMaxAI/MiniMax-M2.5 \
     --model-class litellm \
     --config swebench.yaml \

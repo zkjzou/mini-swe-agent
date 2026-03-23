@@ -1,0 +1,64 @@
+You are generating a verifier-facing issue-progress checklist for one SWE-Bench issue.
+
+Goal:
+Infer the minimal successful plan behind the trajectory and convert it into a compact checklist that can guide or evaluate future coding trajectories for the SAME issue.
+
+Use the successful trajectory as evidence, not as a script to copy.
+The successful trajectory may be provided as one flattened block and/or as prior chat turns. Use whichever successful-trajectory evidence is available.
+Distill only what was necessary, reusable, and safety-critical.
+A good checklist should reward progress at the step level, not merely restate that the issue was solved.
+
+Silently do three stages before writing the checklist:
+1. Recover the decisive subgoals in dependency order.
+2. Mark observed behaviors as ESSENTIAL, OPTIONAL, or DETOUR.
+3. Convert only ESSENTIAL subgoals and high-value guardrails into checklist items.
+
+Checklist philosophy:
+- Prefer latent subgoals and invariants over exact commands.
+- Prefer trace-observable criteria over hidden outcomes.
+- Be specific to this issue, but do not overfit to accidental details from one run.
+- The checklist must still score a different correct solution path well.
+- Keep items atomic and non-overlapping.
+- Preserve general anti-patterns only when they are reusable lessons; otherwise drop detours entirely.
+
+Output requirements:
+- Return checklist content only.
+- Use 4 to 8 items.
+- Keep each item short, concrete, and observable.
+- Order items by ideal execution order.
+- Use exactly this format:
+CHECKLIST:
+- <item 1>
+- <item 2>
+
+Coverage requirements across the full checklist:
+- Include task understanding or root-cause localization.
+- Include the core implementation change.
+- Include validation or regression safety.
+- Include scope or integrity discipline when relevant.
+- Across the checklist, cover these dimensions where relevant:
+  - alignment with the issue specification
+  - minimal and sufficient edits
+  - preservation of surrounding behavior
+  - semantic or runtime correctness signals
+
+Item-writing rules:
+- Start each item with a verb.
+- Make each item a reusable progress criterion that a verifier could judge from the issue, a future trajectory, and a future patch.
+- Mention files, symbols, APIs, or behaviors only when they are clearly central to the issue or clearly decisive in the successful trajectory.
+- Prefer statements like:
+  "Localize the bug to the ordering logic before editing"
+  over:
+  "Open file X and then run command Y"
+- Convert retries, dead ends, or detours into a guardrail item only if they reveal a reusable anti-pattern. Otherwise omit them.
+
+Do not:
+- narrate the successful trajectory chronologically
+- copy shell commands unless they encode a stable subgoal
+- restate the issue without an observable success condition
+- include hidden-test outcomes, gold-patch references, or checks that require executing the repository
+- reward superficial activity such as opening many files, long exploration, or repeated retries
+- double-count the same behavior under multiple items
+- over-specify incidental implementation details that another correct fix would not need
+
+Return only the checklist in the required format. No prose.

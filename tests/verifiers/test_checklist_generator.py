@@ -81,27 +81,23 @@ def test_generate_trajectory_checklist_filters_future_only_details_in_dynamic_mo
     assert "Full future steps after the current step" in output["input"]["messages"][-1]["content"]
 
 
-def test_generate_trajectory_checklist_keeps_static_success_rubric_items():
+def test_generate_trajectory_checklist_parses_static_success_checklist_items():
     class _StaticModel:
         def query(self, messages, **kwargs):
             return {
                 "role": "assistant",
                 "content": (
-                    "rubric:\n"
-                    "  - id: S1\n"
-                    "    phase: localize\n"
-                    "    weight: 3\n"
-                    "    description: Localize the faulty parser logic before editing code\n"
-                    "    done_when: The affected parsing path is explicitly identified\n"
+                    "CHECKLIST:\n"
+                    "- Localize the faulty parser logic before editing code\n"
+                    "- Validate the fix with focused regression checks\n"
                 ),
                 "extra": {"cost": 0.1},
             }
 
     config = SimpleNamespace(
-        checklist_output_format="rubric_yaml",
-        checklist_system_template="unused",
-        checklist_prompt_template="unused",
-        checklist_item_regex=r"^\s*(?:[-*]|\d+[.)])\s*(.+?)\s*$",
+        checklist_output_format="list",
+        checklist_min_items=2,
+        checklist_max_items=8,
         include_inputs_in_output=False,
         history_message_format="single_prompt",
     )
@@ -116,8 +112,56 @@ def test_generate_trajectory_checklist_keeps_static_success_rubric_items():
         },
     )
 
-    assert output["items"] == ["Localize the faulty parser logic before editing code"]
+    assert output["items"] == [
+        "Localize the faulty parser logic before editing code",
+        "Validate the fix with focused regression checks",
+    ]
     assert output["generator_mode"] == "trajectory_success"
+    assert output["checklist_output_format"] == "list"
+    assert output["rubric_items"] == []
+
+
+def test_generate_trajectory_checklist_static_success_supports_multi_turn_chat_context():
+    class _StaticModel:
+        def query(self, messages, **kwargs):
+            return {
+                "role": "assistant",
+                "content": (
+                    "CHECKLIST:\n"
+                    "- Localize the faulty parser logic before editing code\n"
+                    "- Validate the fix with focused regression checks\n"
+                ),
+                "extra": {"cost": 0.1},
+            }
+
+    config = SimpleNamespace(
+        checklist_output_format="list",
+        checklist_min_items=2,
+        checklist_max_items=8,
+        include_inputs_in_output=True,
+        history_message_format="multi_turn_chat",
+    )
+    output = generate_trajectory_checklist(
+        _StaticModel(),
+        config,
+        prompt_name="static_success",
+        template_vars={
+            "task": "Fix parser bug",
+            "messages": [
+                {"role": "user", "content": "Reproduce the parser bug"},
+                {"role": "assistant", "content": "Inspect parser ordering logic"},
+            ],
+            "all_messages": [
+                {"role": "user", "content": "Reproduce the parser bug"},
+                {"role": "assistant", "content": "Inspect parser ordering logic"},
+            ],
+            "generator_mode": "trajectory_success",
+        },
+    )
+
+    input_messages = output["input"]["messages"]
+    assert any(msg["role"] == "assistant" and "Inspect parser ordering logic" in msg["content"] for msg in input_messages)
+    assert "Successful trajectory:" in input_messages[-1]["content"]
 
 
 def test_resolve_checklist_generator_prompt_name_accepts_static_success_v2():

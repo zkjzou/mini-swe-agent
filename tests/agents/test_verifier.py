@@ -620,6 +620,87 @@ def test_dynamic_checklist_regenerate_mode_refreshes_each_query():
     assert agent.verifier_cost == 4.0
 
 
+def test_dynamic_trajectory_generator_filters_future_only_specifics():
+    class _TrajectoryChecklistVerifierModel:
+        def __init__(self):
+            self.checklist_prompts: list[str] = []
+            self.call_count = 0
+
+        def query(self, messages, **kwargs):
+            self.call_count += 1
+            prompt = messages[-1].get("content", "")
+            if self.call_count == 1:
+                self.checklist_prompts.append(prompt)
+                return {
+                    "role": "assistant",
+                    "content": (
+                        "rubric:\n"
+                        "  - id: D1\n"
+                        "    phase: localize\n"
+                        "    weight: 3\n"
+                        "    description: Inspect src/future_only.py before changing it\n"
+                        "    done_when: The agent opens src/future_only.py\n"
+                        "  - id: D2\n"
+                        "    phase: diagnose\n"
+                        "    weight: 2\n"
+                        "    description: Confirm the existing reproduction still matches the bug report\n"
+                        "    done_when: Earlier evidence is restated before editing\n"
+                    ),
+                    "extra": {"cost": 0.1},
+                }
+            return {
+                "role": "assistant",
+                "content": (
+                    "REASONING: candidate 1 is safer.\n"
+                    "CHECKLIST_ITEM_SCORES:\n"
+                    "- Item 1: 0.7\n"
+                    "PROGRESS: 0.5\n"
+                    "FINAL: 1"
+                ),
+                "extra": {"cost": 0.2},
+            }
+
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "checklist_mode": "issue_progress",
+        "checklist_dynamic": True,
+        "checklist_update_mode": "regenerate",
+        "checklist_generate_once": True,
+        "checklist_output_format": "rubric_yaml",
+        "checklist_generator_mode": "trajectory_dynamic",
+        "checklist_generator_prompt_name": "dynamic_success",
+        "checklist_future_steps": [
+            "Step 2:\nassistant: Edit src/future_only.py",
+            "Step 3:\ntool: pytest tests/test_future_only.py",
+        ],
+    }
+
+    model = DeterministicModel(outputs=[make_output("Candidate 1", [{"command": "echo hi"}])])
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    verifier_model = _TrajectoryChecklistVerifierModel()
+    agent.verifier.model = verifier_model
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    response = agent.query()
+    verifier_output = response.get("extra", {}).get("verifier", {}).get("verifier_output", {})
+    checklist = verifier_output.get("checklist", {})
+
+    assert "Full future steps after the current step" in verifier_model.checklist_prompts[0]
+    assert "src/future_only.py" in verifier_model.checklist_prompts[0]
+    assert checklist.get("items") == [
+        "Inspect relevant implementation detail before changing it",
+        "Confirm the existing reproduction still matches the bug report",
+    ]
+    assert checklist.get("source") == "dynamic_checklist"
+    assert checklist.get("generator_mode") == "trajectory_dynamic"
+    assert checklist.get("generator_prompt_name") == "dynamic_success"
+
+
 def test_checklist_v2_omits_min_max_and_parses_rubric():
     class _ChecklistV2VerifierModel:
         def __init__(self):
@@ -1210,3 +1291,130 @@ def test_pair_thoughts_with_toolcalls_requires_exact_num_candidates():
         agent.query()
     format_msg = (exc_info.value.messages or [{}])[0].get("content", "")
     assert "requires exactly num_candidates thought/tool-call pairs" in format_msg
+
+
+def test_static_precomputed_checklist_is_reused_per_instance(tmp_path):
+    checklist_path = tmp_path / "static_checklists.jsonl"
+    checklist_path.write_text(
+        json.dumps(
+            {
+                "instance_id": "repo__issue-1",
+                "prompt_name": "static_success",
+                "output": {
+                    "items": ["Reproduce issue", "Implement fix", "Validate behavior"],
+                    "checklist_output_format": "list",
+                },
+            }
+        )
+        + "\n"
+    )
+
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 2, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "deterministic",
+            "outputs": [
+                make_output(
+                    "REASONING: choose 1\n"
+                    "SCORES:\n- Candidate 1: 0.9\n- Candidate 2: 0.2\n"
+                    "CHECKLIST_ITEM_SCORES:\n- Item 1: 0.6\n- Item 2: 0.2\n- Item 3: 0.1\n"
+                    "PROGRESS: 0.3\nFINAL: 1",
+                    [],
+                ),
+                make_output(
+                    "REASONING: choose 2\n"
+                    "SCORES:\n- Candidate 1: 0.4\n- Candidate 2: 0.8\n"
+                    "CHECKLIST_ITEM_SCORES:\n- Item 1: 0.8\n- Item 2: 0.7\n- Item 3: 0.4\n"
+                    "PROGRESS: 0.6\nFINAL: 2",
+                    [],
+                ),
+            ],
+        },
+        "checklist_mode": "issue_progress",
+        "checklist_input_path": str(checklist_path),
+    }
+
+    model = DeterministicModel(
+        outputs=[
+            make_output("Candidate 1A", [{"command": "echo first-a"}]),
+            make_output("Candidate 2A", [{"command": "echo second-a"}]),
+            make_output("Candidate 1B", [{"command": "echo first-b"}]),
+            make_output("Candidate 2B", [{"command": "echo second-b"}]),
+        ]
+    )
+    agent = DefaultAgent(model=model, env=LocalEnvironment(), **config)
+    agent.extra_template_vars["instance_id"] = "repo__issue-1"
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+
+    first = agent.query()
+    second = agent.query()
+
+    first_checklist = first.get("extra", {}).get("verifier", {}).get("verifier_output", {}).get("checklist", {})
+    second_checklist = second.get("extra", {}).get("verifier", {}).get("verifier_output", {}).get("checklist", {})
+
+    assert first_checklist.get("items") == ["Reproduce issue", "Implement fix", "Validate behavior"]
+    assert second_checklist.get("items") == ["Reproduce issue", "Implement fix", "Validate behavior"]
+    assert first_checklist.get("source") == "precomputed_checklist"
+    assert second_checklist.get("source") == "precomputed_checklist"
+    assert first_checklist.get("generated_this_step") is False
+    assert second_checklist.get("generated_this_step") is False
+    assert first_checklist.get("api_calls") == 0
+    assert second_checklist.get("api_calls") == 0
+    assert agent.checklist_api_calls == 0
+
+
+def test_checklist_generation_can_use_dedicated_generator_model():
+    config = _load_default_agent_config()
+    config["candidate_sampling"] = {"num_candidates": 1, "use_n": False, "sampling_kwargs": {}}
+    config["verifier"] = {
+        "enabled": True,
+        "verifier_type": "llm",
+        "selection_regex": r"FINAL:\s*(\d+)",
+        "selection_index_base": 1,
+        "model": {
+            "model_class": "deterministic",
+            "model_name": "reward-model",
+            "outputs": [make_output("REASONING: choose 1\nPROGRESS: 0.5\nFINAL: 1", [])],
+        },
+        "checklist_generator_model": {
+            "model_class": "deterministic",
+            "model_name": "generator-model",
+            "outputs": [make_output("CHECKLIST:\n- Reproduce issue\n- Implement fix\n- Validate behavior", [])],
+        },
+        "checklist_mode": "issue_progress",
+    }
+
+    constructed = []
+
+    def _fake_get_model(*args, **kwargs):
+        config = kwargs.get("config")
+        if config is None and len(args) >= 2:
+            config = args[1]
+        elif config is None and len(args) == 1 and isinstance(args[0], dict):
+            config = args[0]
+        if config is None:
+            config = {}
+        model_name = config.get("model_name")
+        constructed.append(model_name)
+        return DeterministicModel(outputs=config.get("outputs", []))
+
+    with patch("minisweagent.agents.default.get_model", side_effect=_fake_get_model):
+        agent = DefaultAgent(
+            model=DeterministicModel(outputs=[make_output("Candidate 1", [{"command": "echo hi"}])]),
+            env=LocalEnvironment(),
+            **config,
+        )
+
+    agent.add_messages({"role": "system", "content": "system"}, {"role": "user", "content": "task"})
+    response = agent.query()
+    checklist = response.get("extra", {}).get("verifier", {}).get("verifier_output", {}).get("checklist", {})
+
+    assert constructed == ["reward-model", "generator-model"]
+    assert checklist.get("items") == ["Reproduce issue", "Implement fix", "Validate behavior"]
+    assert checklist.get("generated_this_step") is True

@@ -47,6 +47,17 @@ def normalize_checklist_generator_model_config(model_config: dict[str, Any]) -> 
     )
 
 
+def resolve_checklist_generator_model_config(config: Any) -> dict[str, Any]:
+    configured = getattr(config, "checklist_generator_model", None)
+    if isinstance(configured, dict) and configured:
+        return normalize_checklist_generator_model_config(configured)
+
+    fallback = getattr(config, "model", None)
+    if isinstance(fallback, dict):
+        return normalize_checklist_generator_model_config(fallback)
+    return normalize_checklist_generator_model_config({})
+
+
 def prepare_checklist_generator_template_vars(
     template_vars: dict[str, Any],
     *,
@@ -123,6 +134,8 @@ def generate_trajectory_checklist(
     resolved.checklist_generator_prompt_name = prompt_name
     if isinstance(getattr(resolved, "model", None), dict):
         resolved.model = normalize_checklist_generator_model_config(resolved.model)
+    if isinstance(getattr(resolved, "checklist_generator_model", None), dict):
+        resolved.checklist_generator_model = normalize_checklist_generator_model_config(resolved.checklist_generator_model)
     if prompt_dir is not None:
         resolved.checklist_generator_prompt_dir = prompt_dir
     return generate_issue_checklist(model, resolved, template_vars=prepared_vars)
@@ -145,6 +158,7 @@ class _ChecklistGeneratorConfigProxy:
 __all__ = [
     "generate_trajectory_checklist",
     "load_checklist_generator_templates",
+    "resolve_checklist_generator_model_config",
     "normalize_checklist_generator_model_config",
     "prepare_checklist_generator_template_vars",
     "resolve_checklist_generator_prompt_name",

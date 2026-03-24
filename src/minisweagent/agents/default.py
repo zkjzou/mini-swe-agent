@@ -31,7 +31,9 @@ from minisweagent.verifiers.checklist import (
     generate_issue_checklist,
     resolve_checklist_output_format,
 )
+from minisweagent.verifiers.checklist_generator import generate_trajectory_checklist, resolve_checklist_generator_model_config
 from minisweagent.verifiers.reward_model import RewardModelVerifier
+from minisweagent.verifiers.precomputed_checklists import resolve_precomputed_checklist
 from minisweagent.verifiers.runtime_config import resolve_verifier_runtime_config, verifier_uses_checklist_mode
 
 _VERIFIER_MODEL_CLASS_DEFAULT = "litellm_textbased"
@@ -90,6 +92,20 @@ def _normalize_verifier_model_config(model_config: dict[str, Any]) -> dict[str, 
         f"Verifier models must be text-based and cannot use tool-calling model classes. "
         f"Use one of: {allowed}"
     )
+
+
+def _resolve_checklist_source_label(
+    checklist_config: Any,
+    *,
+    dynamic_enabled: bool,
+    seeded_from_static_prompt: bool,
+) -> str:
+    generator_mode = getattr(checklist_config, "checklist_generator_mode", "issue_only")
+    if not dynamic_enabled:
+        return "issue_description" if generator_mode == "issue_only" else str(generator_mode)
+    if seeded_from_static_prompt:
+        return "static_checklist_seed"
+    return "dynamic_checklist"
 
 
 def _assert_safe_verifier_fallback_model(model: Model) -> None:
@@ -194,6 +210,28 @@ class VerifierConfig(BaseModel):
     """Regex for extracting checklist items from checklist-generation output."""
     checklist_output_format: Literal["auto", "list", "rubric_yaml"] = "auto"
     """Checklist generation output mode. auto infers rubric_yaml for checklist_v2 prompt variants."""
+    checklist_generator_mode: Literal[
+        "issue_only",
+        "trajectory_success",
+        "trajectory_failure",
+        "trajectory_pairwise",
+        "trajectory_dynamic",
+    ] = "issue_only"
+    """Optional trajectory-grounded checklist generation mode."""
+    checklist_generator_prompt_name: str | None = None
+    """Optional prompt alias to load templates from prompts/checklist_generator/<prompt_name>."""
+    checklist_generator_prompt_dir: str = "prompts/checklist_generator"
+    """Directory containing checklist-generator prompt variants."""
+    checklist_generator_model: dict[str, Any] = Field(default_factory=dict)
+    """Optional dedicated model config for checklist generation, separate from verifier scoring."""
+    checklist_input_path: str | None = None
+    """Optional JSON/JSONL file containing one precomputed checklist per instance_id."""
+    checklist_input_missing_behavior: Literal["error", "generate"] = "error"
+    """Whether missing precomputed checklists raise immediately or fall back to generation."""
+    checklist_generator_validate_grounding: bool = True
+    """If True, sanitize future-only details from dynamic checklist outputs."""
+    checklist_future_steps: list[str] = Field(default_factory=list)
+    """Optional future steps passed to trajectory-dynamic checklist generation."""
     checklist_progress_regex: str = r"PROGRESS:\s*([+-]?\d+(?:\.\d+)?)"
     """Regex for extracting overall progress score from verifier output."""
     checklist_item_score_regex: str = r"Item\s+(\d+)\s*:\s*([+-]?\d+(?:\.\d+)?)"
@@ -294,6 +332,7 @@ class DefaultAgent:
         self.checklist_api_calls = 0
         self.step_count = 0
         self._resolved_verifier_config: VerifierConfig | None = None
+        self._checklist_generator_model: Model | None = None
         self.verifier = self._build_verifier()
         self._similarity_rng = random.Random(self.config.verifier.action_similarity_seed)
         self._verifier_checklist_cache: dict[str, Any] | None = None
@@ -527,14 +566,29 @@ class DefaultAgent:
         verifier_config = resolve_verifier_runtime_config(verifier_config)
         if verifier_config.model:
             verifier_config.model = _normalize_verifier_model_config(verifier_config.model)
+        checklist_generator_model_config: dict[str, Any] | None = None
+        if verifier_config.checklist_generator_model:
+            checklist_generator_model_config = resolve_checklist_generator_model_config(verifier_config)
+            verifier_config.checklist_generator_model = dict(checklist_generator_model_config)
         self._resolved_verifier_config = verifier_config.model_copy(deep=True)
+        self._checklist_generator_model = None
         if verifier_config.verifier_type == "first_valid":
+            if checklist_generator_model_config is not None:
+                self._checklist_generator_model = get_model(
+                    checklist_generator_model_config.get("model_name"),
+                    checklist_generator_model_config,
+                )
             return FirstValidVerifier(verifier_config)
         verifier_model = self.model
         if verifier_config.model:
             verifier_model = get_model(verifier_config.model.get("model_name"), verifier_config.model)
         else:
             _assert_safe_verifier_fallback_model(verifier_model)
+        if checklist_generator_model_config is not None:
+            self._checklist_generator_model = get_model(
+                checklist_generator_model_config.get("model_name"),
+                checklist_generator_model_config,
+            )
         if verifier_config.verifier_type == "llm":
             return LLMVerifier(verifier_model, verifier_config)
         if verifier_config.verifier_type == "reward_model":
@@ -974,7 +1028,15 @@ class DefaultAgent:
         should_generate = (
             dynamic_enabled or checklist_data is None or not bool(checklist_config.checklist_generate_once)
         )
-        if should_generate:
+        instance_id = self._get_checklist_instance_id()
+        if checklist_data is None:
+            checklist_data = self._load_precomputed_checklist(checklist_config, instance_id=instance_id)
+            if checklist_data is not None:
+                self._verifier_checklist_cache = checklist_data
+
+        has_precomputed_checklist = isinstance(checklist_data, dict) and checklist_data.get("source") == "precomputed_checklist"
+
+        if should_generate and not has_precomputed_checklist:
             generation_config = checklist_config
             if dynamic_enabled and update_mode == "modify" and not previous_items:
                 generation_config = self._get_static_seed_checklist_config(checklist_config)
@@ -984,15 +1046,32 @@ class DefaultAgent:
                 "checklist_update_mode": update_mode,
                 "previous_checklist_items": previous_items,
                 "previous_checklist_text": previous_text,
+                "future_steps": list(getattr(checklist_config, "checklist_future_steps", []) or []),
             }
             if self._resolve_checklist_output_format(generation_config) != "rubric_yaml":
                 generation_template_vars["checklist_min_items"] = generation_config.checklist_min_items
                 generation_template_vars["checklist_max_items"] = generation_config.checklist_max_items
-            checklist_data = generate_issue_checklist(
-                self._get_checklist_model(),
-                generation_config,
-                template_vars=generation_template_vars,
-            )
+            generator_mode = getattr(generation_config, "checklist_generator_mode", "issue_only")
+            if generator_mode != "issue_only":
+                prompt_name = getattr(generation_config, "checklist_generator_prompt_name", None) or {
+                    "trajectory_success": "static_success",
+                    "trajectory_failure": "static_failure",
+                    "trajectory_pairwise": "pairwise_evolve",
+                    "trajectory_dynamic": "dynamic_success",
+                }.get(generator_mode, "static_success")
+                checklist_data = generate_trajectory_checklist(
+                    self._get_checklist_model(),
+                    generation_config,
+                    prompt_name=prompt_name,
+                    prompt_dir=getattr(generation_config, "checklist_generator_prompt_dir", None),
+                    template_vars=generation_template_vars,
+                )
+            else:
+                checklist_data = generate_issue_checklist(
+                    self._get_checklist_model(),
+                    generation_config,
+                    template_vars=generation_template_vars,
+                )
             self._verifier_checklist_cache = checklist_data
             generated_this_step = True
             generated_response_cost = float(checklist_data.get("response_cost", 0.0) or 0.0)
@@ -1036,11 +1115,17 @@ class DefaultAgent:
             "update_mode": update_mode if dynamic_enabled else None,
             "generation_mode": "dynamic" if dynamic_enabled else "static",
             "source": (
-                "issue_description"
-                if not dynamic_enabled
-                else "static_checklist_seed"
-                if seeded_from_static_prompt
-                else "dynamic_checklist"
+                checklist_data.get("source")
+                if isinstance(checklist_data, dict) and isinstance(checklist_data.get("source"), str)
+                else _resolve_checklist_source_label(
+                    checklist_config,
+                    dynamic_enabled=dynamic_enabled,
+                    seeded_from_static_prompt=seeded_from_static_prompt,
+                )
+            ),
+            "generator_mode": getattr(checklist_config, "checklist_generator_mode", "issue_only"),
+            "generator_prompt_name": (
+                checklist_data.get("generator_prompt_name", "") if isinstance(checklist_data, dict) else ""
             ),
         }
         return updated_vars, checklist_metadata
@@ -1050,10 +1135,24 @@ class DefaultAgent:
         return verifier_uses_checklist_mode(checklist_config)
 
     def _get_checklist_model(self) -> Model:
+        if self._checklist_generator_model is not None:
+            return self._checklist_generator_model
         verifier_model = getattr(self.verifier, "model", None)
         if verifier_model is not None:
             return verifier_model
         return self.model
+
+    def _get_checklist_instance_id(self) -> str | None:
+        for candidate in (
+            self.extra_template_vars.get("instance_id"),
+            getattr(self, "instance_id", None),
+        ):
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate
+        return None
+
+    def _load_precomputed_checklist(self, checklist_config: VerifierConfig, *, instance_id: str | None) -> dict[str, Any] | None:
+        return resolve_precomputed_checklist(checklist_config, instance_id=instance_id)
 
     def _get_checklist_config(self) -> VerifierConfig:
         verifier_config = getattr(self.verifier, "config", None)

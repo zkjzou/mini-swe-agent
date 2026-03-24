@@ -13,7 +13,7 @@ from minisweagent.config import get_config_from_spec
 from minisweagent.models import get_model
 from minisweagent.utils.serialize import UNSET, recursive_merge
 from minisweagent.verifiers.checklist import generate_issue_checklist
-from minisweagent.verifiers.checklist_generator import normalize_checklist_generator_model_config
+from minisweagent.verifiers.checklist_generator import resolve_checklist_generator_model_config
 
 
 def _load_messages(path: Path) -> list[dict[str, Any]]:
@@ -99,8 +99,9 @@ def main(
         generator_mode=generator_mode,
         generator_prompt_name=generator_prompt_name,
     )
-    verifier_config.model = normalize_checklist_generator_model_config(dict(verifier_config.model))
-    verifier_model = get_model(config=dict(verifier_config.model))
+    model_config = resolve_checklist_generator_model_config(verifier_config)
+    verifier_config.model = dict(model_config)
+    verifier_model = get_model(config=dict(model_config))
     payload: list[dict[str, Any]] = []
     for path in input_paths:
         messages = _load_messages(path)

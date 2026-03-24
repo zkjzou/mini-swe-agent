@@ -205,6 +205,8 @@ class ProgressTrackingAgent(DefaultAgent):
         super().__init__(*args, **kwargs)
         self.progress_manager: RunBatchProgressManager = progress_manager
         self.instance_id = instance_id
+        if instance_id:
+            self.extra_template_vars.setdefault("instance_id", instance_id)
         self._display_step = 0
 
     def step(self) -> dict:

@@ -938,3 +938,89 @@ def test_world_reward_prompt_includes_task_in_captured_input(tmp_path, monkeypat
     first_candidate_messages = row["verifier_output"]["inputs"][0]["messages"]
     assert [message["role"] for message in first_candidate_messages] == ["system", "user"]
     assert any("Task: Fix the failing parser test." in message["content"] for message in first_candidate_messages)
+
+
+def test_evaluate_verifier_action_selection_uses_precomputed_checklist_input(tmp_path, monkeypatch):
+    input_jsonl = tmp_path / "merged.jsonl"
+    output_jsonl = tmp_path / "eval_rows.jsonl"
+    checklist_jsonl = tmp_path / "checklists.jsonl"
+    _write_jsonl(input_jsonl, [_make_row()])
+    checklist_jsonl.write_text(
+        json.dumps(
+            {
+                "instance_id": "repo__issue-1",
+                "output": {
+                    "items": ["Reproduce issue", "Implement fix", "Validate behavior"],
+                    "checklist_output_format": "list",
+                },
+            }
+        )
+        + "\n"
+    )
+
+    monkeypatch.setattr(
+        "minisweagent.utils.verifier_action_evaluation.get_model",
+        lambda *args, **kwargs: _VariantAwareModel(),
+    )
+
+    evaluate_verifier_action_selection(
+        input_jsonl=input_jsonl,
+        output_jsonl=output_jsonl,
+        config_specs=[
+            "swebench.yaml",
+            'agent.verifier.model.model_name="fake/verifier"',
+            'agent.verifier.model.model_class="deterministic"',
+            f'agent.verifier.checklist_input_path="{checklist_jsonl}"',
+        ],
+        verifier_variants=["checklist_reward"],
+        strict_five_actions=True,
+        show_progress=False,
+        max_workers=1,
+        overwrite=True,
+    )
+
+    row = json.loads(output_jsonl.read_text().splitlines()[0])
+    checklist = row["verifier_output"]["checklist"]
+    assert checklist["items"] == ["Reproduce issue", "Implement fix", "Validate behavior"]
+    assert checklist["source"] == "precomputed_checklist"
+    assert checklist["api_calls"] == 0
+
+
+def test_evaluate_verifier_action_selection_uses_dedicated_checklist_generator_model(tmp_path, monkeypatch):
+    input_jsonl = tmp_path / "merged.jsonl"
+    output_jsonl = tmp_path / "eval_rows.jsonl"
+    _write_jsonl(input_jsonl, [_make_row()])
+
+    constructed = []
+
+    def _fake_get_model(*args, **kwargs):
+        config = kwargs.get("config")
+        if config is None and len(args) >= 2:
+            config = args[1]
+        elif config is None and len(args) == 1 and isinstance(args[0], dict):
+            config = args[0]
+        if config is None:
+            config = {}
+        constructed.append(config.get("model_name"))
+        return _VariantAwareModel()
+
+    monkeypatch.setattr("minisweagent.utils.verifier_action_evaluation.get_model", _fake_get_model)
+
+    evaluate_verifier_action_selection(
+        input_jsonl=input_jsonl,
+        output_jsonl=output_jsonl,
+        config_specs=[
+            "swebench.yaml",
+            'agent.verifier.model.model_name="fake/verifier"',
+            'agent.verifier.model.model_class="deterministic"',
+            'agent.verifier.checklist_generator_model.model_name="fake/generator"',
+            'agent.verifier.checklist_generator_model.model_class="deterministic"',
+        ],
+        verifier_variants=["checklist_reward"],
+        strict_five_actions=True,
+        show_progress=False,
+        max_workers=1,
+        overwrite=True,
+    )
+
+    assert constructed[:2] == ["fake/verifier", "fake/generator"]

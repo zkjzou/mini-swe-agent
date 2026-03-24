@@ -13,7 +13,7 @@ from minisweagent.models import get_model
 from minisweagent.utils.langfuse import attach_langfuse_session_metadata, enable_langfuse_tracing, make_langfuse_session_id
 from minisweagent.utils.serialize import UNSET, recursive_merge
 from minisweagent.verifiers.checklist import generate_issue_checklist
-from minisweagent.verifiers.checklist_generator import normalize_checklist_generator_model_config
+from minisweagent.verifiers.checklist_generator import resolve_checklist_generator_model_config
 
 app = typer.Typer(add_completion=False)
 
@@ -103,7 +103,17 @@ def _flatten_steps(steps: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
     return [message for step in steps for message in step]
 
 
-def _load_trajectory_context(row: dict[str, Any]) -> dict[str, Any]:
+def _render_future_steps(steps: list[list[dict[str, Any]]]) -> list[str]:
+    rendered: list[str] = []
+    for step in steps:
+        for message in step:
+            role = str(message.get("role") or "unknown")
+            content = " ".join(str(message.get("content") or "").split())
+            rendered.append(f"{role}: {content}" if content else role)
+    return rendered
+
+
+def _load_trajectory_context(row: dict[str, Any], *, generator_mode: str) -> dict[str, Any]:
     trajectory_path = row.get("trajectory_path")
     if not isinstance(trajectory_path, str) or not trajectory_path.strip():
         return row
@@ -116,6 +126,16 @@ def _load_trajectory_context(row: dict[str, Any]) -> dict[str, Any]:
     merged.setdefault("all_messages", messages)
     merged.setdefault("steps", steps)
     merged.setdefault("all_steps", steps)
+    if generator_mode == "trajectory_dynamic":
+        step_index = merged.get("step_index")
+        if isinstance(step_index, int):
+            if step_index < 0 or step_index > len(steps):
+                raise ValueError(f"step_index must be between 0 and {len(steps)} for {trajectory_path}")
+            prefix_steps = steps[:step_index]
+            future_steps = steps[step_index:]
+            merged["steps"] = prefix_steps
+            merged["messages"] = _flatten_steps(prefix_steps)
+            merged.setdefault("future_steps", _render_future_steps(future_steps))
     return merged
 
 
@@ -139,7 +159,6 @@ def _build_config(
                     "checklist_mode": "issue_progress",
                     "checklist_generator_mode": generator_mode,
                     "checklist_generator_prompt_name": prompt_name,
-                    "checklist_output_format": "rubric_yaml",
                     "include_inputs_in_output": True,
                 }
             }
@@ -148,6 +167,46 @@ def _build_config(
     merged = recursive_merge(*configs)
     verifier_config = merged.get("agent", {}).get("verifier", {})
     return VerifierConfig(**verifier_config)
+
+
+def _build_output_row(
+    *,
+    row: dict[str, Any],
+    result: dict[str, Any],
+    prompt_name: str,
+    output_format: str,
+) -> dict[str, Any]:
+    if output_format == "full":
+        return {"input": row, "output": result, "prompt_name": prompt_name}
+
+    minimal_output = {
+        "items": result.get("items", []),
+        "rubric_items": result.get("rubric_items", []),
+        "checklist_output_format": result.get("checklist_output_format"),
+        "generator_mode": result.get("generator_mode"),
+        "generator_prompt_name": result.get("generator_prompt_name"),
+        "raw_output": result.get("raw_output"),
+        "response_cost": result.get("response_cost"),
+        "api_calls": result.get("api_calls"),
+    }
+    if "guardrail" in result:
+        minimal_output["guardrail"] = result["guardrail"]
+
+    compact_row = {
+        "prompt_name": prompt_name,
+        "output": minimal_output,
+    }
+    for key in (
+        "instance_id",
+        "seed",
+        "trajectory_path",
+        "paired_success_seed",
+        "paired_success_trajectory_path",
+        "step_index",
+    ):
+        if key in row:
+            compact_row[key] = row[key]
+    return compact_row
 
 
 @app.command()
@@ -199,12 +258,15 @@ def main(
         "--enable-langfuse",
         help='Enable LiteLLM Langfuse tracing by adding "langfuse_otel" to litellm.callbacks',
     ),
+    output_format: str = typer.Option("minimal", "--output-format", help="One of minimal or full."),
     config_spec: list[str] = typer.Option([], "-c", "--config", help="Config files or overrides to merge"),
 ) -> None:
     if input_path is None and trajectory is None:
         raise ValueError("Provide either --input or --trajectory.")
     if input_path is not None and trajectory is not None:
         raise ValueError("Use only one of --input or --trajectory.")
+    if output_format not in {"minimal", "full"}:
+        raise ValueError("--output-format must be one of: minimal, full.")
 
     prompt_name = prompt_name or _default_prompt_name(generator_mode)
     verifier_config = _build_config(
@@ -224,7 +286,11 @@ def main(
         )
         attach_langfuse_session_metadata({"model": verifier_config.model}, session_id=session_id)
     model = get_model(config=dict(verifier_config.model))
-    rows = [_load_trajectory_context(row) for row in _load_rows(input_path)] if input_path is not None else []
+    rows = (
+        [_load_trajectory_context(row, generator_mode=generator_mode) for row in _load_rows(input_path)]
+        if input_path is not None
+        else []
+    )
     if trajectory is not None:
         payload = json.loads(trajectory.read_text())
         messages = _extract_messages(payload)
@@ -263,7 +329,16 @@ def main(
             verifier_config,
             template_vars=row,
         )
-        outputs.append(json.dumps({"input": row, "output": result, "prompt_name": prompt_name}))
+        outputs.append(
+            json.dumps(
+                _build_output_row(
+                    row=row,
+                    result=result,
+                    prompt_name=prompt_name,
+                    output_format=output_format,
+                )
+            )
+        )
     output_path.write_text("\n".join(outputs) + ("\n" if outputs else ""))
 
 

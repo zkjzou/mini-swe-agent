@@ -1,5 +1,6 @@
 import json
 import re
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -9,10 +10,12 @@ from minisweagent import package_dir
 from minisweagent.config import get_config_from_spec
 from minisweagent.models.test_models import DeterministicModel, make_output
 from minisweagent.run.benchmarks.swebench import (
+    _apply_run_seed,
     _attach_langfuse_session_metadata,
-    _resolve_eval_server_subset,
     _enable_langfuse_tracing,
+    _iter_seeded_output_paths,
     _make_langfuse_session_id,
+    _resolve_eval_server_subset,
     _resolve_profiled_model_config,
     filter_instances,
     get_swebench_docker_image_name,
@@ -184,6 +187,25 @@ def test_filter_instances_empty_list():
     """Test filter_instances with empty input list"""
     result = filter_instances([], filter_spec=r".*", slice_spec="0:5", shuffle=True)
     assert result == []
+
+
+def test_iter_seeded_output_paths_preserves_single_run_output_path():
+    output_paths = _iter_seeded_output_paths("/tmp/run-name", 1)
+    assert output_paths == [(None, Path('/tmp/run-name'))]
+
+
+def test_apply_run_seed_updates_actor_and_verifier_model_kwargs():
+    config = {
+        "model": {"model_name": "actor-model"},
+        "agent": {"verifier": {"model": {"model_name": "verifier-model"}}},
+    }
+
+    seeded = _apply_run_seed(config, seed=3)
+
+    assert seeded["model"]["model_kwargs"]["seed"] == 3
+    assert seeded["agent"]["verifier"]["model"]["model_kwargs"]["seed"] == 3
+    assert "model_kwargs" not in config["model"]
+    assert "model_kwargs" not in config["agent"]["verifier"]["model"]
 
 
 def test_filter_instances_no_matches():
@@ -825,3 +847,56 @@ def test_swebench_main_auto_submit_failure_is_nonfatal(tmp_path):
             config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
             environment_class="docker",
         )
+
+
+def test_swebench_main_uses_seeded_output_dirs_and_configs(tmp_path):
+    with patch("minisweagent.run.benchmarks.swebench._run_swebench_batch") as mock_run:
+        main(
+            subset="_test",
+            split="test",
+            slice_spec="",
+            output=str(tmp_path / "seeded-run"),
+            num_seeds=3,
+            workers=1,
+            filter_spec="",
+            shuffle=False,
+            redo_existing=False,
+            redo_errors=False,
+            config_spec=[
+                "model.model_name=actor-model",
+                "agent.verifier.model.model_name=verifier-model",
+            ],
+            environment_class="docker",
+            auto_eval=False,
+        )
+
+    assert mock_run.call_count == 3
+    output_paths = [call.kwargs["output_path"] for call in mock_run.call_args_list]
+    assert output_paths == [tmp_path / "seeded-run_1", tmp_path / "seeded-run_2", tmp_path / "seeded-run_3"]
+
+    configs = [call.kwargs["config"] for call in mock_run.call_args_list]
+    assert [config["model"]["model_kwargs"]["seed"] for config in configs] == [1, 2, 3]
+    assert [config["agent"]["verifier"]["model"]["model_kwargs"]["seed"] for config in configs] == [1, 2, 3]
+
+
+def test_swebench_main_keeps_single_run_output_dir_unsuffixed(tmp_path):
+    with patch("minisweagent.run.benchmarks.swebench._run_swebench_batch") as mock_run:
+        main(
+            subset="_test",
+            split="test",
+            slice_spec="",
+            output=str(tmp_path / "single-run"),
+            num_seeds=1,
+            workers=1,
+            filter_spec="",
+            shuffle=False,
+            redo_existing=False,
+            redo_errors=False,
+            config_spec=["model.model_name=actor-model"],
+            environment_class="docker",
+            auto_eval=False,
+        )
+
+    mock_run.assert_called_once()
+    assert mock_run.call_args.kwargs["output_path"] == tmp_path / "single-run"
+    assert "seed" not in mock_run.call_args.kwargs["config"]["model"].get("model_kwargs", {})

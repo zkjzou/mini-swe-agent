@@ -5,11 +5,13 @@
 
 import concurrent.futures
 import json
+import logging
 import random
 import re
 import threading
 import time
 import traceback
+from copy import deepcopy
 from pathlib import Path
 
 import litellm
@@ -75,6 +77,62 @@ _EVAL_SERVER_SUBSET_MAPPING = {
     "swe-bench_verified": "swe-bench_verified",
     "swe-smith": "swe-smith",
 }
+
+
+def _iter_seeded_output_paths(output: str, num_seeds: int) -> list[tuple[int | None, Path]]:
+    if num_seeds == 1:
+        return [(None, Path(output))]
+    return [(seed, Path(f"{output}_{seed}")) for seed in range(1, num_seeds + 1)]
+
+
+def _apply_run_seed(config: dict, *, seed: int | None) -> dict:
+    seeded_config = deepcopy(config)
+    if seed is None:
+        return seeded_config
+
+    model_config = seeded_config.setdefault("model", {})
+    model_kwargs = model_config.setdefault("model_kwargs", {})
+    model_kwargs["seed"] = seed
+
+    verifier_config = seeded_config.get("agent", {}).get("verifier")
+    if isinstance(verifier_config, dict):
+        verifier_model = verifier_config.get("model")
+        if isinstance(verifier_model, dict):
+            verifier_model_kwargs = verifier_model.setdefault("model_kwargs", {})
+            verifier_model_kwargs["seed"] = seed
+
+    return seeded_config
+
+
+def _build_run_config(
+    *,
+    config_spec: list[str],
+    environment_class: str | None,
+    model: str | None,
+    model_class: str | None,
+    seed: int | None,
+) -> dict:
+    logger.info(f"Building agent config from specs: {config_spec}")
+    configs = [get_config_from_spec(spec) for spec in config_spec]
+    configs.append({
+        "environment": {"environment_class": environment_class or UNSET},
+        "model": {"model_name": model or UNSET, "model_class": model_class or UNSET},
+    })
+    config = recursive_merge(*configs)
+    config = _resolve_profiled_model_config(config)
+    return _apply_run_seed(config, seed=seed)
+
+
+def _with_run_log_handler(output_path: Path) -> logging.FileHandler:
+    logger_instance = logging.getLogger("minisweagent")
+    previous_handler_count = len(logger_instance.handlers)
+    add_file_handler(output_path / "minisweagent.log")
+    return logger_instance.handlers[previous_handler_count]
+
+
+def _remove_log_handler(handler: logging.Handler) -> None:
+    logger.removeHandler(handler)
+    handler.close()
 
 
 def _enable_langfuse_tracing() -> None:
@@ -364,6 +422,127 @@ def filter_instances(
     return instances
 
 
+def _run_swebench_batch(
+    *,
+    subset: str,
+    split: str,
+    slice_spec: str,
+    filter_spec: str,
+    shuffle: bool,
+    output_path: Path,
+    workers: int,
+    redo_existing: bool,
+    redo_errors: bool,
+    config: dict,
+    enable_langfuse: bool,
+    auto_eval: bool,
+    eval_server_url: str,
+    eval_run_id: str | None,
+    eval_timeout: int | None,
+    eval_max_workers: int | None,
+) -> None:
+    output_path.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Results will be saved to {output_path}")
+    log_handler = _with_run_log_handler(output_path)
+
+    try:
+        if enable_langfuse is True:
+            session_id = _make_langfuse_session_id(subset=subset, split=split, output_path=output_path)
+            _attach_langfuse_session_metadata(config, session_id=session_id)
+            logger.info("Using Langfuse session_id=%s", session_id)
+
+        from datasets import load_dataset
+
+        dataset_path = DATASET_MAPPING.get(subset, subset)
+        logger.info(f"Loading dataset {dataset_path}, split {split}...")
+        instances = list(load_dataset(dataset_path, split=split))
+
+        instances = filter_instances(instances, filter_spec=filter_spec, slice_spec=slice_spec, shuffle=shuffle)
+        if redo_existing and redo_errors:
+            logger.info("--redo-existing overrides --redo-errors; running all instances.")
+        if not redo_existing and (output_path / "preds.json").exists():
+            existing_instances = set(json.loads((output_path / "preds.json").read_text()).keys())
+            if redo_errors:
+                candidate_ids = {instance["instance_id"] for instance in instances}
+                existing_instances &= candidate_ids
+                error_instances = {
+                    instance_id
+                    for instance_id in existing_instances
+                    if is_error_trajectory(output_path / instance_id / f"{instance_id}.traj.json")
+                }
+                skip_instances = existing_instances - error_instances
+                if error_instances:
+                    logger.info(f"Redoing {len(error_instances)} instances with error trajectories")
+                if skip_instances:
+                    logger.info(f"Skipping {len(skip_instances)} existing instances")
+                instances = [instance for instance in instances if instance["instance_id"] not in skip_instances]
+            else:
+                logger.info(f"Skipping {len(existing_instances)} existing instances")
+                instances = [instance for instance in instances if instance["instance_id"] not in existing_instances]
+        logger.info(f"Running on {len(instances)} instances...")
+
+        progress_manager = RunBatchProgressManager(len(instances), output_path / f"exit_statuses_{time.time()}.yaml")
+
+        def process_futures(futures: dict[concurrent.futures.Future, str]):
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    future.result()
+                except concurrent.futures.CancelledError:
+                    pass
+                except Exception as e:
+                    instance_id = futures[future]
+                    logger.error(f"Error in future for instance {instance_id}: {e}", exc_info=True)
+                    progress_manager.on_uncaught_exception(instance_id, e)
+
+        with Live(progress_manager.render_group, refresh_per_second=4):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {
+                    executor.submit(process_instance, instance, output_path, config, progress_manager): instance[
+                        "instance_id"
+                    ]
+                    for instance in instances
+                }
+                try:
+                    process_futures(futures)
+                except KeyboardInterrupt:
+                    logger.info("Cancelling all pending jobs. Press ^C again to exit immediately.")
+                    for future in futures:
+                        if not future.running() and not future.done():
+                            future.cancel()
+                    process_futures(futures)
+
+        preds_path = output_path / "preds.json"
+        if auto_eval and preds_path.exists():
+            eval_subset = _resolve_eval_server_subset(subset)
+            try:
+                response, upload_path, metadata_path = auto_submit_swebench_predictions(
+                    preds_path=preds_path,
+                    output_dir=output_path,
+                    subset=eval_subset,
+                    split=split,
+                    server_url=eval_server_url,
+                    run_id=eval_run_id,
+                    timeout=eval_timeout,
+                    max_workers=eval_max_workers,
+                )
+                logger.info(
+                    "Queued evaluation job_id=%s run_id=%s status=%s position_in_queue=%s upload=%s metadata=%s server=%s",
+                    response.get("job_id"),
+                    response.get("run_id"),
+                    response.get("status"),
+                    response.get("position_in_queue"),
+                    upload_path,
+                    metadata_path,
+                    eval_server_url,
+                )
+            except Exception as exc:
+                logger.error("Failed to auto-submit predictions to evaluation server: %s", exc, exc_info=True)
+        elif auto_eval:
+            logger.info("Skipping evaluation-server submission because no preds.json was produced.")
+    finally:
+        _remove_log_handler(log_handler)
+
+
 # fmt: off
 @app.command(help=_HELP_TEXT)
 def main(
@@ -373,6 +552,7 @@ def main(
     filter_spec: str = typer.Option("", "--filter", help="Filter instance IDs by regex", rich_help_panel="Data selection"),
     shuffle: bool = typer.Option(False, "--shuffle", help="Shuffle instances", rich_help_panel="Data selection"),
     output: str = typer.Option("", "-o", "--output", help="Output directory", rich_help_panel="Basic"),
+    num_seeds: int = typer.Option(1, "--num-seeds", min=1, help="Repeat the full batch run across seeds 1..N", rich_help_panel="Basic"),
     workers: int = typer.Option(1, "-w", "--workers", help="Number of worker threads for parallel processing", rich_help_panel="Basic"),
     model: str | None = typer.Option(None, "-m", "--model", help="Model to use", rich_help_panel="Basic"),
     model_class: str | None = typer.Option(None, "--model-class", help="Model class to use (e.g., 'anthropic' or 'minisweagent.models.anthropic.AnthropicModel')", rich_help_panel="Advanced"),
@@ -418,117 +598,38 @@ def main(
     ),
 ) -> None:
     # fmt: on
-    output_path = Path(output)
-    output_path.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Results will be saved to {output_path}")
-    add_file_handler(output_path / "minisweagent.log")
+    num_seeds = int(getattr(num_seeds, "default", num_seeds))
 
     if enable_langfuse is True:
         _enable_langfuse_tracing()
         logger.info('Enabled LiteLLM Langfuse tracing via litellm.callbacks=["langfuse_otel"]')
 
-    from datasets import load_dataset
-
-    dataset_path = DATASET_MAPPING.get(subset, subset)
-    logger.info(f"Loading dataset {dataset_path}, split {split}...")
-    instances = list(load_dataset(dataset_path, split=split))
-
-    instances = filter_instances(instances, filter_spec=filter_spec, slice_spec=slice_spec, shuffle=shuffle)
-    if redo_existing and redo_errors:
-        logger.info("--redo-existing overrides --redo-errors; running all instances.")
-    if not redo_existing and (output_path / "preds.json").exists():
-        existing_instances = set(json.loads((output_path / "preds.json").read_text()).keys())
-        if redo_errors:
-            candidate_ids = {instance["instance_id"] for instance in instances}
-            existing_instances &= candidate_ids
-            error_instances = {
-                instance_id
-                for instance_id in existing_instances
-                if is_error_trajectory(output_path / instance_id / f"{instance_id}.traj.json")
-            }
-            skip_instances = existing_instances - error_instances
-            if error_instances:
-                logger.info(f"Redoing {len(error_instances)} instances with error trajectories")
-            if skip_instances:
-                logger.info(f"Skipping {len(skip_instances)} existing instances")
-            instances = [instance for instance in instances if instance["instance_id"] not in skip_instances]
-        else:
-            logger.info(f"Skipping {len(existing_instances)} existing instances")
-            instances = [instance for instance in instances if instance["instance_id"] not in existing_instances]
-    logger.info(f"Running on {len(instances)} instances...")
-
-    logger.info(f"Building agent config from specs: {config_spec}")
-    configs = [get_config_from_spec(spec) for spec in config_spec]
-    configs.append({
-        "environment": {"environment_class": environment_class or UNSET},
-        "model": {"model_name": model or UNSET, "model_class": model_class or UNSET},
-    })
-    config = recursive_merge(*configs)
-    config = _resolve_profiled_model_config(config)
-
-    if enable_langfuse is True:
-        session_id = _make_langfuse_session_id(subset=subset, split=split, output_path=output_path)
-        _attach_langfuse_session_metadata(config, session_id=session_id)
-        logger.info("Using Langfuse session_id=%s", session_id)
-
-    progress_manager = RunBatchProgressManager(len(instances), output_path / f"exit_statuses_{time.time()}.yaml")
-
-    def process_futures(futures: dict[concurrent.futures.Future, str]):
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                future.result()
-            except concurrent.futures.CancelledError:
-                pass
-            except Exception as e:
-                instance_id = futures[future]
-                logger.error(f"Error in future for instance {instance_id}: {e}", exc_info=True)
-                progress_manager.on_uncaught_exception(instance_id, e)
-
-    with Live(progress_manager.render_group, refresh_per_second=4):
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(process_instance, instance, output_path, config, progress_manager): instance[
-                    "instance_id"
-                ]
-                for instance in instances
-            }
-            try:
-                process_futures(futures)
-            except KeyboardInterrupt:
-                logger.info("Cancelling all pending jobs. Press ^C again to exit immediately.")
-                for future in futures:
-                    if not future.running() and not future.done():
-                        future.cancel()
-                process_futures(futures)
-
-    preds_path = output_path / "preds.json"
-    if auto_eval and preds_path.exists():
-        eval_subset = _resolve_eval_server_subset(subset)
-        try:
-            response, upload_path, metadata_path = auto_submit_swebench_predictions(
-                preds_path=preds_path,
-                output_dir=output_path,
-                subset=eval_subset,
-                split=split,
-                server_url=eval_server_url,
-                run_id=eval_run_id,
-                timeout=eval_timeout,
-                max_workers=eval_max_workers,
-            )
-            logger.info(
-                "Queued evaluation job_id=%s run_id=%s status=%s position_in_queue=%s upload=%s metadata=%s server=%s",
-                response.get("job_id"),
-                response.get("run_id"),
-                response.get("status"),
-                response.get("position_in_queue"),
-                upload_path,
-                metadata_path,
-                eval_server_url,
-            )
-        except Exception as exc:
-            logger.error("Failed to auto-submit predictions to evaluation server: %s", exc, exc_info=True)
-    elif auto_eval:
-        logger.info("Skipping evaluation-server submission because no preds.json was produced.")
+    for seed, output_path in _iter_seeded_output_paths(output, num_seeds):
+        config = _build_run_config(
+            config_spec=config_spec,
+            environment_class=environment_class,
+            model=model,
+            model_class=model_class,
+            seed=seed,
+        )
+        _run_swebench_batch(
+            subset=subset,
+            split=split,
+            slice_spec=slice_spec,
+            filter_spec=filter_spec,
+            shuffle=shuffle,
+            output_path=output_path,
+            workers=workers,
+            redo_existing=redo_existing,
+            redo_errors=redo_errors,
+            config=config,
+            enable_langfuse=enable_langfuse,
+            auto_eval=auto_eval,
+            eval_server_url=eval_server_url,
+            eval_run_id=eval_run_id,
+            eval_timeout=eval_timeout,
+            eval_max_workers=eval_max_workers,
+        )
 
 
 if __name__ == "__main__":

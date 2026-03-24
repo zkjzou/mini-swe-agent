@@ -41,11 +41,20 @@
             --subset verified \
             --split test \
             --workers 4
+
+        # Multi-seed example:
+        mini-extra swebench \
+            --output /scratch/my-run \
+            --num-seeds 4 \
+            --subset verified \
+            --split test
+        # writes /scratch/my-run_1 ... /scratch/my-run_4
         ```
 
         Basic flags:
 
         - `-o`, `--output` - Output directory
+        - `--num-seeds` - Repeat the full batch run across seeds `1..N`; output folders become `<output>_<seed>` when `N > 1`
         - `-m`, `--model` - Model to use
         - `-c`, `--config` - Path to a config file (default: `swebench.yaml` in the `config` directory)
         - `-w`, `--workers` - Number of worker threads for parallel processing (default: `1`)

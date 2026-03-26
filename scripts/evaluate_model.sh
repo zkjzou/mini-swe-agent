@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODEL_DIR="/scratch/wangluxy_owned_root/wangluxy_owned1/zkjzou/SWE-PRM/test_minimax_2_5_5"
+MODEL_DIR="$1"
 
 mini-extra evaluation-client submit-preds \
     "${MODEL_DIR}/preds.json" \

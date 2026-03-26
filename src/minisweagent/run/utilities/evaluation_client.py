@@ -9,7 +9,6 @@ import re
 import shutil
 import time
 from dataclasses import asdict, dataclass
-from hashlib import sha1
 from pathlib import Path
 from typing import Any
 
@@ -56,9 +55,7 @@ def _safe_path_stem(value: str) -> str:
 
 
 def derive_stable_run_id(*, output_path: Path, subset: str, split: str) -> str:
-    output_path = output_path.resolve()
-    digest = sha1(str(output_path).encode("utf-8")).hexdigest()[:10]
-    return f"{_safe_path_stem(output_path.name)}-{subset}-{split}-{digest}"
+    return f"{_safe_path_stem(output_path.name)}-{subset}-{split}"
 
 
 def derive_rerun_run_id(base_run_id: str, *, created_at: float | None = None) -> str:

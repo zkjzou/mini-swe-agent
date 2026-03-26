@@ -27,6 +27,7 @@ def test_derive_stable_run_id_is_stable(tmp_path):
 
     assert run_id_a == run_id_b
     assert run_id_a != run_id_c
+    assert run_id_a == "run-a-swe-bench_verified-test"
 
 
 def test_derive_rerun_run_id_appends_timestamp():
@@ -80,7 +81,7 @@ def test_auto_submit_swebench_predictions_writes_metadata(monkeypatch, tmp_path)
     assert metadata.job_id == "job-123"
     assert metadata.server_url == "http://server:8000"
     assert metadata.upload_path == str(upload_path)
-    assert metadata.run_id.startswith(tmp_path.name)
+    assert metadata.run_id == f"{tmp_path.name}-swe-bench_verified-test"
 
 
 def test_auto_submit_swebench_predictions_can_force_rerun(monkeypatch, tmp_path):

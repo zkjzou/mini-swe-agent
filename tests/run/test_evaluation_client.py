@@ -31,7 +31,7 @@ def test_derive_stable_run_id_is_stable(tmp_path):
 
 
 def test_derive_rerun_run_id_appends_timestamp():
-    assert derive_rerun_run_id("run-123", created_at=1700000000) == "run-123-rerun-1700000000"
+    assert derive_rerun_run_id("run-123", created_at=1700000000) == "run-123-rerun-20231114T221320Z"
 
 
 def test_make_unique_predictions_upload_copy_preserves_preds_json(tmp_path):
@@ -113,7 +113,7 @@ def test_auto_submit_swebench_predictions_can_force_rerun(monkeypatch, tmp_path)
     )
 
     metadata = load_submission_metadata(metadata_path)
-    assert called["run_id"].endswith("-rerun-1700000000")
+    assert called["run_id"].endswith("-rerun-20231114T221320Z")
     assert metadata.run_id == called["run_id"]
 
 
@@ -189,9 +189,9 @@ def test_submit_preds_cli_rerun_rewrites_run_id(monkeypatch, tmp_path):
     )
 
     assert result.exit_code == 0
-    assert called["run_id"] == "run-123-rerun-1700000000"
+    assert called["run_id"] == "run-123-rerun-20231114T221320Z"
     metadata = json.loads((tmp_path / SUBMISSION_METADATA_FILENAME).read_text(encoding="utf-8"))
-    assert metadata["run_id"] == "run-123-rerun-1700000000"
+    assert metadata["run_id"] == "run-123-rerun-20231114T221320Z"
 
 
 def test_submit_instance_cli_uses_staged_flow(monkeypatch, tmp_path):

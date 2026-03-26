@@ -59,7 +59,7 @@ def derive_stable_run_id(*, output_path: Path, subset: str, split: str) -> str:
 
 
 def derive_rerun_run_id(base_run_id: str, *, created_at: float | None = None) -> str:
-    timestamp = int(created_at or time.time())
+    timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(created_at or time.time()))
     return f"{base_run_id}-rerun-{timestamp}"
 
 

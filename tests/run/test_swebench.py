@@ -819,6 +819,40 @@ def test_swebench_main_auto_submits_predictions(tmp_path):
     assert kwargs["output_dir"] == tmp_path
     assert kwargs["subset"] == "swe-bench_verified"
     assert kwargs["split"] == "test"
+    assert kwargs["rerun"] is False
+
+
+def test_swebench_main_can_force_eval_rerun(tmp_path):
+    with (
+        patch("datasets.load_dataset", return_value=[]),
+        patch("minisweagent.run.benchmarks.swebench.Live") as mock_live,
+        patch("minisweagent.run.benchmarks.swebench.auto_submit_swebench_predictions") as mock_auto_submit,
+    ):
+        mock_live.return_value.__enter__.return_value = mock_live.return_value
+        mock_live.return_value.__exit__.return_value = False
+        (tmp_path / "preds.json").write_text("{}", encoding="utf-8")
+        mock_auto_submit.return_value = (
+            {"job_id": "job-123", "run_id": "run-123-rerun-1700000000", "status": "queued", "position_in_queue": 1},
+            tmp_path / "upload.json",
+            tmp_path / "evaluation_submission.json",
+        )
+
+        main(
+            subset="verified",
+            split="test",
+            slice_spec="",
+            output=str(tmp_path),
+            workers=1,
+            filter_spec="",
+            shuffle=False,
+            redo_existing=False,
+            redo_errors=False,
+            config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
+            environment_class="docker",
+            eval_rerun=True,
+        )
+
+    assert mock_auto_submit.call_args.kwargs["rerun"] is True
 
 
 def test_swebench_main_auto_submit_failure_is_nonfatal(tmp_path):

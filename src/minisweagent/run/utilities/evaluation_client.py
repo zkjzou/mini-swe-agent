@@ -61,6 +61,11 @@ def derive_stable_run_id(*, output_path: Path, subset: str, split: str) -> str:
     return f"{_safe_path_stem(output_path.name)}-{subset}-{split}-{digest}"
 
 
+def derive_rerun_run_id(base_run_id: str, *, created_at: float | None = None) -> str:
+    timestamp = int(created_at or time.time())
+    return f"{base_run_id}-rerun-{timestamp}"
+
+
 def make_unique_predictions_upload_copy(
     preds_path: Path,
     *,
@@ -276,11 +281,13 @@ def auto_submit_swebench_predictions(
     split: str,
     server_url: str = DEFAULT_EVAL_SERVER_URL,
     run_id: str | None = None,
+    rerun: bool = False,
     timeout: int | None = None,
     max_workers: int | None = None,
 ) -> tuple[dict[str, Any], Path, Path]:
-    stable_run_id = run_id or derive_stable_run_id(output_path=output_dir, subset=subset, split=split)
     created_at = time.time()
+    base_run_id = run_id or derive_stable_run_id(output_path=output_dir, subset=subset, split=split)
+    resolved_run_id = derive_rerun_run_id(base_run_id, created_at=created_at) if rerun else base_run_id
     upload_path = make_unique_predictions_upload_copy(
         preds_path,
         output_path=output_dir,
@@ -293,7 +300,7 @@ def auto_submit_swebench_predictions(
         server_url=server_url,
         subset=subset,
         split=split,
-        run_id=stable_run_id,
+        run_id=resolved_run_id,
         timeout=timeout,
         max_workers=max_workers,
     )
@@ -302,7 +309,7 @@ def auto_submit_swebench_predictions(
         server_url=server_url,
         subset=subset,
         split=split,
-        run_id=response.get("run_id") or stable_run_id,
+        run_id=response.get("run_id") or resolved_run_id,
         created_at=created_at,
         predictions_path=str(preds_path),
         upload_path=str(upload_path),
@@ -322,17 +329,24 @@ def submit_preds_command(
     split: str = typer.Option("test", "--split", help="Dataset split"),
     server_url: str = typer.Option(DEFAULT_EVAL_SERVER_URL, "--server-url", help="Evaluation server URL"),
     run_id: str | None = typer.Option(None, "--run-id", help="Stable server-side run identifier"),
+    rerun: bool = typer.Option(
+        False,
+        "--rerun/--no-rerun",
+        help="Force a fresh evaluation run_id instead of reusing an existing cached evaluation",
+    ),
     output_dir: str | None = typer.Option(None, "--output-dir", help="Directory to save submission metadata"),
     timeout: int | None = typer.Option(None, "--timeout", help="Per-instance evaluation timeout"),
     max_workers: int | None = typer.Option(None, "--max-workers", help="Evaluation worker count"),
 ) -> None:
     predictions_path = Path(predictions_file)
+    created_at = time.time()
+    resolved_run_id = derive_rerun_run_id(run_id, created_at=created_at) if rerun and run_id else run_id
     response = submit_predictions_file(
         predictions_path,
         server_url=server_url,
         subset=subset,
         split=split,
-        run_id=run_id,
+        run_id=resolved_run_id,
         timeout=timeout,
         max_workers=max_workers,
     )
@@ -343,8 +357,8 @@ def submit_preds_command(
             server_url=server_url,
             subset=subset,
             split=split,
-            run_id=response.get("run_id") or run_id or predictions_path.stem,
-            created_at=time.time(),
+            run_id=response.get("run_id") or resolved_run_id or predictions_path.stem,
+            created_at=created_at,
             predictions_path=str(predictions_path),
             upload_path=str(predictions_path),
             job_id=response.get("job_id"),

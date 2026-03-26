@@ -438,6 +438,7 @@ def _run_swebench_batch(
     auto_eval: bool,
     eval_server_url: str,
     eval_run_id: str | None,
+    eval_rerun: bool,
     eval_timeout: int | None,
     eval_max_workers: int | None,
 ) -> None:
@@ -522,6 +523,7 @@ def _run_swebench_batch(
                     split=split,
                     server_url=eval_server_url,
                     run_id=eval_run_id,
+                    rerun=eval_rerun,
                     timeout=eval_timeout,
                     max_workers=eval_max_workers,
                 )
@@ -584,6 +586,12 @@ def main(
         help="Stable evaluation-server run_id override for cache reuse across reruns",
         rich_help_panel="Advanced",
     ),
+    eval_rerun: bool = typer.Option(
+        False,
+        "--eval-rerun/--no-eval-rerun",
+        help="Force a fresh evaluation submission instead of reusing an existing evaluation-server run_id",
+        rich_help_panel="Advanced",
+    ),
     eval_timeout: int | None = typer.Option(
         None,
         "--eval-timeout",
@@ -599,6 +607,12 @@ def main(
 ) -> None:
     # fmt: on
     num_seeds = int(getattr(num_seeds, "default", num_seeds))
+    auto_eval = bool(getattr(auto_eval, "default", auto_eval))
+    eval_server_url = str(getattr(eval_server_url, "default", eval_server_url))
+    eval_run_id = getattr(eval_run_id, "default", eval_run_id)
+    eval_rerun = bool(getattr(eval_rerun, "default", eval_rerun))
+    eval_timeout = getattr(eval_timeout, "default", eval_timeout)
+    eval_max_workers = getattr(eval_max_workers, "default", eval_max_workers)
 
     if enable_langfuse is True:
         _enable_langfuse_tracing()
@@ -627,6 +641,7 @@ def main(
             auto_eval=auto_eval,
             eval_server_url=eval_server_url,
             eval_run_id=eval_run_id,
+            eval_rerun=eval_rerun,
             eval_timeout=eval_timeout,
             eval_max_workers=eval_max_workers,
         )

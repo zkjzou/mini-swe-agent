@@ -12,6 +12,7 @@ from minisweagent.run.utilities.evaluation_client import (
     EvaluationSubmissionMetadata,
     app,
     auto_submit_swebench_predictions,
+    derive_rerun_run_id,
     derive_stable_run_id,
     load_submission_metadata,
     make_unique_predictions_upload_copy,
@@ -26,6 +27,10 @@ def test_derive_stable_run_id_is_stable(tmp_path):
 
     assert run_id_a == run_id_b
     assert run_id_a != run_id_c
+
+
+def test_derive_rerun_run_id_appends_timestamp():
+    assert derive_rerun_run_id("run-123", created_at=1700000000) == "run-123-rerun-1700000000"
 
 
 def test_make_unique_predictions_upload_copy_preserves_preds_json(tmp_path):
@@ -78,6 +83,39 @@ def test_auto_submit_swebench_predictions_writes_metadata(monkeypatch, tmp_path)
     assert metadata.run_id.startswith(tmp_path.name)
 
 
+def test_auto_submit_swebench_predictions_can_force_rerun(monkeypatch, tmp_path):
+    preds_path = tmp_path / "preds.json"
+    preds_path.write_text('{"instance": {"model_patch": "diff"}}', encoding="utf-8")
+
+    monkeypatch.setattr("minisweagent.run.utilities.evaluation_client.time.time", lambda: 1700000000)
+    called = {}
+
+    def _fake_submit(predictions_path: Path, **kwargs):
+        called["predictions_path"] = predictions_path
+        called.update(kwargs)
+        return {
+            "job_id": "job-456",
+            "run_id": kwargs["run_id"],
+            "status": "queued",
+            "position_in_queue": 3,
+        }
+
+    monkeypatch.setattr("minisweagent.run.utilities.evaluation_client.submit_predictions_file", _fake_submit)
+
+    _, _, metadata_path = auto_submit_swebench_predictions(
+        preds_path=preds_path,
+        output_dir=tmp_path,
+        subset="swe-bench_verified",
+        split="test",
+        server_url="http://server:8000",
+        rerun=True,
+    )
+
+    metadata = load_submission_metadata(metadata_path)
+    assert called["run_id"].endswith("-rerun-1700000000")
+    assert metadata.run_id == called["run_id"]
+
+
 def test_submit_preds_cli_invokes_submit_and_writes_metadata(monkeypatch, tmp_path):
     called = {}
 
@@ -114,6 +152,45 @@ def test_submit_preds_cli_invokes_submit_and_writes_metadata(monkeypatch, tmp_pa
     metadata = json.loads((tmp_path / SUBMISSION_METADATA_FILENAME).read_text(encoding="utf-8"))
     assert metadata["job_id"] == "job-123"
     assert metadata["run_id"] == "run-123"
+
+
+def test_submit_preds_cli_rerun_rewrites_run_id(monkeypatch, tmp_path):
+    called = {}
+
+    def _fake_submit(predictions_path: Path, **kwargs):
+        called["predictions_path"] = predictions_path
+        called.update(kwargs)
+        return {"job_id": "job-123", "run_id": kwargs["run_id"], "status": "queued", "position_in_queue": 2}
+
+    monkeypatch.setattr("minisweagent.run.utilities.evaluation_client.submit_predictions_file", _fake_submit)
+    monkeypatch.setattr("minisweagent.run.utilities.evaluation_client.time.time", lambda: 1700000000)
+    preds_path = tmp_path / "preds.json"
+    preds_path.write_text("{}", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "submit-preds",
+            str(preds_path),
+            "--server-url",
+            "http://server:8000",
+            "--subset",
+            "swe-bench_verified",
+            "--split",
+            "test",
+            "--run-id",
+            "run-123",
+            "--rerun",
+            "--output-dir",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert called["run_id"] == "run-123-rerun-1700000000"
+    metadata = json.loads((tmp_path / SUBMISSION_METADATA_FILENAME).read_text(encoding="utf-8"))
+    assert metadata["run_id"] == "run-123-rerun-1700000000"
 
 
 def test_submit_instance_cli_uses_staged_flow(monkeypatch, tmp_path):

@@ -17,10 +17,13 @@ from minisweagent.run.benchmarks.swebench import (
     _make_langfuse_session_id,
     _resolve_eval_server_subset,
     _resolve_profiled_model_config,
+    _run_swebench_batch,
     filter_instances,
     get_swebench_docker_image_name,
     main,
+    parse_difficulty_quotas,
     remove_from_preds_file,
+    sample_instances_by_difficulty,
     update_preds_file,
 )
 
@@ -187,6 +190,73 @@ def test_filter_instances_empty_list():
     """Test filter_instances with empty input list"""
     result = filter_instances([], filter_spec=r".*", slice_spec="0:5", shuffle=True)
     assert result == []
+
+
+def test_parse_difficulty_quotas():
+    quotas = parse_difficulty_quotas(["<15 min fix=2", "1-4 hours=3"])
+    assert quotas == {"<15 min fix": 2, "1-4 hours": 3}
+
+
+def test_parse_difficulty_quotas_rejects_invalid_specs():
+    with pytest.raises(ValueError, match="Expected LEVEL=COUNT"):
+        parse_difficulty_quotas(["bad-spec"])
+    with pytest.raises(ValueError, match="COUNT must be >= 1"):
+        parse_difficulty_quotas(["<15 min fix=0"])
+    with pytest.raises(ValueError, match="Pass each difficulty at most once"):
+        parse_difficulty_quotas(["<15 min fix=1", "<15 min fix=2"])
+
+
+def test_sample_instances_by_difficulty_is_seeded_and_exact():
+    instances = [
+        {"instance_id": "easy-1", "difficulty": "<15 min fix"},
+        {"instance_id": "easy-2", "difficulty": "<15 min fix"},
+        {"instance_id": "easy-3", "difficulty": "<15 min fix"},
+        {"instance_id": "easy-4", "difficulty": "<15 min fix"},
+        {"instance_id": "easy-5", "difficulty": "<15 min fix"},
+        {"instance_id": "easy-6", "difficulty": "<15 min fix"},
+        {"instance_id": "medium-1", "difficulty": "15 min - 1 hour"},
+        {"instance_id": "medium-2", "difficulty": "15 min - 1 hour"},
+        {"instance_id": "medium-3", "difficulty": "15 min - 1 hour"},
+        {"instance_id": "medium-4", "difficulty": "15 min - 1 hour"},
+        {"instance_id": "hard-1", "difficulty": "1-4 hours"},
+    ]
+    quotas = {"<15 min fix": 3, "15 min - 1 hour": 2}
+
+    result_a = sample_instances_by_difficulty(instances, difficulty_quotas=quotas, sample_seed=7)
+    result_b = sample_instances_by_difficulty(instances, difficulty_quotas=quotas, sample_seed=7)
+    result_c = sample_instances_by_difficulty(instances, difficulty_quotas=quotas, sample_seed=8)
+
+    assert result_a == result_b
+    assert len(result_a) == 5
+    assert sorted(instance["difficulty"] for instance in result_a) == [
+        "15 min - 1 hour",
+        "15 min - 1 hour",
+        "<15 min fix",
+        "<15 min fix",
+        "<15 min fix",
+    ]
+    assert [instance["instance_id"] for instance in result_a] != [instance["instance_id"] for instance in result_c]
+
+
+def test_sample_instances_by_difficulty_rejects_unknown_or_missing_difficulties():
+    with pytest.raises(ValueError, match="built-in 'difficulty' field"):
+        sample_instances_by_difficulty(
+            [{"instance_id": "repo-1"}],
+            difficulty_quotas={"<15 min fix": 1},
+            sample_seed=42,
+        )
+    with pytest.raises(ValueError, match="Unknown difficulty quota"):
+        sample_instances_by_difficulty(
+            [{"instance_id": "repo-1", "difficulty": "<15 min fix"}],
+            difficulty_quotas={"1-4 hours": 1},
+            sample_seed=42,
+        )
+    with pytest.raises(ValueError, match="only 1 are available"):
+        sample_instances_by_difficulty(
+            [{"instance_id": "repo-1", "difficulty": "<15 min fix"}],
+            difficulty_quotas={"<15 min fix": 2},
+            sample_seed=42,
+        )
 
 
 def test_iter_seeded_output_paths_preserves_single_run_output_path():
@@ -527,6 +597,103 @@ def test_swebench_main_can_enable_langfuse_tracing(tmp_path):
         )
 
     mock_enable_langfuse.assert_called_once_with()
+
+
+def test_swebench_main_forwards_difficulty_sampling_options(tmp_path):
+    with patch("minisweagent.run.benchmarks.swebench._run_swebench_batch") as mock_run:
+        main(
+            subset="verified",
+            split="test",
+            slice_spec="",
+            filter_spec="",
+            difficulty_quota=["<15 min fix=2", "1-4 hours=1"],
+            sample_seed=99,
+            output=str(tmp_path),
+            workers=1,
+            config_spec=[str(package_dir / "config" / "benchmarks" / "swebench.yaml")],
+            auto_eval=False,
+        )
+
+    kwargs = mock_run.call_args.kwargs
+    assert kwargs["difficulty_quotas"] == {"<15 min fix": 2, "1-4 hours": 1}
+    assert kwargs["sample_seed"] == 99
+
+
+def test_run_swebench_batch_applies_difficulty_sampling_before_slice(tmp_path):
+    instances = [
+        {"instance_id": "easy-1", "difficulty": "<15 min fix", "problem_statement": "task"},
+        {"instance_id": "easy-2", "difficulty": "<15 min fix", "problem_statement": "task"},
+        {"instance_id": "hard-1", "difficulty": "1-4 hours", "problem_statement": "task"},
+        {"instance_id": "hard-2", "difficulty": "1-4 hours", "problem_statement": "task"},
+    ]
+    processed_ids: list[str] = []
+
+    with (
+        patch("datasets.load_dataset", return_value=instances),
+        patch("minisweagent.run.benchmarks.swebench.Live") as mock_live,
+        patch(
+            "minisweagent.run.benchmarks.swebench.process_instance",
+            side_effect=lambda instance, *_args: processed_ids.append(instance["instance_id"]),
+        ),
+    ):
+        mock_live.return_value.__enter__.return_value = mock_live.return_value
+        mock_live.return_value.__exit__.return_value = False
+
+        _run_swebench_batch(
+            subset="verified",
+            split="test",
+            slice_spec=":1",
+            filter_spec="",
+            difficulty_quotas={"<15 min fix": 1, "1-4 hours": 1},
+            sample_seed=42,
+            shuffle=False,
+            output_path=tmp_path,
+            workers=1,
+            redo_existing=False,
+            redo_errors=False,
+            config={},
+            enable_langfuse=False,
+            auto_eval=False,
+            eval_server_url="http://example.com",
+            eval_run_id=None,
+            eval_rerun=False,
+            eval_timeout=None,
+            eval_max_workers=20,
+        )
+
+    assert len(processed_ids) == 1
+
+
+def test_run_swebench_batch_rejects_sampling_without_difficulty_field(tmp_path):
+    with (
+        patch("datasets.load_dataset", return_value=[{"instance_id": "repo-1", "problem_statement": "task"}]),
+        patch("minisweagent.run.benchmarks.swebench.Live") as mock_live,
+    ):
+        mock_live.return_value.__enter__.return_value = mock_live.return_value
+        mock_live.return_value.__exit__.return_value = False
+
+        with pytest.raises(ValueError, match="built-in 'difficulty' field"):
+            _run_swebench_batch(
+                subset="lite",
+                split="test",
+                slice_spec="",
+                filter_spec="",
+                difficulty_quotas={"<15 min fix": 1},
+                sample_seed=42,
+                shuffle=False,
+                output_path=tmp_path,
+                workers=1,
+                redo_existing=False,
+                redo_errors=False,
+                config={},
+                enable_langfuse=False,
+                auto_eval=False,
+                eval_server_url="http://example.com",
+                eval_run_id=None,
+                eval_rerun=False,
+                eval_timeout=None,
+                eval_max_workers=20,
+            )
 
 
 @pytest.mark.slow

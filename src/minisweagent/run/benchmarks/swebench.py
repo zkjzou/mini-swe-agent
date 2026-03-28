@@ -332,6 +332,75 @@ def remove_from_preds_file(output_path: Path, instance_id: str):
             output_path.write_text(json.dumps(output_data, indent=2))
 
 
+def parse_difficulty_quotas(quota_specs: list[str]) -> dict[str, int]:
+    """Parse repeated LEVEL=COUNT difficulty quota specs."""
+    quotas: dict[str, int] = {}
+    for spec in quota_specs:
+        difficulty, separator, raw_count = spec.partition("=")
+        difficulty = difficulty.strip()
+        raw_count = raw_count.strip()
+        if separator != "=" or not difficulty or not raw_count:
+            raise ValueError(
+                f"Invalid difficulty quota '{spec}'. Expected LEVEL=COUNT, for example "
+                "'difficulty=\"15 min - 1 hour\"=10'."
+            )
+        if difficulty in quotas:
+            raise ValueError(f"Duplicate difficulty quota for '{difficulty}'. Pass each difficulty at most once.")
+        try:
+            count = int(raw_count)
+        except ValueError as exc:
+            raise ValueError(f"Invalid quota count in '{spec}'. COUNT must be an integer.") from exc
+        if count < 1:
+            raise ValueError(f"Invalid quota count in '{spec}'. COUNT must be >= 1.")
+        quotas[difficulty] = count
+    return quotas
+
+
+def sample_instances_by_difficulty(
+    instances: list[dict], *, difficulty_quotas: dict[str, int], sample_seed: int
+) -> list[dict]:
+    """Sample exact per-difficulty quotas from SWEBench instances."""
+    if not difficulty_quotas:
+        return instances
+    if not instances:
+        raise ValueError("Difficulty sampling requested, but no instances remain after filtering.")
+    if any("difficulty" not in instance for instance in instances):
+        raise ValueError("Difficulty sampling requires dataset rows with a built-in 'difficulty' field.")
+
+    instances_by_difficulty: dict[str, list[dict]] = {}
+    for instance in instances:
+        difficulty = str(instance["difficulty"]).strip()
+        instances_by_difficulty.setdefault(difficulty, []).append(instance)
+
+    available_difficulties = sorted(instances_by_difficulty)
+    unknown_difficulties = [difficulty for difficulty in difficulty_quotas if difficulty not in instances_by_difficulty]
+    if unknown_difficulties:
+        raise ValueError(
+            "Unknown difficulty quota(s): "
+            + ", ".join(repr(difficulty) for difficulty in unknown_difficulties)
+            + f". Available difficulties: {', '.join(repr(difficulty) for difficulty in available_difficulties)}"
+        )
+
+    sampled_instances: list[dict] = []
+    for difficulty, count in difficulty_quotas.items():
+        bucket = sorted(instances_by_difficulty[difficulty], key=lambda instance: instance["instance_id"])
+        if count > len(bucket):
+            raise ValueError(
+                f"Requested {count} instances for difficulty {difficulty!r}, but only {len(bucket)} are available "
+                "after filtering."
+            )
+        rng = random.Random(f"{sample_seed}:{difficulty}")
+        sampled_instances.extend(rng.sample(bucket, count))
+
+    logger.info(
+        "Difficulty sampling selected %d instances across %d quota buckets with sample_seed=%d",
+        len(sampled_instances),
+        len(difficulty_quotas),
+        sample_seed,
+    )
+    return sampled_instances
+
+
 def is_error_trajectory(traj_path: Path) -> bool:
     """Return True if trajectory is missing/invalid or indicates an error exit status."""
     if not traj_path.exists():
@@ -428,6 +497,8 @@ def _run_swebench_batch(
     split: str,
     slice_spec: str,
     filter_spec: str,
+    difficulty_quotas: dict[str, int],
+    sample_seed: int,
     shuffle: bool,
     output_path: Path,
     workers: int,
@@ -458,7 +529,16 @@ def _run_swebench_batch(
         logger.info(f"Loading dataset {dataset_path}, split {split}...")
         instances = list(load_dataset(dataset_path, split=split))
 
-        instances = filter_instances(instances, filter_spec=filter_spec, slice_spec=slice_spec, shuffle=shuffle)
+        if difficulty_quotas:
+            instances = filter_instances(instances, filter_spec=filter_spec, slice_spec="", shuffle=False)
+            instances = sample_instances_by_difficulty(
+                instances,
+                difficulty_quotas=difficulty_quotas,
+                sample_seed=sample_seed,
+            )
+            instances = filter_instances(instances, filter_spec="", slice_spec=slice_spec, shuffle=shuffle)
+        else:
+            instances = filter_instances(instances, filter_spec=filter_spec, slice_spec=slice_spec, shuffle=shuffle)
         if redo_existing and redo_errors:
             logger.info("--redo-existing overrides --redo-errors; running all instances.")
         if not redo_existing and (output_path / "preds.json").exists():
@@ -552,6 +632,18 @@ def main(
     split: str = typer.Option("dev", "--split", help="Dataset split", rich_help_panel="Data selection"),
     slice_spec: str = typer.Option("", "--slice", help="Slice specification (e.g., '0:5' for first 5 instances)", rich_help_panel="Data selection"),
     filter_spec: str = typer.Option("", "--filter", help="Filter instance IDs by regex", rich_help_panel="Data selection"),
+    difficulty_quota: list[str] = typer.Option(
+        [],
+        "--difficulty-quota",
+        help="Exact per-difficulty sample quota LEVEL=COUNT. Repeat for multiple difficulty buckets.",
+        rich_help_panel="Data selection",
+    ),
+    sample_seed: int = typer.Option(
+        42,
+        "--sample-seed",
+        help="Seed used for difficulty-based sampling.",
+        rich_help_panel="Data selection",
+    ),
     shuffle: bool = typer.Option(False, "--shuffle", help="Shuffle instances", rich_help_panel="Data selection"),
     output: str = typer.Option("", "-o", "--output", help="Output directory", rich_help_panel="Basic"),
     num_seeds: int = typer.Option(1, "--num-seeds", min=1, help="Repeat the full batch run across seeds 1..N", rich_help_panel="Basic"),
@@ -599,13 +691,15 @@ def main(
         rich_help_panel="Advanced",
     ),
     eval_max_workers: int | None = typer.Option(
-        None,
+        20,
         "--eval-max-workers",
-        help="Optional worker count sent to the evaluation server",
+        help="Worker count sent to the evaluation server",
         rich_help_panel="Advanced",
     ),
 ) -> None:
     # fmt: on
+    difficulty_quota = list(getattr(difficulty_quota, "default", difficulty_quota))
+    sample_seed = int(getattr(sample_seed, "default", sample_seed))
     num_seeds = int(getattr(num_seeds, "default", num_seeds))
     auto_eval = bool(getattr(auto_eval, "default", auto_eval))
     eval_server_url = str(getattr(eval_server_url, "default", eval_server_url))
@@ -617,6 +711,8 @@ def main(
     if enable_langfuse is True:
         _enable_langfuse_tracing()
         logger.info('Enabled LiteLLM Langfuse tracing via litellm.callbacks=["langfuse_otel"]')
+
+    difficulty_quotas = parse_difficulty_quotas(difficulty_quota)
 
     for seed, output_path in _iter_seeded_output_paths(output, num_seeds):
         config = _build_run_config(
@@ -631,6 +727,8 @@ def main(
             split=split,
             slice_spec=slice_spec,
             filter_spec=filter_spec,
+            difficulty_quotas=difficulty_quotas,
+            sample_seed=sample_seed,
             shuffle=shuffle,
             output_path=output_path,
             workers=workers,

@@ -57,6 +57,16 @@ subcommands = [
         "Generate rubric-style checklists from successful, failed, pairwise, or dynamic trajectories",
     ),
     (
+        "minisweagent.run.utilities.prepare_minimax_checklist_rows",
+        ["prepare-minimax-checklist-rows"],
+        "Aggregate pass@n minimax runs and write success/pairwise-failure/static-failure checklist rows",
+    ),
+    (
+        "minisweagent.run.utilities.prepare_dynamic_checklist_rows",
+        ["prepare-dynamic-checklist-rows"],
+        "Expand success and static-failure checklist rows into per-step dynamic checklist rows",
+    ),
+    (
         "minisweagent.run.utilities.evaluation_client",
         ["evaluation-client", "eval-client", "eval-server"],
         "Submit, poll, and sync SWE-bench evaluation-server jobs",

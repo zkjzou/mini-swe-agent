@@ -389,6 +389,8 @@ def test_mini_e_help():
         ("swebench-single", ["swebench-single"]),
         ("evaluation-client", ["evaluation-client", "eval-client", "eval-server"]),
         ("generate-trajectory-checklists", ["generate-trajectory-checklists", "generate-checklists"]),
+        ("prepare-minimax-checklist-rows", ["prepare-minimax-checklist-rows"]),
+        ("prepare-dynamic-checklist-rows", ["prepare-dynamic-checklist-rows"]),
     ],
 )
 def test_mini_extra_subcommand_help(subcommand: str, aliases: list[str]):

@@ -280,7 +280,7 @@ def auto_submit_swebench_predictions(
     run_id: str | None = None,
     rerun: bool = False,
     timeout: int | None = None,
-    max_workers: int | None = None,
+    max_workers: int | None = 20,
 ) -> tuple[dict[str, Any], Path, Path]:
     created_at = time.time()
     base_run_id = run_id or derive_stable_run_id(output_path=output_dir, subset=subset, split=split)
@@ -333,7 +333,7 @@ def submit_preds_command(
     ),
     output_dir: str | None = typer.Option(None, "--output-dir", help="Directory to save submission metadata"),
     timeout: int | None = typer.Option(None, "--timeout", help="Per-instance evaluation timeout"),
-    max_workers: int | None = typer.Option(None, "--max-workers", help="Evaluation worker count"),
+    max_workers: int | None = typer.Option(20, "--max-workers", help="Evaluation worker count"),
 ) -> None:
     predictions_path = Path(predictions_file)
     created_at = time.time()

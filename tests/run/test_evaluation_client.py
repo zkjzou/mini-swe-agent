@@ -82,6 +82,36 @@ def test_auto_submit_swebench_predictions_writes_metadata(monkeypatch, tmp_path)
     assert metadata.server_url == "http://server:8000"
     assert metadata.upload_path == str(upload_path)
     assert metadata.run_id == f"{tmp_path.name}-swe-bench_verified-test"
+    assert response["run_id"] == f"{tmp_path.name}-swe-bench_verified-test"
+
+
+def test_auto_submit_swebench_predictions_defaults_to_20_workers(monkeypatch, tmp_path):
+    preds_path = tmp_path / "preds.json"
+    preds_path.write_text('{"instance": {"model_patch": "diff"}}', encoding="utf-8")
+
+    called = {}
+
+    def _fake_submit(predictions_path: Path, **kwargs):
+        called["predictions_path"] = predictions_path
+        called.update(kwargs)
+        return {
+            "job_id": "job-123",
+            "run_id": kwargs["run_id"],
+            "status": "queued",
+            "position_in_queue": 1,
+        }
+
+    monkeypatch.setattr("minisweagent.run.utilities.evaluation_client.submit_predictions_file", _fake_submit)
+
+    auto_submit_swebench_predictions(
+        preds_path=preds_path,
+        output_dir=tmp_path,
+        subset="swe-bench_verified",
+        split="test",
+        server_url="http://server:8000",
+    )
+
+    assert called["max_workers"] == 20
 
 
 def test_auto_submit_swebench_predictions_can_force_rerun(monkeypatch, tmp_path):

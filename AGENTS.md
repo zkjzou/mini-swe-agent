@@ -1,8 +1,5 @@
 # Repository Guidelines
 
-# The MOST IMPORTANT RULE YOU NEED TO FOLLOW: ONLY EDIT FILES IN /home/zkjzou/SWE-PRM/mini-swe-agent
-After each action you take, you need to output you didn't edit files outside the current work directory. Otherwise, I will assume you disobey this rule. 
-
 # Commit & Pull Request Guidelines
 - Recent commits use short prefixes like `Feat:`, `Fix:`, `Doc:`, `CI:`, or `chore:` (often with PR numbers).
 - When modifying the codebase, create a git commit at the end of each round with a meaningful commit message describing the round's changes.
